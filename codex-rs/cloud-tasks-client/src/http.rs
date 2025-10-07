@@ -187,11 +187,13 @@ mod api {
                 Some(url) => url,
                 None => format!("{}/api/codex/tasks/{}", self.base_url, id.0),
             };
+            let message = format!(
+                "No assistant text messages in response. GET {url}; content-type={ct}; body={body}"
+            );
             Err(CloudTaskError::Http {
-                message: format!(
-                    "No assistant text messages in response. GET {url}; content-type={ct}; body={body}"
-                ),
+                message,
                 request_id: None,
+                source: anyhow::anyhow!("missing assistant text messages"),
             })
         }
 
@@ -378,8 +380,11 @@ mod api {
                 revert: false,
                 preflight,
             };
-            let r = codex_git_apply::apply_git_patch(&req)
-                .map_err(|e| CloudTaskError::Io(format!("git apply failed to run: {e}")))?;
+            let r = codex_git_apply::apply_git_patch(&req).map_err(|e| {
+                let source = anyhow::Error::new(e);
+                let message = format!("git apply failed to run: {}", source);
+                CloudTaskError::Io { message, source }
+            })?;
 
             let status = if r.exit_code == 0 {
                 ApplyStatus::Success
@@ -768,19 +773,26 @@ mod api {
 
 fn map_http_error(op: &'static str, err: anyhow::Error) -> CloudTaskError {
     let raw = err.to_string();
+    let message = format!("{op} failed: {raw}");
     let request_id = extract_request_id(&raw);
     CloudTaskError::Http {
-        message: format!("{op} failed: {raw}"),
+        message,
         request_id,
+        source: err,
     }
 }
 
+/// Attempt to recover a request id from the stringified HTTP error response.
+/// This relies on the current formatting produced by `reqwest`/`anyhow`
+/// which includes a `body=` tail in the error string; if upstream formatting
+/// changes we should replace this parser with structured error propagation.
 fn extract_request_id(message: &str) -> Option<String> {
     let (_, tail) = message.split_once("body=")?;
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(tail)
-        && let Some(id) = find_request_id(&value) {
-            return Some(id);
-        }
+        && let Some(id) = find_request_id(&value)
+    {
+        return Some(id);
+    }
     None
 }
 
@@ -825,7 +837,7 @@ mod tests {
         assert_eq!(err.request_id(), Some("REQ-42"));
         assert_eq!(
             format!("{err}"),
-            format!("http error: get_task_details failed: {raw} (request id: REQ-42)")
+            format!("get_task_details failed: {raw} (request id: REQ-42)")
         );
     }
 

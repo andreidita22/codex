@@ -12,8 +12,12 @@ pub enum CloudTaskError {
     Http {
         message: String,
         request_id: Option<String>,
+        source: anyhow::Error,
     },
-    Io(String),
+    Io {
+        message: String,
+        source: anyhow::Error,
+    },
     Msg(String),
 }
 
@@ -33,9 +37,10 @@ impl fmt::Display for CloudTaskError {
             Self::Http {
                 message,
                 request_id: Some(id),
-            } => write!(f, "http error: {message} (request id: {id})"),
-            Self::Http { message, .. } => write!(f, "http error: {message}"),
-            Self::Io(msg) => write!(f, "io error: {msg}"),
+                ..
+            } => write!(f, "{message} (request id: {id})"),
+            Self::Http { message, .. } => write!(f, "{message}"),
+            Self::Io { message, .. } => write!(f, "{message}"),
             Self::Msg(msg) => write!(f, "{msg}"),
         }
     }
@@ -43,7 +48,11 @@ impl fmt::Display for CloudTaskError {
 
 impl std::error::Error for CloudTaskError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
+        match self {
+            Self::Http { source, .. } => Some(source.as_ref()),
+            Self::Io { source, .. } => Some(source.as_ref()),
+            _ => None,
+        }
     }
 }
 
@@ -206,10 +215,11 @@ mod tests {
         let err = CloudTaskError::Http {
             message: "create_task failed".to_string(),
             request_id: Some("REQ-123".to_string()),
+            source: anyhow::Error::msg("boom"),
         };
         assert_eq!(
             format!("{err}"),
-            "http error: create_task failed (request id: REQ-123)"
+            "create_task failed (request id: REQ-123)"
         );
         assert_eq!(err.request_id(), Some("REQ-123"));
     }
@@ -219,8 +229,9 @@ mod tests {
         let err = CloudTaskError::Http {
             message: "list_tasks failed".to_string(),
             request_id: None,
+            source: anyhow::Error::msg("boom"),
         };
-        assert_eq!(format!("{err}"), "http error: list_tasks failed");
+        assert_eq!(format!("{err}"), "list_tasks failed");
         assert_eq!(err.request_id(), None);
     }
 }
