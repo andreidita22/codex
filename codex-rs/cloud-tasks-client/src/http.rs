@@ -9,6 +9,7 @@ use crate::TaskId;
 use crate::TaskStatus;
 use crate::TaskSummary;
 use crate::TurnAttempt;
+use crate::TurnHistoryEntry;
 use crate::api::TaskText;
 use chrono::DateTime;
 use chrono::Utc;
@@ -107,6 +108,10 @@ impl CloudBackend for HttpClient {
             .create(env_id, prompt, git_ref, qa_mode, best_of_n)
             .await
     }
+
+    async fn list_turn_history(&self, _task: TaskId) -> Result<Vec<TurnHistoryEntry>> {
+        Err(CloudTaskError::Unimplemented("list_turn_history"))
+    }
 }
 
 mod api {
@@ -133,7 +138,7 @@ mod api {
                 .backend
                 .list_tasks(Some(20), Some("current"), env)
                 .await
-                .map_err(|e| CloudTaskError::Http(format!("list_tasks failed: {e}")))?;
+                .map_err(|e| map_http_error("list_tasks", e))?;
 
             let tasks: Vec<TaskSummary> = resp
                 .items
@@ -153,7 +158,7 @@ mod api {
             let (details, body, ct) = self
                 .details_with_body(&id.0)
                 .await
-                .map_err(|e| CloudTaskError::Http(format!("get_task_details failed: {e}")))?;
+                .map_err(|e| map_http_error("get_task_details", e))?;
             if let Some(diff) = details.unified_diff() {
                 return Ok(Some(diff));
             }
@@ -165,7 +170,7 @@ mod api {
             let (details, body, ct) = self
                 .details_with_body(&id.0)
                 .await
-                .map_err(|e| CloudTaskError::Http(format!("get_task_details failed: {e}")))?;
+                .map_err(|e| map_http_error("get_task_details", e))?;
 
             let mut msgs = details.assistant_text_messages();
             if msgs.is_empty() {
@@ -182,16 +187,19 @@ mod api {
                 Some(url) => url,
                 None => format!("{}/api/codex/tasks/{}", self.base_url, id.0),
             };
-            Err(CloudTaskError::Http(format!(
-                "No assistant text messages in response. GET {url}; content-type={ct}; body={body}"
-            )))
+            Err(CloudTaskError::Http {
+                message: format!(
+                    "No assistant text messages in response. GET {url}; content-type={ct}; body={body}"
+                ),
+                request_id: None,
+            })
         }
 
         pub(crate) async fn task_text(&self, id: TaskId) -> Result<TaskText> {
             let (details, body, _ct) = self
                 .details_with_body(&id.0)
                 .await
-                .map_err(|e| CloudTaskError::Http(format!("get_task_details failed: {e}")))?;
+                .map_err(|e| map_http_error("get_task_details", e))?;
             let prompt = details.user_text_prompt();
             let mut messages = details.assistant_text_messages();
             if messages.is_empty() {
@@ -274,7 +282,7 @@ mod api {
                         prompt.chars().count(),
                         e
                     ));
-                    Err(CloudTaskError::Http(format!("create_task failed: {e}")))
+                    Err(map_http_error("create_task", e))
                 }
             }
         }
@@ -304,7 +312,7 @@ mod api {
                 .backend
                 .list_sibling_turns(&task.0, &turn_id)
                 .await
-                .map_err(|e| CloudTaskError::Http(format!("list_sibling_turns failed: {e}")))?;
+                .map_err(|e| map_http_error("list_sibling_turns", e))?;
 
             let mut attempts: Vec<TurnAttempt> = resp
                 .sibling_turns
@@ -337,9 +345,11 @@ mod api {
             let diff = match diff_override {
                 Some(diff) => diff,
                 None => {
-                    let details = self.backend.get_task_details(&id).await.map_err(|e| {
-                        CloudTaskError::Http(format!("get_task_details failed: {e}"))
-                    })?;
+                    let details = self
+                        .backend
+                        .get_task_details(&id)
+                        .await
+                        .map_err(|e| map_http_error("get_task_details", e))?;
                     details.unified_diff().ok_or_else(|| {
                         CloudTaskError::Msg(format!("No diff available for task {id}"))
                     })?
@@ -756,6 +766,42 @@ mod api {
     }
 }
 
+fn map_http_error(op: &'static str, err: anyhow::Error) -> CloudTaskError {
+    let raw = err.to_string();
+    let request_id = extract_request_id(&raw);
+    CloudTaskError::Http {
+        message: format!("{op} failed: {raw}"),
+        request_id,
+    }
+}
+
+fn extract_request_id(message: &str) -> Option<String> {
+    let (_, tail) = message.split_once("body=")?;
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(tail)
+        && let Some(id) = find_request_id(&value) {
+            return Some(id);
+        }
+    None
+}
+
+fn find_request_id(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(_) | serde_json::Value::Bool(_) | serde_json::Value::Null => None,
+        serde_json::Value::Number(_) => None,
+        serde_json::Value::Array(items) => items.iter().find_map(find_request_id),
+        serde_json::Value::Object(map) => {
+            if let Some(id) = map
+                .get("request_id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|s| !s.is_empty())
+            {
+                return Some(id.to_string());
+            }
+            map.values().find_map(find_request_id)
+        }
+    }
+}
+
 fn append_error_log(message: &str) {
     let ts = Utc::now().to_rfc3339();
     if let Ok(mut f) = std::fs::OpenOptions::new()
@@ -765,5 +811,27 @@ fn append_error_log(message: &str) {
     {
         use std::io::Write as _;
         let _ = writeln!(f, "[{ts}] {message}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_http_error_extracts_request_id() {
+        let raw = r#"GET /foo failed: 500; content-type=application/json; body={"error":{"request_id":"REQ-42"}}"#;
+        let err = map_http_error("get_task_details", anyhow::anyhow!(raw));
+        assert_eq!(err.request_id(), Some("REQ-42"));
+        assert_eq!(
+            format!("{err}"),
+            format!("http error: get_task_details failed: {raw} (request id: REQ-42)")
+        );
+    }
+
+    #[test]
+    fn extract_request_id_returns_none_when_missing() {
+        let raw = "POST /foo failed: 401; content-type=text/plain; body=unauthorized";
+        assert_eq!(extract_request_id(raw), None);
     }
 }

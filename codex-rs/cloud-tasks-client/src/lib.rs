@@ -13,6 +13,7 @@ pub use api::TaskStatus;
 pub use api::TaskSummary;
 pub use api::TaskText;
 pub use api::TurnAttempt;
+pub use api::TurnHistoryEntry;
 
 #[cfg(feature = "mock")]
 mod mock;
