@@ -379,6 +379,7 @@ mod api {
                 diff: diff.clone(),
                 revert: false,
                 preflight,
+                three_way: true,
             };
             let r = codex_git_apply::apply_git_patch(&req).map_err(|e| {
                 let source = anyhow::Error::new(e);

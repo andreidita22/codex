@@ -11,6 +11,7 @@ pub struct ApplyGitRequest {
     pub diff: String,
     pub revert: bool,
     pub preflight: bool,
+    pub three_way: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -38,7 +39,10 @@ pub fn apply_git_patch(req: &ApplyGitRequest) -> io::Result<ApplyGitResult> {
     }
 
     // Build git args
-    let mut args: Vec<String> = vec!["apply".into(), "--3way".into()];
+    let mut args: Vec<String> = vec!["apply".into()];
+    if req.three_way {
+        args.push("--3way".into());
+    }
     if req.revert {
         args.push("-R".into());
     }
@@ -526,6 +530,7 @@ mod tests {
             diff: diff.to_string(),
             revert: false,
             preflight: false,
+            three_way: true,
         };
         let r = apply_git_patch(&req).expect("run apply");
         assert_eq!(r.exit_code, 0, "exit code 0");
@@ -551,6 +556,7 @@ mod tests {
             diff: diff.to_string(),
             revert: false,
             preflight: false,
+            three_way: true,
         };
         let r = apply_git_patch(&req).expect("run apply");
         assert_ne!(r.exit_code, 0, "non-zero exit on conflict");
@@ -568,6 +574,7 @@ mod tests {
             diff: diff.to_string(),
             revert: false,
             preflight: false,
+            three_way: true,
         };
         let r = apply_git_patch(&req).expect("run apply");
         assert_ne!(r.exit_code, 0, "non-zero exit on missing index");
@@ -590,6 +597,7 @@ mod tests {
             diff: diff.to_string(),
             revert: false,
             preflight: false,
+            three_way: true,
         };
         let res_apply = apply_git_patch(&apply_req).expect("apply ok");
         assert_eq!(res_apply.exit_code, 0, "forward apply succeeded");
@@ -602,6 +610,7 @@ mod tests {
             diff: diff.to_string(),
             revert: true,
             preflight: false,
+            three_way: true,
         };
         let res_revert = apply_git_patch(&revert_req).expect("revert ok");
         assert_eq!(res_revert.exit_code, 0, "revert apply succeeded");
@@ -625,6 +634,7 @@ mod tests {
             diff: diff.to_string(),
             revert: false,
             preflight: false,
+            three_way: true,
         };
         let res_apply = apply_git_patch(&apply_req).expect("apply ok");
         assert_eq!(res_apply.exit_code, 0, "forward apply succeeded");
@@ -639,6 +649,7 @@ mod tests {
             diff: diff.to_string(),
             revert: true,
             preflight: true,
+            three_way: true,
         };
         let res_preflight = apply_git_patch(&preflight_req).expect("preflight ok");
         assert_eq!(res_preflight.exit_code, 0, "revert preflight succeeded");
@@ -669,6 +680,7 @@ diff --git a/ghost.txt b/ghost.txt\n--- a/ghost.txt\n+++ b/ghost.txt\n@@ -1,1 +1
             diff: diff.to_string(),
             revert: false,
             preflight: true,
+            three_way: true,
         };
         let r1 = apply_git_patch(&req1).expect("preflight apply");
         assert_ne!(r1.exit_code, 0, "preflight reports failure");
@@ -687,6 +699,7 @@ diff --git a/ghost.txt b/ghost.txt\n--- a/ghost.txt\n+++ b/ghost.txt\n@@ -1,1 +1
             diff: diff.to_string(),
             revert: false,
             preflight: false,
+            three_way: true,
         };
         let r2 = apply_git_patch(&req2).expect("direct apply");
         assert_ne!(r2.exit_code, 0, "apply is expected to fail overall");

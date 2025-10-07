@@ -217,10 +217,7 @@ mod tests {
             request_id: Some("REQ-123".to_string()),
             source: anyhow::Error::msg("boom"),
         };
-        assert_eq!(
-            format!("{err}"),
-            "create_task failed (request id: REQ-123)"
-        );
+        assert_eq!(format!("{err}"), "create_task failed (request id: REQ-123)");
         assert_eq!(err.request_id(), Some("REQ-123"));
     }
 
