@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::env;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -20,10 +21,12 @@ use codex_cloud_tasks::util::set_user_agent_suffix;
 use codex_cloud_tasks_client::AttemptStatus;
 use codex_cloud_tasks_client::CloudBackend;
 use codex_cloud_tasks_client::CloudTaskError;
+use codex_cloud_tasks_client::CreateTaskReq;
 use codex_cloud_tasks_client::DiffSummary;
 use codex_cloud_tasks_client::HttpClient;
 use codex_cloud_tasks_client::MockClient;
 use codex_cloud_tasks_client::TaskId;
+use codex_cloud_tasks_client::TaskKind;
 use codex_cloud_tasks_client::TaskStatus;
 use codex_cloud_tasks_client::TaskSummary;
 use codex_cloud_tasks_client::TaskText;
@@ -394,7 +397,6 @@ struct ExportReport {
 
 impl CloudContext {
     async fn new(config_overrides: CliConfigOverrides) -> Result<Self> {
-        let _ = config_overrides;
         set_user_agent_suffix(UA_SUFFIX);
         let use_mock = matches!(
             std::env::var("CODEX_CLOUD_TASKS_MODE").ok().as_deref(),
@@ -408,16 +410,25 @@ impl CloudContext {
             });
         }
 
-        let base_url = std::env::var("CODEX_CLOUD_TASKS_BASE_URL")
-            .unwrap_or_else(|_| "https://chatgpt.com/backend-api".to_string());
-        let base_url = normalize_base_url(&base_url);
+        let override_pairs = config_overrides.parse_overrides().map_err(|e| anyhow!(e))?;
+        let config = codex_core::config::Config::load_with_cli_overrides(
+            override_pairs,
+            codex_core::config::ConfigOverrides::default(),
+        )
+        .await
+        .with_context(|| "Failed to load configuration with CLI overrides")?;
+
+        let raw_base_url = match std::env::var("CODEX_CLOUD_TASKS_BASE_URL") {
+            Ok(val) if !val.trim().is_empty() => val,
+            _ => config.chatgpt_base_url.clone(),
+        };
+        let base_url = normalize_base_url(&raw_base_url);
         let ua = codex_core::default_client::get_codex_user_agent();
 
         let mut client = HttpClient::new(base_url.clone())?.with_user_agent(ua.clone());
         let mut backend_client = BackendClient::new(base_url)?.with_user_agent(ua);
 
-        let codex_home = codex_core::config::find_codex_home()
-            .context("Not signed in. Run 'codex login' to sign in with ChatGPT.")?;
+        let codex_home = config.codex_home.clone();
         let auth_manager = AuthManager::new(codex_home, false);
         let auth = auth_manager
             .auth()
@@ -592,17 +603,10 @@ impl CloudContext {
         })
     }
 
-    async fn create_task(
-        &self,
-        env_id: &str,
-        prompt: &str,
-        git_ref: &str,
-        qa_mode: bool,
-        best_of_n: usize,
-    ) -> Result<TaskId> {
+    async fn create_task(&self, request: CreateTaskReq) -> Result<TaskId> {
         let created = self
             .backend
-            .create_task(env_id, prompt, git_ref, qa_mode, best_of_n)
+            .create_task(request)
             .await
             .map_err(map_cloud_error)?;
         Ok(created.id)
@@ -627,6 +631,35 @@ fn compare_attempts(
     }
 }
 
+fn resolve_repo_arg(repo: &Option<PathBuf>) -> Result<Option<String>> {
+    match repo {
+        Some(path) => {
+            let resolved_path = if path == Path::new(".") {
+                env::current_dir().context("Failed to resolve current directory for --repo")?
+            } else {
+                path.clone()
+            };
+            let canonical = fs::canonicalize(&resolved_path).with_context(|| {
+                format!(
+                    "Failed to resolve repository path {}",
+                    resolved_path.display()
+                )
+            })?;
+            Ok(Some(canonical.to_string_lossy().to_string()))
+        }
+        None => Ok(None),
+    }
+}
+
+fn parse_task_kind(raw: &str) -> Result<TaskKind> {
+    let normalized = raw.trim().to_lowercase();
+    match normalized.as_str() {
+        "code" => Ok(TaskKind::Code),
+        "review" => Ok(TaskKind::Review),
+        other => bail!("Unsupported --type value '{other}'. Expected 'code' or 'review'."),
+    }
+}
+
 async fn run_new(context: &CloudContext, args: &NewArgs) -> Result<()> {
     let prompt = match (&args.prompt, &args.prompt_file) {
         (Some(inline), None) => inline.clone(),
@@ -636,23 +669,52 @@ async fn run_new(context: &CloudContext, args: &NewArgs) -> Result<()> {
         (None, None) => bail!("Either --prompt or --prompt-file must be provided"),
     };
 
-    let _ = (&args.title, &args.repo, &args.task_type, args.include_diffs);
+    let title = args.title.trim().to_string();
+    if title.is_empty() {
+        bail!("--title cannot be empty");
+    }
 
-    let env_id = args.env.clone().unwrap_or_else(|| "Global".to_string());
-    let git_ref = args.base.clone();
     let best_of = args.best_of.max(1);
+    let best_of_u32 =
+        u32::try_from(best_of).context("--best-of must fit within a 32-bit unsigned integer")?;
 
-    let created = context
-        .create_task(&env_id, &prompt, &git_ref, false, best_of)
-        .await?;
+    let repo = resolve_repo_arg(&args.repo)?;
+    let task_kind = parse_task_kind(&args.task_type)?;
+    let env_id = args
+        .env
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned);
+    let base_ref = args.base.trim().to_string();
+
+    let request = CreateTaskReq {
+        title,
+        prompt,
+        best_of: best_of_u32,
+        repo,
+        base: Some(base_ref),
+        env: env_id,
+        task_kind,
+    };
+
+    let mut export_dir = args.export_dir.clone();
+    if args.include_diffs && export_dir.is_none() {
+        export_dir = Some(
+            env::current_dir()
+                .context("Failed to determine export directory for --include-diffs")?,
+        );
+    }
+
+    let created = context.create_task(request).await?;
     let task_id = created.0;
     println!("{task_id}");
 
-    if !(args.wait || args.export_dir.is_some() || args.apply) {
+    if !(args.wait || export_dir.is_some() || args.apply) {
         return Ok(());
     }
 
-    if (args.export_dir.is_some() || args.apply) && !args.wait {
+    if (export_dir.is_some() || args.apply) && !args.wait {
         bail!("--export-dir and --apply require --wait to be specified");
     }
 
@@ -665,7 +727,7 @@ async fn run_new(context: &CloudContext, args: &NewArgs) -> Result<()> {
     let status = wait_for_completion(context, &task_id, interval, timeout).await?;
     match status {
         AttemptStatus::Completed => {
-            if let Some(dir) = &args.export_dir {
+            if let Some(dir) = export_dir.as_ref() {
                 let export_args = ExportArgs {
                     task_id: task_id.clone(),
                     dir: Some(dir.clone()),
@@ -754,12 +816,18 @@ async fn run_watch(context: &CloudContext, args: &WatchArgs) -> Result<()> {
         None => None,
     };
 
-    let _ = args.include_diffs;
+    let mut export_dir = args.export_dir.clone();
+    if args.include_diffs && export_dir.is_none() {
+        export_dir = Some(
+            env::current_dir()
+                .context("Failed to determine export directory for --include-diffs")?,
+        );
+    }
 
     let status = wait_for_completion(context, &args.task_id, interval, timeout).await?;
     match status {
         AttemptStatus::Completed => {
-            if let Some(dir) = &args.export_dir {
+            if let Some(dir) = export_dir.as_ref() {
                 let export_args = ExportArgs {
                     task_id: args.task_id.clone(),
                     dir: Some(dir.clone()),
@@ -1084,30 +1152,37 @@ async fn run_apply(context: &CloudContext, args: &ApplyArgs) -> Result<()> {
         .unwrap_or_else(|| default_branch_prefix(&data.task_id));
     let branch_prefix = sanitize_branch(&branch_prefix);
 
-    let jobs = args.jobs.unwrap_or(1).max(1);
-    let semaphore = Arc::new(Semaphore::new(jobs));
+    let requested_jobs = args.jobs.unwrap_or(1).max(1);
+    let jobs = if args.worktrees { requested_jobs } else { 1 };
 
-    let tasks = stream::iter(variants.into_iter().map(|variant| {
-        let repo_root = repo_root.clone();
-        let branch_prefix = branch_prefix.clone();
-        let base_ref = base_ref.clone();
-        let args = args.clone();
-        let data = data.clone();
-        let semaphore = Arc::clone(&semaphore);
-        async move {
-            let _permit = semaphore
-                .acquire()
-                .await
-                .context("semaphore closed while applying variants")?;
-            apply_variant(&repo_root, &branch_prefix, &base_ref, &data, variant, &args).await
+    if jobs == 1 {
+        for variant in variants {
+            apply_variant(&repo_root, &branch_prefix, &base_ref, &data, variant, args).await?;
         }
-    }))
-    .buffer_unordered(jobs)
-    .collect::<Vec<_>>()
-    .await;
+    } else {
+        let semaphore = Arc::new(Semaphore::new(jobs));
+        let tasks = stream::iter(variants.into_iter().map(|variant| {
+            let repo_root = repo_root.clone();
+            let branch_prefix = branch_prefix.clone();
+            let base_ref = base_ref.clone();
+            let args = args.clone();
+            let data = data.clone();
+            let semaphore = Arc::clone(&semaphore);
+            async move {
+                let _permit = semaphore
+                    .acquire()
+                    .await
+                    .context("semaphore closed while applying variants")?;
+                apply_variant(&repo_root, &branch_prefix, &base_ref, &data, variant, &args).await
+            }
+        }))
+        .buffer_unordered(jobs)
+        .collect::<Vec<_>>()
+        .await;
 
-    for result in tasks {
-        result?;
+        for result in tasks {
+            result?;
+        }
     }
 
     if !args.worktrees
@@ -1162,7 +1237,7 @@ async fn apply_variant(
         .ok_or_else(|| anyhow!("Variant {} has no diff to apply", variant.index))?;
     let branch_name = format!("{branch_prefix}{index}", index = variant.index);
     if args.worktrees {
-        let worktree_path = compute_worktree_path(repo_root, &branch_name);
+        let worktree_path = compute_worktree_path(repo_root, &branch_name)?;
         prepare_worktree(repo_root, &worktree_path, &branch_name, base_ref).await?;
         apply_in_path(
             &worktree_path,
@@ -1216,10 +1291,9 @@ async fn apply_in_path(
     run_git(cwd, ["add", "-A"]).await?;
 
     let message = commit_message(args, task_id, variant_index);
-    let commit = run_git(cwd, ["commit", "-m", message.as_str()]).await;
-    if let Err(err) = commit {
-        bail!("git commit failed on branch {branch}: {err}");
-    }
+    run_git(cwd, ["commit", "-m", message.as_str()])
+        .await
+        .with_context(|| format!("git commit failed on branch {branch}"))?;
     println!("Applied variant {variant_index} onto branch {branch}");
 
     if args.open_pr {
@@ -1230,7 +1304,9 @@ async fn apply_in_path(
 }
 
 async fn push_and_open_pr(cwd: &Path, branch: &str, args: &ApplyArgs, message: &str) -> Result<()> {
-    run_git(cwd, ["push", "--set-upstream", "origin", branch]).await?;
+    run_git(cwd, ["push", "--set-upstream", "origin", branch])
+        .await
+        .with_context(|| format!("git push failed for branch {branch}"))?;
     if which("gh").is_err() {
         println!(
             "'gh' CLI not found; branch {branch} pushed. Run 'gh pr create --fill --base {base} --head {branch}'.",
@@ -1248,7 +1324,7 @@ async fn push_and_open_pr(cwd: &Path, branch: &str, args: &ApplyArgs, message: &
     let output = command.output().await?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("gh pr create failed: {stderr}");
+        bail!("gh pr create failed for branch {branch}: {stderr}");
     }
     println!("Opened PR for branch {branch}");
     Ok(())
@@ -1370,11 +1446,28 @@ fn default_branch_prefix(task_id: &str) -> String {
     format!("cloud/{slug}/var")
 }
 
-fn compute_worktree_path(repo_root: &Path, branch_name: &str) -> PathBuf {
-    let parent = repo_root.parent().unwrap_or(repo_root);
-    let worktree_root = parent.join("_cloud");
+fn compute_worktree_path(repo_root: &Path, branch_name: &str) -> Result<PathBuf> {
+    let parent = repo_root.parent().ok_or_else(|| {
+        anyhow!(
+            "Unable to determine worktree parent for repository {}",
+            repo_root.display()
+        )
+    })?;
+    let canonical_parent = fs::canonicalize(parent).with_context(|| {
+        format!(
+            "Failed to resolve worktree parent directory {}",
+            parent.display()
+        )
+    })?;
+    if canonical_parent == Path::new("/") {
+        bail!(
+            "Refusing to create worktrees under filesystem root for repository {}",
+            repo_root.display()
+        );
+    }
+    let worktree_root = canonical_parent.join("_cloud");
     let slug = branch_name.replace('/', "_");
-    worktree_root.join(slug)
+    Ok(worktree_root.join(slug))
 }
 
 async fn git_repo_root() -> Result<PathBuf> {
@@ -1424,8 +1517,7 @@ async fn prepare_worktree(
         .ok();
         run_git(repo_root, ["worktree", "prune"]).await.ok();
         fs::remove_dir_all(worktree_path)
-            .with_context(|| format!("Failed to remove stale worktree at {worktree_path:?}"))
-            .ok();
+            .with_context(|| format!("Failed to remove stale worktree at {worktree_path:?}"))?;
     }
     if let Some(parent) = worktree_path.parent() {
         fs::create_dir_all(parent)
@@ -1452,4 +1544,38 @@ async fn prepare_worktree(
         )
     })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn parse_task_kind_handles_case_insensitive_input() {
+        assert!(matches!(
+            parse_task_kind("Code").expect("parse"),
+            TaskKind::Code
+        ));
+        assert!(matches!(
+            parse_task_kind("REVIEW").expect("parse"),
+            TaskKind::Review
+        ));
+        assert!(parse_task_kind("unknown").is_err());
+    }
+
+    #[test]
+    fn resolve_repo_arg_returns_canonical_path() {
+        let temp = TempDir::new().expect("temp dir");
+        let nested = temp.path().join("repo");
+        std::fs::create_dir_all(&nested).expect("create nested dir");
+        let resolved = resolve_repo_arg(&Some(nested.clone()))
+            .expect("resolve repo")
+            .expect("path");
+        let expected = std::fs::canonicalize(&nested)
+            .expect("canonicalize")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(resolved, expected);
+    }
 }

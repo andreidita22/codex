@@ -99,6 +99,39 @@ pub enum AttemptStatus {
     Unknown,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskKind {
+    Code,
+    Review,
+}
+
+impl Default for TaskKind {
+    fn default() -> Self {
+        Self::Code
+    }
+}
+
+impl TaskKind {
+    pub fn as_label(self) -> &'static str {
+        match self {
+            Self::Code => "code",
+            Self::Review => "review",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateTaskReq {
+    pub title: String,
+    pub prompt: String,
+    pub best_of: u32,
+    pub repo: Option<String>,
+    pub base: Option<String>,
+    pub env: Option<String>,
+    pub task_kind: TaskKind,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TurnAttempt {
     pub turn_id: String,
@@ -194,14 +227,7 @@ pub trait CloudBackend: Send + Sync {
         diff_override: Option<String>,
     ) -> Result<ApplyOutcome>;
     async fn apply_task(&self, id: TaskId, diff_override: Option<String>) -> Result<ApplyOutcome>;
-    async fn create_task(
-        &self,
-        env_id: &str,
-        prompt: &str,
-        git_ref: &str,
-        qa_mode: bool,
-        best_of_n: usize,
-    ) -> Result<CreatedTask>;
+    async fn create_task(&self, req: CreateTaskReq) -> Result<CreatedTask>;
 
     async fn list_turn_history(&self, task: TaskId) -> Result<Vec<TurnHistoryEntry>>;
 }

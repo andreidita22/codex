@@ -7,6 +7,8 @@ mod ui;
 pub mod util;
 pub use cli::Cli;
 
+use codex_cloud_tasks_client::CreateTaskReq;
+use codex_cloud_tasks_client::TaskKind;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,6 +31,22 @@ fn level_from_status(status: codex_cloud_tasks_client::ApplyStatus) -> app::Appl
         codex_cloud_tasks_client::ApplyStatus::Partial => app::ApplyResultLevel::Partial,
         codex_cloud_tasks_client::ApplyStatus::Error => app::ApplyResultLevel::Error,
     }
+}
+
+fn derive_task_title(prompt: &str) -> String {
+    let fallback = "Codex Task";
+    let title = prompt
+        .lines()
+        .find_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        })
+        .unwrap_or(fallback);
+    title.chars().take(120).collect()
 }
 
 fn spawn_preflight(
@@ -972,7 +990,18 @@ pub async fn run_main(_cli: Cli, _codex_linux_sandbox_exe: Option<PathBuf>) -> a
                                                 let backend = Arc::clone(&backend);
                                                 let best_of_n = page.best_of_n;
                                                 tokio::spawn(async move {
-                                                    let result = codex_cloud_tasks_client::CloudBackend::create_task(&*backend, &env, &text, "main", false, best_of_n).await;
+                                                    let prompt = text.clone();
+                                                    let title = derive_task_title(&prompt);
+                                                    let request = CreateTaskReq {
+                                                        title,
+                                                        prompt,
+                                                        best_of: best_of_n as u32,
+                                                        repo: None,
+                                                        base: Some("main".to_string()),
+                                                        env: Some(env),
+                                                        task_kind: TaskKind::Code,
+                                                    };
+                                                    let result = codex_cloud_tasks_client::CloudBackend::create_task(&*backend, request).await;
                                                     let evt = match result {
                                                         Ok(ok) => app::AppEvent::NewTaskSubmitted(Ok(ok)),
                                                         Err(e) => app::AppEvent::NewTaskSubmitted(Err(format!("{e}"))),

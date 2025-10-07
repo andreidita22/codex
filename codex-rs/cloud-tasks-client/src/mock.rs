@@ -172,15 +172,16 @@ impl CloudBackend for MockClient {
         Ok(vec![first_turn, second_turn])
     }
 
-    async fn create_task(
-        &self,
-        env_id: &str,
-        prompt: &str,
-        git_ref: &str,
-        qa_mode: bool,
-        best_of_n: usize,
-    ) -> Result<crate::CreatedTask> {
-        let _ = (env_id, prompt, git_ref, qa_mode, best_of_n);
+    async fn create_task(&self, req: crate::CreateTaskReq) -> Result<crate::CreatedTask> {
+        let _ = (
+            req.title,
+            req.prompt,
+            req.repo,
+            req.base,
+            req.env,
+            req.task_kind,
+            req.best_of,
+        );
         let id = format!("task_local_{}", chrono::Utc::now().timestamp_millis());
         Ok(crate::CreatedTask { id: TaskId(id) })
     }

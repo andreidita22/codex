@@ -3,6 +3,7 @@ use crate::ApplyStatus;
 use crate::AttemptStatus;
 use crate::CloudBackend;
 use crate::CloudTaskError;
+use crate::CreateTaskReq;
 use crate::DiffSummary;
 use crate::Result;
 use crate::TaskId;
@@ -96,17 +97,8 @@ impl CloudBackend for HttpClient {
         self.apply_api().run(id, diff_override, true).await
     }
 
-    async fn create_task(
-        &self,
-        env_id: &str,
-        prompt: &str,
-        git_ref: &str,
-        qa_mode: bool,
-        best_of_n: usize,
-    ) -> Result<crate::CreatedTask> {
-        self.tasks_api()
-            .create(env_id, prompt, git_ref, qa_mode, best_of_n)
-            .await
+    async fn create_task(&self, req: CreateTaskReq) -> Result<crate::CreatedTask> {
+        self.tasks_api().create(&req).await
     }
 
     async fn list_turn_history(&self, _task: TaskId) -> Result<Vec<TurnHistoryEntry>> {
@@ -226,19 +218,12 @@ mod api {
             })
         }
 
-        pub(crate) async fn create(
-            &self,
-            env_id: &str,
-            prompt: &str,
-            git_ref: &str,
-            qa_mode: bool,
-            best_of_n: usize,
-        ) -> Result<crate::CreatedTask> {
+        pub(crate) async fn create(&self, req: &CreateTaskReq) -> Result<crate::CreatedTask> {
             let mut input_items: Vec<serde_json::Value> = Vec::new();
             input_items.push(serde_json::json!({
                 "type": "message",
                 "role": "user",
-                "content": [{ "content_type": "text", "text": prompt }]
+                "content": [{ "content_type": "text", "text": req.prompt }]
             }));
 
             if let Ok(diff) = std::env::var("CODEX_STARTING_DIFF")
@@ -250,38 +235,69 @@ mod api {
                 }));
             }
 
-            let mut request_body = serde_json::json!({
-                "new_task": {
-                    "environment_id": env_id,
-                    "branch": git_ref,
-                    "run_environment_in_qa_mode": qa_mode,
-                },
-                "input_items": input_items,
-            });
-
-            if best_of_n > 1
-                && let Some(obj) = request_body.as_object_mut()
-            {
-                obj.insert(
-                    "metadata".to_string(),
-                    serde_json::json!({ "best_of_n": best_of_n }),
+            let mut new_task = serde_json::Map::new();
+            new_task.insert(
+                "run_environment_in_qa_mode".to_string(),
+                serde_json::Value::Bool(false),
+            );
+            if let Some(env) = req.env.as_ref() {
+                new_task.insert(
+                    "environment_id".to_string(),
+                    serde_json::Value::String(env.clone()),
                 );
             }
+            if let Some(base) = req.base.as_ref() {
+                new_task.insert(
+                    "branch".to_string(),
+                    serde_json::Value::String(base.clone()),
+                );
+            }
+            if !req.title.trim().is_empty() {
+                new_task.insert(
+                    "title".to_string(),
+                    serde_json::Value::String(req.title.clone()),
+                );
+            }
+
+            let mut metadata = serde_json::Map::new();
+            metadata.insert(
+                "task_kind".to_string(),
+                serde_json::Value::String(req.task_kind.as_label().to_string()),
+            );
+            metadata.insert(
+                "best_of_n".to_string(),
+                serde_json::Value::Number(serde_json::Number::from(req.best_of)),
+            );
+            if let Some(repo) = req.repo.as_ref() {
+                metadata.insert("repo".to_string(), serde_json::Value::String(repo.clone()));
+            }
+
+            let mut request_body = serde_json::Map::new();
+            request_body.insert("new_task".to_string(), serde_json::Value::Object(new_task));
+            request_body.insert(
+                "input_items".to_string(),
+                serde_json::Value::Array(input_items),
+            );
+            if !metadata.is_empty() {
+                request_body.insert("metadata".to_string(), serde_json::Value::Object(metadata));
+            }
+
+            let request_body = serde_json::Value::Object(request_body);
 
             match self.backend.create_task(request_body).await {
                 Ok(id) => {
                     append_error_log(&format!(
                         "new_task: created id={id} env={} prompt_chars={}",
-                        env_id,
-                        prompt.chars().count()
+                        req.env.as_deref().unwrap_or("<none>"),
+                        req.prompt.chars().count()
                     ));
                     Ok(crate::CreatedTask { id: TaskId(id) })
                 }
                 Err(e) => {
                     append_error_log(&format!(
                         "new_task: create failed env={} prompt_chars={}: {}",
-                        env_id,
-                        prompt.chars().count(),
+                        req.env.as_deref().unwrap_or("<none>"),
+                        req.prompt.chars().count(),
                         e
                     ));
                     Err(map_http_error("create_task", e))
@@ -383,7 +399,7 @@ mod api {
             };
             let r = codex_git_apply::apply_git_patch(&req).map_err(|e| {
                 let source = anyhow::Error::new(e);
-                let message = format!("git apply failed to run: {}", source);
+                let message = format!("git apply failed to run: {source}");
                 CloudTaskError::Io { message, source }
             })?;
 
