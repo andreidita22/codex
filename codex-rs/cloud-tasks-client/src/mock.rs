@@ -7,6 +7,7 @@ use crate::TaskId;
 use crate::TaskStatus;
 use crate::TaskSummary;
 use crate::TurnAttempt;
+use crate::TurnHistoryEntry;
 use crate::api::TaskText;
 use chrono::Utc;
 
@@ -37,15 +38,17 @@ impl CloudBackend for MockClient {
             None => Some("Global".to_string()),
         };
         let mut out = Vec::new();
-        for (id_str, title, status) in rows {
+        for (idx, (id_str, title, status)) in rows.into_iter().enumerate() {
             let id = TaskId(id_str.to_string());
             let diff = mock_diff_for(&id);
             let (a, d) = count_from_unified(&diff);
+            let updated_at = Utc::now() - chrono::Duration::minutes(idx as i64 * 10);
+            let is_review = id_str == "T-1002";
             out.push(TaskSummary {
                 id,
                 title: title.to_string(),
                 status,
-                updated_at: Utc::now(),
+                updated_at,
                 environment_id: environment_id.clone(),
                 environment_label: environment_label.clone(),
                 summary: DiffSummary {
@@ -53,7 +56,7 @@ impl CloudBackend for MockClient {
                     lines_added: a,
                     lines_removed: d,
                 },
-                is_review: false,
+                is_review,
                 attempt_total: Some(if id_str == "T-1000" { 2 } else { 1 }),
             });
         }
@@ -123,6 +126,52 @@ impl CloudBackend for MockClient {
         Ok(Vec::new())
     }
 
+    async fn list_turn_history(&self, task: TaskId) -> Result<Vec<TurnHistoryEntry>> {
+        let now = Utc::now();
+        let base_diff = mock_diff_for(&task);
+        let attempts = vec![
+            TurnAttempt {
+                turn_id: format!("{}-turn-1", task.0),
+                attempt_placement: Some(0),
+                created_at: Some(now),
+                status: AttemptStatus::Completed,
+                diff: Some(base_diff.clone()),
+                messages: vec!["Base attempt".to_string()],
+            },
+            TurnAttempt {
+                turn_id: format!("{}-turn-1-alt", task.0),
+                attempt_placement: Some(1),
+                created_at: Some(now + chrono::Duration::seconds(5)),
+                status: AttemptStatus::Completed,
+                diff: Some(base_diff.replace("Task:", "Alt variant")),
+                messages: vec!["Alternate attempt".to_string()],
+            },
+        ];
+
+        let first_turn = TurnHistoryEntry {
+            turn_id: format!("{}-turn-1", task.0),
+            created_at: Some(now),
+            prompt: Some("Mock prompt: summarize changes".to_string()),
+            attempts,
+        };
+
+        let second_turn = TurnHistoryEntry {
+            turn_id: format!("{}-turn-2", task.0),
+            created_at: Some(now + chrono::Duration::minutes(5)),
+            prompt: Some("Mock prompt: follow up".to_string()),
+            attempts: vec![TurnAttempt {
+                turn_id: format!("{}-turn-2", task.0),
+                attempt_placement: Some(0),
+                created_at: Some(now + chrono::Duration::minutes(5)),
+                status: AttemptStatus::Completed,
+                diff: Some(mock_diff_for(&task)),
+                messages: vec!["Follow-up attempt".to_string()],
+            }],
+        };
+
+        Ok(vec![first_turn, second_turn])
+    }
+
     async fn create_task(
         &self,
         env_id: &str,
@@ -176,5 +225,35 @@ fn count_from_unified(diff: &str) -> (usize, usize) {
             }
         }
         (a, d)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn list_turn_history_returns_mock_data() {
+        let client = MockClient;
+        let turns = client
+            .list_turn_history(TaskId("T-1000".to_string()))
+            .await
+            .expect("mock history");
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].attempts.len(), 2);
+        assert_eq!(turns[1].attempts.len(), 1);
+        assert!(
+            turns[0]
+                .prompt
+                .as_ref()
+                .is_some_and(|prompt| prompt.contains("summarize"))
+        );
+    }
+
+    #[tokio::test]
+    async fn list_tasks_marks_review_items() {
+        let client = MockClient;
+        let tasks = client.list_tasks(None).await.expect("list tasks");
+        assert!(tasks.iter().any(|task| task.is_review));
     }
 }

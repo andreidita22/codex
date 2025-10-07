@@ -2,19 +2,58 @@ use chrono::DateTime;
 use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
+use std::fmt;
 
 pub type Result<T> = std::result::Result<T, CloudTaskError>;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum CloudTaskError {
-    #[error("unimplemented: {0}")]
     Unimplemented(&'static str),
-    #[error("http error: {0}")]
-    Http(String),
-    #[error("io error: {0}")]
-    Io(String),
-    #[error("{0}")]
+    Http {
+        message: String,
+        request_id: Option<String>,
+        source: anyhow::Error,
+    },
+    Io {
+        message: String,
+        source: anyhow::Error,
+    },
     Msg(String),
+}
+
+impl CloudTaskError {
+    pub fn request_id(&self) -> Option<&str> {
+        match self {
+            Self::Http { request_id, .. } => request_id.as_deref(),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for CloudTaskError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unimplemented(msg) => write!(f, "unimplemented: {msg}"),
+            Self::Http {
+                message,
+                request_id: Some(id),
+                ..
+            } => write!(f, "{message} (request id: {id})"),
+            Self::Http { message, .. } => write!(f, "{message}"),
+            Self::Io { message, .. } => write!(f, "{message}"),
+            Self::Msg(msg) => write!(f, "{msg}"),
+        }
+    }
+}
+
+impl std::error::Error for CloudTaskError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Http { source, .. } => Some(source.as_ref()),
+            Self::Io { source, .. } => Some(source.as_ref()),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +107,14 @@ pub struct TurnAttempt {
     pub status: AttemptStatus,
     pub diff: Option<String>,
     pub messages: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TurnHistoryEntry {
+    pub turn_id: String,
+    pub created_at: Option<DateTime<Utc>>,
+    pub prompt: Option<String>,
+    pub attempts: Vec<TurnAttempt>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,4 +202,36 @@ pub trait CloudBackend: Send + Sync {
         qa_mode: bool,
         best_of_n: usize,
     ) -> Result<CreatedTask>;
+
+    async fn list_turn_history(&self, task: TaskId) -> Result<Vec<TurnHistoryEntry>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CloudTaskError;
+
+    #[test]
+    fn http_error_displays_request_id() {
+        let err = CloudTaskError::Http {
+            message: "create_task failed".to_string(),
+            request_id: Some("REQ-123".to_string()),
+            source: anyhow::Error::msg("boom"),
+        };
+        assert_eq!(
+            format!("{err}"),
+            "create_task failed (request id: REQ-123)"
+        );
+        assert_eq!(err.request_id(), Some("REQ-123"));
+    }
+
+    #[test]
+    fn http_error_without_request_id_hides_suffix() {
+        let err = CloudTaskError::Http {
+            message: "list_tasks failed".to_string(),
+            request_id: None,
+            source: anyhow::Error::msg("boom"),
+        };
+        assert_eq!(format!("{err}"), "list_tasks failed");
+        assert_eq!(err.request_id(), None);
+    }
 }
