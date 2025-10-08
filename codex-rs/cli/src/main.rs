@@ -22,7 +22,7 @@ use owo_colors::OwoColorize;
 use std::path::PathBuf;
 use supports_color::Stream;
 
-mod cloud_cmd;
+mod cloud;
 mod mcp_cmd;
 
 use crate::mcp_cmd::McpCli;
@@ -92,7 +92,7 @@ enum Subcommand {
     GenerateTs(GenerateTsCommand),
     /// [EXPERIMENTAL] Browse tasks from Codex Cloud and apply changes locally.
     #[clap(name = "cloud", alias = "cloud-tasks")]
-    Cloud(cloud_cmd::CloudCli),
+    Cloud(cloud::CloudCli),
 
     /// Internal: run the responses API proxy.
     #[clap(hide = true)]
@@ -342,7 +342,7 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 &mut cloud_cli.config_overrides,
                 root_config_overrides.clone(),
             );
-            cloud_cmd::run_cloud_command(cloud_cli, codex_linux_sandbox_exe).await?;
+            cloud::run_cloud_command(cloud_cli, codex_linux_sandbox_exe).await?;
         }
         Some(Subcommand::Sandbox(sandbox_args)) => match sandbox_args.cmd {
             SandboxCommand::Macos(mut seatbelt_cli) => {

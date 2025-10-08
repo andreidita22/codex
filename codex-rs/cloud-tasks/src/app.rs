@@ -445,9 +445,8 @@ mod tests {
         async fn list_turn_history(
             &self,
             _task: TaskId,
-        ) -> codex_cloud_tasks_client::Result<
-            Vec<codex_cloud_tasks_client::TurnHistoryEntry>,
-        > {
+        ) -> codex_cloud_tasks_client::Result<Vec<codex_cloud_tasks_client::TurnHistoryEntry>>
+        {
             Err(codex_cloud_tasks_client::CloudTaskError::Unimplemented(
                 "not used in test",
             ))
