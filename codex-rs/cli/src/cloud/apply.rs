@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -7,8 +8,9 @@ use anyhow::anyhow;
 use anyhow::bail;
 use codex_git_apply::ApplyGitRequest;
 use codex_git_apply::apply_git_patch;
-use futures::stream::StreamExt;
-use futures::stream::{self};
+use futures::StreamExt;
+use futures::TryStreamExt;
+use futures::stream;
 use tokio::process::Command;
 use tokio::sync::Semaphore;
 use which::which;
@@ -63,42 +65,55 @@ pub async fn run_apply(context: &CloudContext, args: &ApplyArgs) -> Result<()> {
         .clone()
         .unwrap_or_else(|| default_branch_prefix(&data.task_id));
     let branch_prefix = sanitize_branch(&branch_prefix);
+    let task_id = data.task_id.clone();
 
     let requested_jobs = args.jobs.unwrap_or(1).max(1);
     let jobs = if args.worktrees { requested_jobs } else { 1 };
 
     if !args.worktrees && requested_jobs > 1 {
-        println!("Info: using jobs=1 because --worktrees is disabled.");
+        println!("Info: using jobs=1 because --worktrees is disabled (single checkout).");
     }
 
     if jobs == 1 {
         for variant in variants {
-            apply_variant(&repo_root, &branch_prefix, &base_ref, &data, variant, args).await?;
+            apply_variant(
+                &repo_root,
+                &branch_prefix,
+                &base_ref,
+                &task_id,
+                variant,
+                args,
+            )
+            .await?;
         }
     } else {
         let semaphore = Arc::new(Semaphore::new(jobs));
-        let tasks = stream::iter(variants.into_iter().map(|variant| {
+        stream::iter(variants.into_iter().map(|variant| {
             let repo_root = repo_root.clone();
             let branch_prefix = branch_prefix.clone();
             let base_ref = base_ref.clone();
             let args = args.clone();
-            let data = data.clone();
+            let task_id = task_id.clone();
             let semaphore = Arc::clone(&semaphore);
             async move {
                 let _permit = semaphore
                     .acquire()
                     .await
                     .context("semaphore closed while applying variants")?;
-                apply_variant(&repo_root, &branch_prefix, &base_ref, &data, variant, &args).await
+                apply_variant(
+                    &repo_root,
+                    &branch_prefix,
+                    &base_ref,
+                    &task_id,
+                    variant,
+                    &args,
+                )
+                .await
             }
         }))
         .buffer_unordered(jobs)
-        .collect::<Vec<_>>()
-        .await;
-
-        for result in tasks {
-            result?;
-        }
+        .try_collect::<()>()
+        .await?;
     }
 
     if !args.worktrees
@@ -138,7 +153,7 @@ async fn apply_variant(
     repo_root: &Path,
     branch_prefix: &str,
     base_ref: &str,
-    data: &TaskData,
+    task_id: &str,
     variant: VariantData,
     args: &ApplyArgs,
 ) -> Result<()> {
@@ -155,21 +170,13 @@ async fn apply_variant(
             &branch_name,
             diff,
             variant.index,
-            &data.task_id,
+            task_id,
             args,
         )
         .await?;
     } else {
         checkout_branch(repo_root, &branch_name, base_ref).await?;
-        apply_in_path(
-            repo_root,
-            &branch_name,
-            diff,
-            variant.index,
-            &data.task_id,
-            args,
-        )
-        .await?;
+        apply_in_path(repo_root, &branch_name, diff, variant.index, task_id, args).await?;
     }
     Ok(())
 }
@@ -186,31 +193,49 @@ async fn apply_in_path(
         cwd: cwd.to_path_buf(),
         diff: diff.to_string(),
         revert: false,
-        preflight: false,
+        preflight: true,
         three_way: false,
     };
-    let mut result = apply_git_patch(&request)
-        .with_context(|| format!("Failed to apply patch for variant {variant_index}"))?;
+    let preflight = apply_git_patch(&request)
+        .with_context(|| format!("Preflight failed for variant {variant_index}"))?;
+
+    request.preflight = false;
+    request.three_way = false;
 
     let devnull_patch = diff.contains("\n--- /dev/null\n") || diff.contains("\n+++ /dev/null\n");
 
-    if result.exit_code != 0 {
-        if args.three_way && !devnull_patch {
-            request.three_way = true;
-            result = apply_git_patch(&request)
-                .with_context(|| format!("Failed to apply patch for variant {variant_index}"))?;
-        }
+    let result = if preflight.exit_code == 0 {
+        apply_git_patch(&request)
+            .with_context(|| format!("Failed to apply patch for variant {variant_index}"))?
+    } else if args.three_way && !devnull_patch {
+        request.three_way = true;
+        apply_git_patch(&request).with_context(|| {
+            format!("Failed to three-way apply patch for variant {variant_index}")
+        })?
+    } else {
+        bail!(
+            "Patch for variant {variant_index} did not apply cleanly on branch {branch} (try --three-way)"
+        );
+    };
 
-        if result.exit_code != 0 {
-            bail!(
-                "Patch for variant {variant_index} did not apply cleanly on branch {branch}.\nstdout:\n{}\nstderr:\n{}",
-                result.stdout,
-                result.stderr
-            );
-        }
+    if result.exit_code != 0 {
+        bail!(
+            "Patch for variant {variant_index} did not apply cleanly on branch {branch}.\nstdout:\n{}\nstderr:\n{}",
+            result.stdout,
+            result.stderr
+        );
     }
 
-    run_git(cwd, ["add", "-A"]).await?;
+    let paths = extract_paths_from_diff(diff);
+    if paths.is_empty() {
+        bail!("Patch applied but no paths detected to stage for variant {variant_index}");
+    }
+    for chunk in paths.chunks(32) {
+        let mut args_vec = vec!["add".to_string(), "--".to_string()];
+        args_vec.extend(chunk.iter().cloned());
+        let args_iter: Vec<&str> = args_vec.iter().map(String::as_str).collect();
+        run_git(cwd, args_iter).await?;
+    }
 
     let message = commit_message(args, task_id, variant_index);
     run_git(cwd, ["commit", "-m", message.as_str()])
@@ -258,5 +283,37 @@ fn commit_message(args: &ApplyArgs, task_id: &str, variant_index: usize) -> Stri
             .replace("{task_id}", task_id)
             .replace("{variant}", &variant_index.to_string()),
         None => format!("Apply {task_id} variant {variant_index}"),
+    }
+}
+
+fn extract_paths_from_diff(diff: &str) -> Vec<String> {
+    let mut paths = BTreeSet::new();
+    for line in diff.lines() {
+        if let Some(path) = line.strip_prefix("+++ b/") {
+            if path != "/dev/null" {
+                paths.insert(path.to_string());
+            }
+        } else if let Some(path) = line.strip_prefix("--- a/")
+            && path != "/dev/null"
+        {
+            paths.insert(path.to_string());
+        }
+    }
+    paths.into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_paths_handles_creates_and_deletes() {
+        let diff = "diff --git a/src/foo.rs b/src/foo.rs\n--- a/src/foo.rs\n+++ b/src/foo.rs\n@@\n+fn main() {}\n";
+        let paths = extract_paths_from_diff(diff);
+        assert_eq!(paths, vec!["src/foo.rs"]);
+
+        let diff_delete = "diff --git a/src/old.rs b/src/old.rs\n--- a/src/old.rs\n+++ /dev/null\n@@\n-delete me\n";
+        let paths = extract_paths_from_diff(diff_delete);
+        assert_eq!(paths, vec!["src/old.rs"]);
     }
 }
