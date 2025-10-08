@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context as AnyhowContext;
 use anyhow::Result;
@@ -15,11 +16,15 @@ use codex_cloud_tasks_client::CreateTaskReq;
 use codex_cloud_tasks_client::HttpClient;
 use codex_cloud_tasks_client::MockClient;
 use codex_cloud_tasks_client::TaskId;
+use codex_cloud_tasks_client::TaskListPage;
+use codex_cloud_tasks_client::TaskListRequest;
 use codex_cloud_tasks_client::TaskSummary;
 use codex_cloud_tasks_client::TaskText;
 use codex_cloud_tasks_client::TurnAttempt;
+use codex_cloud_tasks_client::TurnHistoryEntry;
 use codex_common::CliConfigOverrides;
 use codex_login::AuthManager;
+use tokio::time::sleep;
 
 use crate::cloud::types::TaskData;
 use crate::cloud::types::VariantData;
@@ -110,7 +115,35 @@ impl CloudContext {
     }
 
     pub async fn list_tasks(&self) -> Result<Vec<TaskSummary>> {
-        self.backend.list_tasks(None).await.map_err(map_cloud_error)
+        let request = TaskListRequest::default();
+        let TaskListPage { tasks, .. } = self.fetch_task_page(request).await?;
+        Ok(tasks)
+    }
+
+    pub async fn try_fetch_task_page(
+        &self,
+        request: TaskListRequest,
+    ) -> std::result::Result<TaskListPage, CloudTaskError> {
+        const MAX_RETRIES: usize = 2;
+        let mut attempts = 0usize;
+        let mut delay = Duration::from_millis(100);
+        loop {
+            match self.backend.list_tasks_page(request.clone()).await {
+                Ok(page) => return Ok(page),
+                Err(err) if should_retry_http(&err) && attempts < MAX_RETRIES => {
+                    attempts += 1;
+                    sleep(delay).await;
+                    delay = delay.saturating_mul(2);
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    pub async fn fetch_task_page(&self, request: TaskListRequest) -> Result<TaskListPage> {
+        self.try_fetch_task_page(request)
+            .await
+            .map_err(map_cloud_error)
     }
 
     pub async fn get_task_text(&self, task_id: &str) -> Result<TaskText> {
@@ -125,6 +158,33 @@ impl CloudContext {
         let task_id = TaskId(task_id.to_string());
         self.backend
             .get_task_diff(task_id)
+            .await
+            .map_err(map_cloud_error)
+    }
+
+    pub async fn try_fetch_turn_history(
+        &self,
+        task_id: TaskId,
+    ) -> std::result::Result<Vec<TurnHistoryEntry>, CloudTaskError> {
+        const MAX_RETRIES: usize = 2;
+        let mut attempts = 0usize;
+        let mut delay = Duration::from_millis(100);
+        loop {
+            match self.backend.list_turn_history(task_id.clone()).await {
+                Ok(history) => return Ok(history),
+                Err(err) if should_retry_http(&err) && attempts < MAX_RETRIES => {
+                    attempts += 1;
+                    sleep(delay).await;
+                    delay = delay.saturating_mul(2);
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    pub async fn fetch_turn_history(&self, task_id: &str) -> Result<Vec<TurnHistoryEntry>> {
+        let task_id = TaskId(task_id.to_string());
+        self.try_fetch_turn_history(task_id)
             .await
             .map_err(map_cloud_error)
     }
@@ -255,4 +315,29 @@ impl CloudContext {
 
 fn map_cloud_error(err: CloudTaskError) -> anyhow::Error {
     anyhow!(err)
+}
+
+fn should_retry_http(err: &CloudTaskError) -> bool {
+    match err {
+        CloudTaskError::Http { message, .. } => {
+            if let Some(code) = parse_status_code(message) {
+                return code == 429 || (500..=599).contains(&code);
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+fn parse_status_code(message: &str) -> Option<u16> {
+    let tail = message.rsplit("failed: ").next()?;
+    let digits: String = tail
+        .trim_start()
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse().ok()
 }

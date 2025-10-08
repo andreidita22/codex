@@ -7,6 +7,8 @@ use crate::CreateTaskReq;
 use crate::DiffSummary;
 use crate::Result;
 use crate::TaskId;
+use crate::TaskListPage;
+use crate::TaskListRequest;
 use crate::TaskStatus;
 use crate::TaskSummary;
 use crate::TurnAttempt;
@@ -62,8 +64,8 @@ impl HttpClient {
 
 #[async_trait::async_trait]
 impl CloudBackend for HttpClient {
-    async fn list_tasks(&self, env: Option<&str>) -> Result<Vec<TaskSummary>> {
-        self.tasks_api().list(env).await
+    async fn list_tasks_page(&self, request: TaskListRequest) -> Result<TaskListPage> {
+        self.tasks_api().list_page(request).await
     }
 
     async fn get_task_diff(&self, id: TaskId) -> Result<Option<String>> {
@@ -102,16 +104,19 @@ impl CloudBackend for HttpClient {
         self.tasks_api().create(&req).await
     }
 
-    async fn list_turn_history(&self, _task: TaskId) -> Result<Vec<TurnHistoryEntry>> {
-        Err(CloudTaskError::Unimplemented("list_turn_history"))
+    async fn list_turn_history(&self, task: TaskId) -> Result<Vec<TurnHistoryEntry>> {
+        self.tasks_api().turn_history(task).await
     }
 }
 
 mod api {
     use super::*;
+    use serde_json::Map;
     use serde_json::Value;
     use std::cmp::Ordering;
     use std::collections::HashMap;
+    use std::collections::VecDeque;
+    use std::convert::TryFrom;
 
     #[derive(Serialize)]
     struct NewTaskBody<'a> {
@@ -177,10 +182,32 @@ mod api {
             }
         }
 
-        pub(crate) async fn list(&self, env: Option<&str>) -> Result<Vec<TaskSummary>> {
+        pub(crate) async fn list_page(&self, request: TaskListRequest) -> Result<TaskListPage> {
+            let env_param = request.environment_id.as_deref();
+            let cursor_param = request.cursor.as_deref();
+            let limit_param = request.limit.and_then(|value| i32::try_from(value).ok());
+            let status_param = if request.status_filters.is_empty() {
+                None
+            } else {
+                Some(
+                    request
+                        .status_filters
+                        .iter()
+                        .map(|status| status.as_label())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                )
+            };
             let resp = self
                 .backend
-                .list_tasks(Some(20), Some("current"), env)
+                .list_tasks(
+                    limit_param,
+                    Some(request.feed.as_filter()),
+                    env_param,
+                    Some(request.sort.as_query()),
+                    cursor_param,
+                    status_param.as_deref(),
+                )
                 .await
                 .map_err(|e| map_http_error("list_tasks", e))?;
 
@@ -190,12 +217,24 @@ mod api {
                 .map(map_task_list_item_to_summary)
                 .collect();
 
+            let limit_desc = request
+                .limit
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "default".to_string());
             append_error_log(&format!(
-                "http.list_tasks: env={} items={}",
-                env.unwrap_or("<all>"),
-                tasks.len()
+                "http.list_tasks: feed={} env={} status={} limit={} cursor={} items={} next={}",
+                request.feed.as_filter(),
+                env_param.unwrap_or("<all>"),
+                status_param.as_deref().unwrap_or("<none>"),
+                limit_desc,
+                cursor_param.unwrap_or("<none>"),
+                tasks.len(),
+                resp.cursor.as_deref().unwrap_or("<none>")
             ));
-            Ok(tasks)
+            Ok(TaskListPage {
+                tasks,
+                next_cursor: resp.cursor,
+            })
         }
 
         pub(crate) async fn diff(&self, id: TaskId) -> Result<Option<String>> {
@@ -268,6 +307,15 @@ mod api {
                 attempt_placement,
                 attempt_status,
             })
+        }
+
+        pub(crate) async fn turn_history(&self, id: TaskId) -> Result<Vec<TurnHistoryEntry>> {
+            let payload = self
+                .backend
+                .get_task_turn_history(&id.0)
+                .await
+                .map_err(|e| map_http_error("get_task_turn_history", e))?;
+            parse_turn_history(payload)
         }
 
         pub(crate) async fn create(&self, req: &CreateTaskReq) -> Result<crate::CreatedTask> {
@@ -673,6 +721,179 @@ mod api {
         Some(DateTime::<Utc>::from(
             std::time::UNIX_EPOCH + std::time::Duration::new(secs.max(0) as u64, nanos),
         ))
+    }
+
+    fn parse_turn_history(payload: Value) -> Result<Vec<TurnHistoryEntry>> {
+        let turn_values = extract_turn_values(payload).map_err(CloudTaskError::Msg)?;
+        let mut entries = Vec::with_capacity(turn_values.len());
+        for turn in turn_values {
+            entries.push(parse_turn_entry(turn)?);
+        }
+        Ok(entries)
+    }
+
+    fn extract_turn_values(payload: Value) -> std::result::Result<Vec<Value>, String> {
+        if let Some(arr) = payload.as_array() {
+            return Ok(arr.clone());
+        }
+        if let Some(obj) = payload.as_object() {
+            for key in ["turns", "turn_history", "history", "items"] {
+                if let Some(arr) = obj.get(key).and_then(Value::as_array) {
+                    return Ok(arr.clone());
+                }
+            }
+        }
+        Err(format!("unexpected turn history payload: {payload}"))
+    }
+
+    fn parse_turn_entry(value: Value) -> Result<TurnHistoryEntry> {
+        let obj = value.as_object().ok_or_else(|| {
+            CloudTaskError::Msg("turn history entry must be an object".to_string())
+        })?;
+        let turn_id = obj
+            .get("turn_id")
+            .or_else(|| obj.get("id"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| CloudTaskError::Msg("turn history entry missing turn_id".to_string()))?
+            .to_string();
+        let created_at = parse_history_timestamp(obj.get("created_at"));
+        let prompt = obj
+            .get("prompt")
+            .or_else(|| obj.get("prompt_text"))
+            .or_else(|| obj.get("input_prompt"))
+            .and_then(Value::as_str)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                let texts = gather_messages(obj.get("input_items"));
+                (!texts.is_empty()).then(|| texts.join("\n"))
+            });
+        let attempt_values = obj
+            .get("attempts")
+            .or_else(|| obj.get("turn_attempts"))
+            .or_else(|| obj.get("sibling_turns"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut attempts = Vec::with_capacity(attempt_values.len());
+        for (idx, attempt) in attempt_values.into_iter().enumerate() {
+            attempts.push(parse_history_attempt(&turn_id, idx, attempt)?);
+        }
+        Ok(TurnHistoryEntry {
+            turn_id,
+            created_at,
+            prompt,
+            attempts,
+        })
+    }
+
+    fn parse_history_attempt(
+        parent_turn_id: &str,
+        index: usize,
+        value: Value,
+    ) -> Result<TurnAttempt> {
+        let obj = value.as_object().ok_or_else(|| {
+            CloudTaskError::Msg("turn attempt entry must be an object".to_string())
+        })?;
+        let turn_id = obj
+            .get("turn_id")
+            .or_else(|| obj.get("id"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{parent_turn_id}-attempt-{index}"));
+        let attempt_placement = obj
+            .get("attempt_placement")
+            .or_else(|| obj.get("placement"))
+            .and_then(Value::as_i64);
+        let created_at = parse_history_timestamp(obj.get("created_at"));
+        let status = attempt_status_from_str(
+            obj.get("status")
+                .or_else(|| obj.get("turn_status"))
+                .and_then(Value::as_str),
+        );
+        let mut messages = gather_messages(obj.get("messages"));
+        if messages.is_empty() {
+            messages = gather_messages(obj.get("output_items"));
+        }
+        let diff = extract_diff_from_attempt(obj);
+        Ok(TurnAttempt {
+            turn_id,
+            attempt_placement,
+            created_at,
+            status,
+            diff,
+            messages,
+        })
+    }
+
+    fn gather_messages(source: Option<&Value>) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut queue = VecDeque::new();
+        if let Some(value) = source {
+            queue.push_back(value);
+        }
+
+        while let Some(cur) = queue.pop_front() {
+            match cur {
+                Value::String(s) => out.push(s.to_string()),
+                Value::Array(items) => {
+                    for item in items.iter().rev() {
+                        queue.push_front(item);
+                    }
+                }
+                Value::Object(map) => {
+                    if let Some(messages) = map.get("messages") {
+                        queue.push_front(messages);
+                    }
+                    if let Some(content) = map.get("content") {
+                        queue.push_front(content);
+                    }
+                    if let Some(text) = map.get("text").and_then(Value::as_str) {
+                        out.push(text.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        out
+    }
+
+    fn extract_diff_from_attempt(obj: &Map<String, Value>) -> Option<String> {
+        if let Some(diff) = obj.get("diff").and_then(Value::as_str)
+            && !diff.is_empty()
+        {
+            return Some(diff.to_string());
+        }
+        if let Some(diff) = obj.get("output_diff").and_then(Value::as_str)
+            && !diff.is_empty()
+        {
+            return Some(diff.to_string());
+        }
+        if let Some(items) = obj.get("output_items").and_then(Value::as_array) {
+            for item in items {
+                if let Some(map) = item.as_object() {
+                    let typ = map.get("type").and_then(Value::as_str);
+                    if typ == Some("output_diff")
+                        && let Some(diff) = map.get("diff").and_then(Value::as_str)
+                        && !diff.is_empty()
+                    {
+                        return Some(diff.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn parse_history_timestamp(raw: Option<&Value>) -> Option<DateTime<Utc>> {
+        if let Some(Value::String(s)) = raw {
+            DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
+        } else {
+            parse_timestamp_value(raw)
+        }
     }
 
     fn map_task_list_item_to_summary(src: backend::TaskListItem) -> TaskSummary {

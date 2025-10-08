@@ -3,8 +3,12 @@ use std::path::PathBuf;
 use clap::ArgGroup;
 use clap::Args;
 use clap::Subcommand;
+use clap::ValueEnum;
 use codex_backend_openapi_models::models::TaskListItem;
 use codex_cloud_tasks_client::AttemptStatus;
+use codex_cloud_tasks_client::TaskFeed;
+use codex_cloud_tasks_client::TaskListSort;
+use codex_cloud_tasks_client::TaskStatus;
 use codex_cloud_tasks_client::TaskSummary;
 use serde::Serialize;
 
@@ -131,13 +135,154 @@ pub struct WatchArgs {
     pub open_pr: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ListFeedArg {
+    #[value(name = "current")]
+    Current,
+    #[value(name = "history")]
+    History,
+}
+
+impl ListFeedArg {
+    pub fn to_backend(self) -> TaskFeed {
+        match self {
+            Self::Current => TaskFeed::Current,
+            Self::History => TaskFeed::History,
+        }
+    }
+
+    pub fn display(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::History => "history",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ListSortArg {
+    #[value(name = "updated_at:desc", alias = "desc", alias = "updated-desc")]
+    UpdatedDesc,
+    #[value(name = "updated_at:asc", alias = "asc", alias = "updated-asc")]
+    UpdatedAsc,
+}
+
+impl ListSortArg {
+    pub fn to_backend(self) -> TaskListSort {
+        match self {
+            Self::UpdatedDesc => TaskListSort::UpdatedDesc,
+            Self::UpdatedAsc => TaskListSort::UpdatedAsc,
+        }
+    }
+
+    pub fn display(self) -> &'static str {
+        match self {
+            Self::UpdatedDesc => "updated_at:desc",
+            Self::UpdatedAsc => "updated_at:asc",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum StatusFilter {
+    Pending,
+    Ready,
+    #[value(alias = "completed")]
+    Applied,
+    Error,
+}
+
+impl StatusFilter {
+    pub fn to_status(self) -> TaskStatus {
+        match self {
+            Self::Pending => TaskStatus::Pending,
+            Self::Ready => TaskStatus::Ready,
+            Self::Applied => TaskStatus::Applied,
+            Self::Error => TaskStatus::Error,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Ready => "ready",
+            Self::Applied => "applied",
+            Self::Error => "error",
+        }
+    }
+}
+
 #[derive(Debug, Args, Clone)]
-pub struct ListArgs {
+#[command(group = ArgGroup::new("list_output").args(["json", "jsonl"]))]
+pub struct PagedListArgs {
     #[arg(long)]
     pub json: bool,
 
+    #[arg(long = "jsonl")]
+    pub jsonl: bool,
+
+    #[arg(long = "feed", value_enum)]
+    pub feed: Option<ListFeedArg>,
+
+    #[arg(long)]
+    pub all: bool,
+
+    #[arg(long = "max-pages", value_name = "N", default_value_t = 100)]
+    pub max_pages: usize,
+
     #[arg(long)]
     pub filter: Option<String>,
+
+    #[arg(long = "env", value_name = "ENV")]
+    pub environment: Option<String>,
+
+    #[arg(
+        long = "status",
+        value_enum,
+        value_delimiter = ',',
+        value_name = "STATUS"
+    )]
+    pub statuses: Vec<StatusFilter>,
+
+    #[arg(
+        long = "sort",
+        value_enum,
+        default_value_t = ListSortArg::UpdatedDesc,
+        value_name = "ORDER"
+    )]
+    pub sort: ListSortArg,
+
+    #[arg(long = "page-size", value_name = "N", default_value_t = 50)]
+    pub page_size: usize,
+
+    #[arg(long = "page-cursor", value_name = "CURSOR")]
+    pub page_cursor: Option<String>,
+
+    #[arg(long = "include-reviews")]
+    pub include_reviews: bool,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct ListArgs {
+    #[command(flatten)]
+    pub options: PagedListArgs,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct HistoryArgs {
+    pub task_id: String,
+
+    #[arg(long = "turns", value_name = "RANGE")]
+    pub turns: Option<String>,
+
+    #[arg(long = "include-diffs")]
+    pub include_diffs: bool,
+
+    #[arg(long = "out", value_name = "DIR")]
+    pub out_dir: Option<PathBuf>,
+
+    #[arg(long = "jsonl")]
+    pub jsonl: bool,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -231,6 +376,9 @@ pub enum CloudSubcommand {
 
     /// List available Codex Cloud tasks.
     List(ListArgs),
+
+    /// List recently completed Codex Cloud tasks.
+    History(HistoryArgs),
 
     /// Show task metadata and variant summary.
     Show(ShowArgs),

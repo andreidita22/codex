@@ -60,13 +60,24 @@ impl std::error::Error for CloudTaskError {
 #[serde(transparent)]
 pub struct TaskId(pub String);
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TaskStatus {
     Pending,
     Ready,
     Applied,
     Error,
+}
+
+impl TaskStatus {
+    pub fn as_label(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Ready => "ready",
+            Self::Applied => "applied",
+            Self::Error => "error",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,6 +97,65 @@ pub struct TaskSummary {
     /// Number of assistant attempts (best-of-N), when reported by the backend.
     #[serde(default)]
     pub attempt_total: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskFeed {
+    Current,
+    History,
+}
+
+impl TaskFeed {
+    pub const fn as_filter(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::History => "history",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskListSort {
+    UpdatedDesc,
+    UpdatedAsc,
+}
+
+impl TaskListSort {
+    pub const fn as_query(self) -> &'static str {
+        match self {
+            Self::UpdatedDesc => "updated_desc",
+            Self::UpdatedAsc => "updated_asc",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaskListRequest {
+    pub feed: TaskFeed,
+    pub environment_id: Option<String>,
+    pub status_filters: Vec<TaskStatus>,
+    pub limit: Option<usize>,
+    pub cursor: Option<String>,
+    pub sort: TaskListSort,
+}
+
+impl Default for TaskListRequest {
+    fn default() -> Self {
+        Self {
+            feed: TaskFeed::Current,
+            environment_id: None,
+            status_filters: Vec::new(),
+            limit: Some(50),
+            cursor: None,
+            sort: TaskListSort::UpdatedDesc,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaskListPage {
+    pub tasks: Vec<TaskSummary>,
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -206,7 +276,22 @@ impl Default for TaskText {
 
 #[async_trait::async_trait]
 pub trait CloudBackend: Send + Sync {
-    async fn list_tasks(&self, env: Option<&str>) -> Result<Vec<TaskSummary>>;
+    async fn list_tasks_page(&self, request: TaskListRequest) -> Result<TaskListPage>;
+
+    async fn list_history_page(&self, request: TaskListRequest) -> Result<TaskListPage> {
+        let mut request = request;
+        request.feed = TaskFeed::History;
+        self.list_tasks_page(request).await
+    }
+
+    async fn list_tasks(&self, env: Option<&str>) -> Result<Vec<TaskSummary>> {
+        let request = TaskListRequest {
+            environment_id: env.map(str::to_string),
+            ..TaskListRequest::default()
+        };
+        let page = self.list_tasks_page(request).await?;
+        Ok(page.tasks)
+    }
     async fn get_task_diff(&self, id: TaskId) -> Result<Option<String>>;
     /// Return assistant output messages (no diff) when available.
     async fn get_task_messages(&self, id: TaskId) -> Result<Vec<String>>;
