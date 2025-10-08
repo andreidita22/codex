@@ -3,6 +3,7 @@ use crate::ApplyStatus;
 use crate::AttemptStatus;
 use crate::CloudBackend;
 use crate::CloudTaskError;
+use crate::CreateTaskReq;
 use crate::DiffSummary;
 use crate::Result;
 use crate::TaskId;
@@ -16,6 +17,7 @@ use chrono::Utc;
 
 use codex_backend_client as backend;
 use codex_backend_client::CodeTaskDetailsResponseExt;
+use serde::Serialize;
 
 #[derive(Clone)]
 pub struct HttpClient {
@@ -96,17 +98,8 @@ impl CloudBackend for HttpClient {
         self.apply_api().run(id, diff_override, true).await
     }
 
-    async fn create_task(
-        &self,
-        env_id: &str,
-        prompt: &str,
-        git_ref: &str,
-        qa_mode: bool,
-        best_of_n: usize,
-    ) -> Result<crate::CreatedTask> {
-        self.tasks_api()
-            .create(env_id, prompt, git_ref, qa_mode, best_of_n)
-            .await
+    async fn create_task(&self, req: CreateTaskReq) -> Result<crate::CreatedTask> {
+        self.tasks_api().create(&req).await
     }
 
     async fn list_turn_history(&self, _task: TaskId) -> Result<Vec<TurnHistoryEntry>> {
@@ -119,6 +112,57 @@ mod api {
     use serde_json::Value;
     use std::cmp::Ordering;
     use std::collections::HashMap;
+
+    #[derive(Serialize)]
+    struct NewTaskBody<'a> {
+        pub new_task: NewTask<'a>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub metadata: Option<NewTaskMetadata<'a>>,
+        pub input_items: Vec<InputItem<'a>>,
+    }
+
+    #[derive(Serialize, Default)]
+    struct NewTask<'a> {
+        pub run_environment_in_qa_mode: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub environment_id: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub branch: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub title: Option<&'a str>,
+    }
+
+    #[derive(Serialize, Default)]
+    struct NewTaskMetadata<'a> {
+        pub task_kind: &'a str,
+        pub best_of_n: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub repo: Option<&'a str>,
+    }
+
+    #[derive(Serialize)]
+    #[serde(tag = "type")]
+    enum InputItem<'a> {
+        #[serde(rename = "message")]
+        Message {
+            role: &'a str,
+            content: Vec<MessageContent<'a>>,
+        },
+        #[serde(rename = "pre_apply_patch")]
+        PreApplyPatch { output_diff: DiffPayload<'a> },
+    }
+
+    #[derive(Serialize)]
+    struct MessageContent<'a> {
+        #[serde(rename = "content_type")]
+        content_type: &'a str,
+        text: &'a str,
+    }
+
+    #[derive(Serialize)]
+    struct DiffPayload<'a> {
+        diff: &'a str,
+    }
 
     pub(crate) struct Tasks<'a> {
         base_url: &'a str,
@@ -226,62 +270,63 @@ mod api {
             })
         }
 
-        pub(crate) async fn create(
-            &self,
-            env_id: &str,
-            prompt: &str,
-            git_ref: &str,
-            qa_mode: bool,
-            best_of_n: usize,
-        ) -> Result<crate::CreatedTask> {
-            let mut input_items: Vec<serde_json::Value> = Vec::new();
-            input_items.push(serde_json::json!({
-                "type": "message",
-                "role": "user",
-                "content": [{ "content_type": "text", "text": prompt }]
-            }));
+        pub(crate) async fn create(&self, req: &CreateTaskReq) -> Result<crate::CreatedTask> {
+            let starting_diff = std::env::var("CODEX_STARTING_DIFF")
+                .ok()
+                .filter(|diff| !diff.is_empty());
 
-            if let Ok(diff) = std::env::var("CODEX_STARTING_DIFF")
-                && !diff.is_empty()
-            {
-                input_items.push(serde_json::json!({
-                    "type": "pre_apply_patch",
-                    "output_diff": { "diff": diff }
-                }));
+            let mut input_items = vec![InputItem::Message {
+                role: "user",
+                content: vec![MessageContent {
+                    content_type: "text",
+                    text: req.prompt.as_str(),
+                }],
+            }];
+
+            if let Some(diff) = starting_diff.as_deref() {
+                input_items.push(InputItem::PreApplyPatch {
+                    output_diff: DiffPayload { diff },
+                });
             }
 
-            let mut request_body = serde_json::json!({
-                "new_task": {
-                    "environment_id": env_id,
-                    "branch": git_ref,
-                    "run_environment_in_qa_mode": qa_mode,
-                },
-                "input_items": input_items,
+            let title_trimmed = req.title.trim();
+            let new_task = NewTask {
+                run_environment_in_qa_mode: false,
+                environment_id: req.env.as_deref(),
+                branch: req.base.as_deref(),
+                title: (!title_trimmed.is_empty()).then_some(title_trimmed),
+            };
+
+            let metadata = Some(NewTaskMetadata {
+                task_kind: req.task_kind.as_label(),
+                best_of_n: req.best_of,
+                repo: req.repo.as_deref(),
             });
 
-            if best_of_n > 1
-                && let Some(obj) = request_body.as_object_mut()
-            {
-                obj.insert(
-                    "metadata".to_string(),
-                    serde_json::json!({ "best_of_n": best_of_n }),
-                );
-            }
+            let body = NewTaskBody {
+                new_task,
+                metadata,
+                input_items,
+            };
+
+            let request_body = serde_json::to_value(&body).map_err(|e| {
+                CloudTaskError::Msg(format!("Failed to serialize new task request body: {e}"))
+            })?;
 
             match self.backend.create_task(request_body).await {
                 Ok(id) => {
                     append_error_log(&format!(
                         "new_task: created id={id} env={} prompt_chars={}",
-                        env_id,
-                        prompt.chars().count()
+                        req.env.as_deref().unwrap_or("<none>"),
+                        req.prompt.chars().count()
                     ));
                     Ok(crate::CreatedTask { id: TaskId(id) })
                 }
                 Err(e) => {
                     append_error_log(&format!(
                         "new_task: create failed env={} prompt_chars={}: {}",
-                        env_id,
-                        prompt.chars().count(),
+                        req.env.as_deref().unwrap_or("<none>"),
+                        req.prompt.chars().count(),
                         e
                     ));
                     Err(map_http_error("create_task", e))
@@ -379,10 +424,11 @@ mod api {
                 diff: diff.clone(),
                 revert: false,
                 preflight,
+                three_way: true,
             };
             let r = codex_git_apply::apply_git_patch(&req).map_err(|e| {
                 let source = anyhow::Error::new(e);
-                let message = format!("git apply failed to run: {}", source);
+                let message = format!("git apply failed to run: {source}");
                 CloudTaskError::Io { message, source }
             })?;
 

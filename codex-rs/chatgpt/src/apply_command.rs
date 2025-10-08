@@ -63,6 +63,7 @@ async fn apply_diff(diff: &str, cwd: Option<PathBuf>) -> anyhow::Result<()> {
         diff: diff.to_string(),
         revert: false,
         preflight: false,
+        three_way: true,
     };
     let res = codex_git_apply::apply_git_patch(&req)?;
     if res.exit_code != 0 {
