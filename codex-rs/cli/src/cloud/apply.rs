@@ -231,11 +231,12 @@ async fn apply_in_path(
             format!("Failed to three-way apply patch for variant {variant_index}")
         })?
     } else {
-        bail!(preflight_error.unwrap_or_else(|| {
+        let err = preflight_error.unwrap_or_else(|| {
             format!(
                 "Patch for variant {variant_index} did not apply cleanly on branch {branch} (try --three-way)"
             )
-        }));
+        });
+        bail!(err);
     };
 
     if result.exit_code != 0 {

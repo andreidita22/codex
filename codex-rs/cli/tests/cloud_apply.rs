@@ -68,7 +68,7 @@ fn apply_three_way_fallback_requires_flag() -> Result<()> {
         ])
         .assert()
         .failure();
-    let stderr = String::from_utf8(assert.get_output().stderr.clone()).expect("utf8 stderr");
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(
         stderr.contains("Preflight failed for variant"),
         "stderr missing preflight diagnostics: {stderr}"
