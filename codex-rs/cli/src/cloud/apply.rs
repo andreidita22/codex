@@ -11,7 +11,9 @@ use codex_git_apply::apply_git_patch;
 use futures::StreamExt;
 use futures::TryStreamExt;
 use futures::stream;
+use once_cell::sync::Lazy;
 use tokio::process::Command;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::Semaphore;
 use which::which;
 
@@ -33,6 +35,7 @@ use crate::cloud::types::TaskData;
 use crate::cloud::types::VariantData;
 
 const GIT_ADD_CHUNK_SIZE: usize = 32;
+static WORKTREE_GUARD: Lazy<AsyncMutex<()>> = Lazy::new(|| AsyncMutex::new(()));
 
 pub async fn run_apply(context: &CloudContext, args: &ApplyArgs) -> Result<()> {
     let data = context.load_task_data(&args.task_id).await?;
@@ -167,7 +170,10 @@ async fn apply_variant(
     let branch_name = format!("{branch_prefix}{index}", index = variant.index);
     if args.worktrees {
         let worktree_path = compute_worktree_path(args.worktree_dir.as_deref(), &branch_name)?;
-        prepare_worktree(repo_root, &worktree_path, &branch_name, base_ref).await?;
+        {
+            let _guard = WORKTREE_GUARD.lock().await;
+            prepare_worktree(repo_root, &worktree_path, &branch_name, base_ref).await?;
+        }
         apply_in_path(
             &worktree_path,
             &branch_name,
@@ -206,6 +212,15 @@ async fn apply_in_path(
     request.three_way = false;
 
     let devnull_patch = diff.contains("\n--- /dev/null\n") || diff.contains("\n+++ /dev/null\n");
+    let preflight_error = (preflight.exit_code != 0).then(|| {
+        format!(
+            "Preflight failed for variant {variant_index} on branch {branch}.\ncommand: {cmd}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            branch = branch,
+            cmd = preflight.cmd_for_log,
+            stdout = preflight.stdout.trim_end(),
+            stderr = preflight.stderr.trim_end()
+        )
+    });
 
     let result = if preflight.exit_code == 0 {
         apply_git_patch(&request)
@@ -216,17 +231,25 @@ async fn apply_in_path(
             format!("Failed to three-way apply patch for variant {variant_index}")
         })?
     } else {
-        bail!(
-            "Patch for variant {variant_index} did not apply cleanly on branch {branch} (try --three-way)"
-        );
+        bail!(preflight_error.unwrap_or_else(|| {
+            format!(
+                "Patch for variant {variant_index} did not apply cleanly on branch {branch} (try --three-way)"
+            )
+        }));
     };
 
     if result.exit_code != 0 {
-        bail!(
-            "Patch for variant {variant_index} did not apply cleanly on branch {branch}.\nstdout:\n{}\nstderr:\n{}",
-            result.stdout,
-            result.stderr
+        let mut message = format!(
+            "Patch for variant {variant_index} did not apply cleanly on branch {branch}.\ncommand: {cmd}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            cmd = result.cmd_for_log,
+            stdout = result.stdout.trim_end(),
+            stderr = result.stderr.trim_end()
         );
+        if let Some(pre) = preflight_error {
+            message.push_str("\nPreflight diagnostics:\n");
+            message.push_str(&pre);
+        }
+        bail!(message);
     }
 
     let paths = extract_paths_from_diff(diff);
