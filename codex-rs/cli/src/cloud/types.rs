@@ -39,13 +39,18 @@ pub struct NewArgs {
     #[arg(long = "type", value_name = "KIND", default_value = "code")]
     pub task_type: String,
 
+    /// Wait for task completion; see --timeout to bound the wait duration
     #[arg(long)]
     pub wait: bool,
+
+    /// Maximum time to wait when --wait is supplied (e.g. "5m", "90s")
+    #[arg(long, value_name = "DURATION")]
+    pub timeout: Option<String>,
 
     #[arg(long, value_name = "DIR")]
     pub export_dir: Option<PathBuf>,
 
-    #[arg(long)]
+    #[arg(long, help = "Alias for --export-dir=<cwd>; prefer --export-dir")]
     pub include_diffs: bool,
 
     #[arg(long)]
@@ -92,7 +97,7 @@ pub struct WatchArgs {
     #[arg(long, value_name = "DIR")]
     pub export_dir: Option<PathBuf>,
 
-    #[arg(long)]
+    #[arg(long, help = "Alias for --export-dir=<cwd>; prefer --export-dir")]
     pub include_diffs: bool,
 
     #[arg(long)]

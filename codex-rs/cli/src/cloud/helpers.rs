@@ -152,16 +152,24 @@ pub async fn current_branch(repo_root: &Path) -> Result<String> {
 }
 
 pub async fn fetch_origin(repo_root: &Path, base: &str) -> Result<()> {
-    let result = run_git(repo_root, ["fetch", "origin", base]).await;
-    if let Err(err) = result {
-        bail!("git fetch origin {base} failed: {err}");
-    }
-    sleep(Duration::from_millis(50)).await;
-    let refspec = format!("origin/{base}");
-    run_git(repo_root, ["rev-parse", "--verify", refspec.as_str()])
+    run_git(repo_root, ["fetch", "origin", base])
         .await
-        .context(format!("Unable to resolve {refspec}"))?;
-    Ok(())
+        .with_context(|| format!("git fetch origin {base} failed"))?;
+
+    let refspec = format!("origin/{base}");
+    let mut last_err: Option<anyhow::Error> = None;
+    for delay in [0_u64, 50, 100, 200, 400] {
+        if delay > 0 {
+            sleep(Duration::from_millis(delay)).await;
+        }
+        match run_git(repo_root, ["rev-parse", "--verify", refspec.as_str()]).await {
+            Ok(_) => return Ok(()),
+            Err(err) => last_err = Some(err),
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("Unable to resolve {}", refspec)))
+        .with_context(|| format!("Unable to resolve {refspec} after fetch"))
 }
 
 pub async fn checkout_branch(repo_root: &Path, branch: &str, base_ref: &str) -> Result<()> {
@@ -179,15 +187,26 @@ pub async fn prepare_worktree(
     base_ref: &str,
 ) -> Result<()> {
     if worktree_path.exists() {
-        run_git(
+        if let Err(err) = run_git(
             worktree_path,
             ["checkout", "-B", branch, base_ref, "--quiet"],
         )
         .await
-        .ok();
-        run_git(repo_root, ["worktree", "prune"]).await.ok();
-        fs::remove_dir_all(worktree_path)
-            .with_context(|| format!("Failed to remove stale worktree at {worktree_path:?}"))?;
+        {
+            eprintln!(
+                "Info: failed to reset existing worktree {}: {err}",
+                worktree_path.display()
+            );
+        }
+        if let Err(err) = run_git(repo_root, ["worktree", "prune"]).await {
+            eprintln!("Info: failed to prune git worktrees: {err}");
+        }
+        fs::remove_dir_all(worktree_path).with_context(|| {
+            format!(
+                "Failed to remove stale worktree at {}",
+                worktree_path.display()
+            )
+        })?;
     }
     if let Some(parent) = worktree_path.parent() {
         fs::create_dir_all(parent)

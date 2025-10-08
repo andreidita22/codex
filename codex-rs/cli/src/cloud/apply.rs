@@ -2,9 +2,9 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
-use anyhow::anyhow;
 use anyhow::bail;
 use codex_git_apply::ApplyGitRequest;
 use codex_git_apply::apply_git_patch;
@@ -31,6 +31,8 @@ use crate::cloud::helpers::select_variants;
 use crate::cloud::types::ApplyArgs;
 use crate::cloud::types::TaskData;
 use crate::cloud::types::VariantData;
+
+const GIT_ADD_CHUNK_SIZE: usize = 32;
 
 pub async fn run_apply(context: &CloudContext, args: &ApplyArgs) -> Result<()> {
     let data = context.load_task_data(&args.task_id).await?;
@@ -118,8 +120,9 @@ pub async fn run_apply(context: &CloudContext, args: &ApplyArgs) -> Result<()> {
 
     if !args.worktrees
         && let Some(branch) = current_branch
+        && let Err(err) = checkout_branch(&repo_root, &branch, &branch).await
     {
-        checkout_branch(&repo_root, &branch, &branch).await.ok();
+        eprintln!("Warning: failed to switch back to original branch '{branch}': {err}");
     }
 
     Ok(())
@@ -230,7 +233,7 @@ async fn apply_in_path(
     if paths.is_empty() {
         bail!("Patch applied but no paths detected to stage for variant {variant_index}");
     }
-    for chunk in paths.chunks(32) {
+    for chunk in paths.chunks(GIT_ADD_CHUNK_SIZE) {
         let mut args_vec = vec!["add".to_string(), "--".to_string()];
         args_vec.extend(chunk.iter().cloned());
         let args_iter: Vec<&str> = args_vec.iter().map(String::as_str).collect();

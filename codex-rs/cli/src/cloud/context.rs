@@ -192,18 +192,13 @@ impl CloudContext {
         });
 
         let mut siblings: Vec<VariantData> = Vec::new();
-        if let Some(turn_id) = text.turn_id.clone() {
+        if let Some(base_turn_id) = text.turn_id.as_ref() {
             let attempts = self
-                .list_sibling_attempts(task_id, &turn_id)
+                .list_sibling_attempts(task_id, base_turn_id)
                 .await
                 .context("Failed to load sibling attempts")?;
-            let seen_turn: Option<String> = text.turn_id.clone();
             for attempt in attempts {
-                if seen_turn
-                    .as_ref()
-                    .map(|base| base == &attempt.turn_id)
-                    .unwrap_or(false)
-                {
+                if attempt.turn_id == *base_turn_id {
                     continue;
                 }
                 siblings.push(VariantData {

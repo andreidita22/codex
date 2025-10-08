@@ -5,6 +5,7 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
 use codex_cloud_tasks_client::CreateTaskReq;
+use humantime::parse_duration;
 
 use crate::cloud::context::CloudContext;
 use crate::cloud::helpers::PostComplete;
@@ -96,12 +97,18 @@ pub async fn run_new(context: &CloudContext, args: &NewArgs) -> Result<()> {
         bail!("--export-dir and --apply require --wait to be specified");
     }
 
-    if context.is_mock() && !args.wait {
+    if !args.wait {
         return Ok(());
     }
 
     let interval = Duration::from_secs(5);
-    let timeout = None;
+    let timeout = match &args.timeout {
+        Some(raw) => Some(
+            parse_duration(raw)
+                .with_context(|| format!("Failed to parse --timeout value '{raw}'"))?,
+        ),
+        None => None,
+    };
     let status = wait_for_completion(context, &task_id, interval, timeout).await?;
     match status {
         codex_cloud_tasks_client::AttemptStatus::Completed => {
