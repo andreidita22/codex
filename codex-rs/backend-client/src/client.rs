@@ -143,6 +143,8 @@ impl Client {
         limit: Option<i32>,
         task_filter: Option<&str>,
         environment_id: Option<&str>,
+        sort: Option<&str>,
+        cursor: Option<&str>,
     ) -> Result<PaginatedListTaskListItem> {
         let url = match self.path_style {
             PathStyle::CodexApi => format!("{}/api/codex/tasks/list", self.base_url),
@@ -161,6 +163,16 @@ impl Client {
         };
         let req = if let Some(id) = environment_id {
             req.query(&[("environment_id", id)])
+        } else {
+            req
+        };
+        let req = if let Some(sort) = sort {
+            req.query(&[("sort", sort)])
+        } else {
+            req
+        };
+        let req = if let Some(cursor) = cursor {
+            req.query(&[("cursor", cursor)])
         } else {
             req
         };
@@ -205,6 +217,20 @@ impl Client {
         let req = self.http.get(&url).headers(self.headers());
         let (body, ct) = self.exec_request(req, "GET", &url).await?;
         self.decode_json::<TurnAttemptsSiblingTurnsResponse>(&url, &ct, &body)
+    }
+
+    pub async fn get_task_turn_history(&self, task_id: &str) -> Result<serde_json::Value> {
+        let url = match self.path_style {
+            PathStyle::CodexApi => {
+                format!("{}/api/codex/tasks/{}/turn_history", self.base_url, task_id)
+            }
+            PathStyle::ChatGptApi => {
+                format!("{}/wham/tasks/{}/turn_history", self.base_url, task_id)
+            }
+        };
+        let req = self.http.get(&url).headers(self.headers());
+        let (body, ct) = self.exec_request(req, "GET", &url).await?;
+        self.decode_json::<serde_json::Value>(&url, &ct, &body)
     }
 
     /// Create a new task (user turn) by POSTing to the appropriate backend path

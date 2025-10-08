@@ -15,6 +15,8 @@ use codex_cloud_tasks_client::CreateTaskReq;
 use codex_cloud_tasks_client::HttpClient;
 use codex_cloud_tasks_client::MockClient;
 use codex_cloud_tasks_client::TaskId;
+use codex_cloud_tasks_client::TaskListPage;
+use codex_cloud_tasks_client::TaskListRequest;
 use codex_cloud_tasks_client::TaskSummary;
 use codex_cloud_tasks_client::TaskText;
 use codex_cloud_tasks_client::TurnAttempt;
@@ -110,7 +112,16 @@ impl CloudContext {
     }
 
     pub async fn list_tasks(&self) -> Result<Vec<TaskSummary>> {
-        self.backend.list_tasks(None).await.map_err(map_cloud_error)
+        let request = TaskListRequest::default();
+        let TaskListPage { tasks, .. } = self.fetch_task_page(request).await?;
+        Ok(tasks)
+    }
+
+    pub async fn fetch_task_page(&self, request: TaskListRequest) -> Result<TaskListPage> {
+        self.backend
+            .list_tasks_page(request)
+            .await
+            .map_err(map_cloud_error)
     }
 
     pub async fn get_task_text(&self, task_id: &str) -> Result<TaskText> {

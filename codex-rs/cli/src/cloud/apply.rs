@@ -2,9 +2,9 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::anyhow;
 use anyhow::bail;
 use codex_git_apply::ApplyGitRequest;
 use codex_git_apply::apply_git_patch;

@@ -3,8 +3,11 @@ use std::path::PathBuf;
 use clap::ArgGroup;
 use clap::Args;
 use clap::Subcommand;
+use clap::ValueEnum;
 use codex_backend_openapi_models::models::TaskListItem;
 use codex_cloud_tasks_client::AttemptStatus;
+use codex_cloud_tasks_client::TaskListSort;
+use codex_cloud_tasks_client::TaskStatus;
 use codex_cloud_tasks_client::TaskSummary;
 use serde::Serialize;
 
@@ -131,13 +134,86 @@ pub struct WatchArgs {
     pub open_pr: bool,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ListSortArg {
+    #[value(alias = "desc")]
+    UpdatedDesc,
+    #[value(alias = "asc")]
+    UpdatedAsc,
+}
+
+impl ListSortArg {
+    pub fn to_backend(self) -> TaskListSort {
+        match self {
+            Self::UpdatedDesc => TaskListSort::UpdatedDesc,
+            Self::UpdatedAsc => TaskListSort::UpdatedAsc,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum StatusFilter {
+    Pending,
+    Ready,
+    Applied,
+    Error,
+}
+
+impl StatusFilter {
+    pub fn to_status(self) -> TaskStatus {
+        match self {
+            Self::Pending => TaskStatus::Pending,
+            Self::Ready => TaskStatus::Ready,
+            Self::Applied => TaskStatus::Applied,
+            Self::Error => TaskStatus::Error,
+        }
+    }
+}
+
 #[derive(Debug, Args, Clone)]
-pub struct ListArgs {
+pub struct PagedListArgs {
     #[arg(long)]
     pub json: bool,
 
     #[arg(long)]
     pub filter: Option<String>,
+
+    #[arg(long = "env", value_name = "ENV")]
+    pub environment: Option<String>,
+
+    #[arg(
+        long = "status",
+        value_enum,
+        value_delimiter = ',',
+        value_name = "STATUS"
+    )]
+    pub statuses: Vec<StatusFilter>,
+
+    #[arg(
+        long = "sort",
+        value_enum,
+        default_value_t = ListSortArg::UpdatedDesc,
+        value_name = "ORDER"
+    )]
+    pub sort: ListSortArg,
+
+    #[arg(long = "page-size", value_name = "N")]
+    pub page_size: Option<usize>,
+
+    #[arg(long = "page-cursor", value_name = "CURSOR")]
+    pub page_cursor: Option<String>,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct ListArgs {
+    #[command(flatten)]
+    pub options: PagedListArgs,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct HistoryArgs {
+    #[command(flatten)]
+    pub options: PagedListArgs,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -231,6 +307,9 @@ pub enum CloudSubcommand {
 
     /// List available Codex Cloud tasks.
     List(ListArgs),
+
+    /// List recently completed Codex Cloud tasks.
+    History(HistoryArgs),
 
     /// Show task metadata and variant summary.
     Show(ShowArgs),

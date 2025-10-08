@@ -18,6 +18,7 @@ pub mod watch;
 use apply::run_apply;
 use diff::run_diff;
 use export::run_export;
+use list::run_history;
 use list::run_list;
 use new::run_new;
 use show::run_show;
@@ -63,6 +64,10 @@ pub async fn run_cloud_command(
         Some(CloudSubcommand::List(args)) => {
             let context = context::build_context(config_overrides).await?;
             run_list(&context, &args).await
+        }
+        Some(CloudSubcommand::History(args)) => {
+            let context = context::build_context(config_overrides).await?;
+            run_history(&context, &args).await
         }
         Some(CloudSubcommand::Show(args)) => {
             let context = context::build_context(config_overrides).await?;
