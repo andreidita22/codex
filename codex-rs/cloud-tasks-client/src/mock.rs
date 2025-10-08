@@ -435,13 +435,13 @@ fn ts(input: &str) -> DateTime<Utc> {
 fn mock_diff_for(id: &TaskId) -> String {
     match id.0.as_str() {
         "T-1000" => {
-            "diff --git a/README.md b/README.md\nindex 000000..111111 100644\n--- a/README.md\n+++ b/README.md\n@@ -1,2 +1,3 @@\n Intro\n-Hello\n+Hello, world!\n+Task: T-1000\n".to_string()
+            "diff --git a/README.md b/README.md\nindex 1e764d8896d5907795cdbc6ca2128229e8886a13..17aa8506ec863dd448b431837d222d0beb857853 100644\n--- a/README.md\n+++ b/README.md\n@@ -1,2 +1,3 @@\n Intro\n-Hello\n+Hello, world!\n+Task: T-1000\n".to_string()
         }
         "T-1001" => {
-            "diff --git a/core/src/lib.rs b/core/src/lib.rs\nindex 000000..111111 100644\n--- a/core/src/lib.rs\n+++ b/core/src/lib.rs\n@@ -1,2 +1,1 @@\n-use foo;\n use bar;\n".to_string()
+            "diff --git a/core/src/lib.rs b/core/src/lib.rs\nindex ad721843f177487dc93e1f8113d2de8ed180bb46..2e1a89ad78eb93ae5e9217779e8acbffe172dced 100644\n--- a/core/src/lib.rs\n+++ b/core/src/lib.rs\n@@ -1,2 +1,1 @@\n-use foo;\n use bar;\n".to_string()
         }
         _ => {
-            "diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md\nindex 000000..111111 100644\n--- /dev/null\n+++ b/CONTRIBUTING.md\n@@ -0,0 +1,3 @@\n+## Contributing\n+Please open PRs.\n+Thanks!\n".to_string()
+            "diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md\nnew file mode 100644\nindex 0000000000000000000000000000000000000000..9a2ff8aa1310388bde122d8ea824eea25a741a3b\n--- /dev/null\n+++ b/CONTRIBUTING.md\n@@ -0,0 +1,3 @@\n+## Contributing\n+Please open PRs.\n+Thanks!\n".to_string()
         }
     }
 }

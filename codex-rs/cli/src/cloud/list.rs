@@ -1,5 +1,6 @@
 use std::collections::HashSet;
-use std::io::{self, Write};
+use std::io::Write;
+use std::io::{self};
 
 use anyhow::Context;
 use anyhow::Result;

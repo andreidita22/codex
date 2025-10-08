@@ -966,6 +966,7 @@ dependencies = [
  "ctor 0.5.0",
  "futures",
  "humantime",
+ "once_cell",
  "owo-colors",
  "predicates",
  "pretty_assertions",

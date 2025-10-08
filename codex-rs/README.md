@@ -71,6 +71,10 @@ codex completion zsh
 codex completion fish
 ```
 
+### Cloud export/apply automation
+
+The `codex cloud export` and `codex cloud apply` subcommands support running tasks headlessly. Key flags include `--jobs` (parallel worktree/export concurrency), `--worktrees`/`--worktree-dir` for isolating each variant, and `--commit-msg-template` to format commits via `{task_id}` and `{variant}` placeholders. Use `--three-way` when you want Codex to fall back to a guarded three-way merge if the preflight check fails; failure messages now surface the exact git commands, stdout, and stderr emitted during apply so you can diagnose issues quickly.
+
 ### Experimenting with the Codex Sandbox
 
 To test to see what happens when a command is run under the sandbox provided by Codex, we provide the following subcommands in Codex CLI:
