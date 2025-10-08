@@ -145,6 +145,7 @@ impl Client {
         environment_id: Option<&str>,
         sort: Option<&str>,
         cursor: Option<&str>,
+        status: Option<&str>,
     ) -> Result<PaginatedListTaskListItem> {
         let url = match self.path_style {
             PathStyle::CodexApi => format!("{}/api/codex/tasks/list", self.base_url),
@@ -173,6 +174,11 @@ impl Client {
         };
         let req = if let Some(cursor) = cursor {
             req.query(&[("cursor", cursor)])
+        } else {
+            req
+        };
+        let req = if let Some(status) = status {
+            req.query(&[("status", status)])
         } else {
             req
         };

@@ -60,13 +60,24 @@ impl std::error::Error for CloudTaskError {
 #[serde(transparent)]
 pub struct TaskId(pub String);
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TaskStatus {
     Pending,
     Ready,
     Applied,
     Error,
+}
+
+impl TaskStatus {
+    pub fn as_label(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Ready => "ready",
+            Self::Applied => "applied",
+            Self::Error => "error",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,6 +133,7 @@ impl TaskListSort {
 pub struct TaskListRequest {
     pub feed: TaskFeed,
     pub environment_id: Option<String>,
+    pub status_filters: Vec<TaskStatus>,
     pub limit: Option<usize>,
     pub cursor: Option<String>,
     pub sort: TaskListSort,
@@ -132,7 +144,8 @@ impl Default for TaskListRequest {
         Self {
             feed: TaskFeed::Current,
             environment_id: None,
-            limit: Some(20),
+            status_filters: Vec::new(),
+            limit: Some(50),
             cursor: None,
             sort: TaskListSort::UpdatedDesc,
         }

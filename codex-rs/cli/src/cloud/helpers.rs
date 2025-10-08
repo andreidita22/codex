@@ -20,13 +20,8 @@ use crate::cloud::types::DiffStats;
 use crate::cloud::types::ExportArgs;
 use crate::cloud::types::VariantData;
 
-pub fn status_label(status: &TaskStatus) -> &'static str {
-    match status {
-        TaskStatus::Pending => "pending",
-        TaskStatus::Ready => "ready",
-        TaskStatus::Applied => "applied",
-        TaskStatus::Error => "error",
-    }
+pub fn status_label(status: TaskStatus) -> &'static str {
+    status.as_label()
 }
 
 pub fn compare_attempts(

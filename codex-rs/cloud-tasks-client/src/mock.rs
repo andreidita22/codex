@@ -1,6 +1,7 @@
 use crate::ApplyOutcome;
 use crate::AttemptStatus;
 use crate::CloudBackend;
+use crate::CloudTaskError;
 use crate::DiffSummary;
 use crate::Result;
 use crate::TaskFeed;
@@ -32,6 +33,15 @@ impl CloudBackend for MockClient {
             None => tasks.retain(|task| task.environment_id.is_none()),
         }
 
+        if !request.status_filters.is_empty() {
+            tasks.retain(|task| {
+                request
+                    .status_filters
+                    .iter()
+                    .any(|status| status == &task.status)
+            });
+        }
+
         match request.sort {
             TaskListSort::UpdatedDesc => tasks.sort_by(|lhs, rhs| {
                 rhs.updated_at
@@ -45,14 +55,24 @@ impl CloudBackend for MockClient {
             }),
         }
 
-        let start_index = request
-            .cursor
-            .as_ref()
-            .and_then(|cursor| tasks.iter().position(|task| task.id.0 == *cursor))
-            .map(|idx| idx + 1)
-            .unwrap_or(0);
+        let start_index = match request.cursor.as_ref() {
+            Some(cursor) => {
+                let position = tasks.iter().position(|task| task.id.0 == *cursor);
+                match position {
+                    Some(idx) => idx + 1,
+                    None => {
+                        return Err(CloudTaskError::Http {
+                            message: format!("invalid cursor: {cursor}"),
+                            request_id: Some("MOCK-CURSOR".to_string()),
+                            source: anyhow::anyhow!("invalid cursor"),
+                        });
+                    }
+                }
+            }
+            None => 0,
+        };
 
-        let limit = request.limit.unwrap_or(20);
+        let limit = request.limit.unwrap_or(50);
         if limit == 0 {
             let next_cursor = tasks.get(start_index).map(|task| task.id.0.clone());
             return Ok(TaskListPage {
@@ -185,7 +205,7 @@ impl CloudBackend for MockClient {
                 attempt_placement: Some(0),
                 created_at: Some(second_created),
                 status: AttemptStatus::Completed,
-                diff: Some(mock_diff_for(&task)),
+                diff: None,
                 messages: vec!["Follow-up attempt".to_string()],
             }],
         };

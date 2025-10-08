@@ -50,7 +50,7 @@ pub async fn run_show(context: &CloudContext, args: &ShowArgs) -> Result<()> {
         .or_else(|| data.list_item.as_ref().map(|t| t.title.as_str()))
         .unwrap_or("<untitled>");
     if let Some(summary) = &data.summary {
-        let status = status_label(&summary.status);
+        let status = status_label(summary.status);
         println!(
             "Task {id} — {title} [{status}]",
             id = summary.id.0,

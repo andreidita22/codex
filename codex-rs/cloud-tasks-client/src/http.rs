@@ -115,6 +115,7 @@ mod api {
     use serde_json::Value;
     use std::cmp::Ordering;
     use std::collections::HashMap;
+    use std::collections::VecDeque;
     use std::convert::TryFrom;
 
     #[derive(Serialize)]
@@ -185,6 +186,18 @@ mod api {
             let env_param = request.environment_id.as_deref();
             let cursor_param = request.cursor.as_deref();
             let limit_param = request.limit.and_then(|value| i32::try_from(value).ok());
+            let status_param = if request.status_filters.is_empty() {
+                None
+            } else {
+                Some(
+                    request
+                        .status_filters
+                        .iter()
+                        .map(|status| status.as_label())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                )
+            };
             let resp = self
                 .backend
                 .list_tasks(
@@ -193,6 +206,7 @@ mod api {
                     env_param,
                     Some(request.sort.as_query()),
                     cursor_param,
+                    status_param.as_deref(),
                 )
                 .await
                 .map_err(|e| map_http_error("list_tasks", e))?;
@@ -208,9 +222,10 @@ mod api {
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "default".to_string());
             append_error_log(&format!(
-                "http.list_tasks: feed={} env={} limit={} cursor={} items={} next={}",
+                "http.list_tasks: feed={} env={} status={} limit={} cursor={} items={} next={}",
                 request.feed.as_filter(),
                 env_param.unwrap_or("<all>"),
+                status_param.as_deref().unwrap_or("<none>"),
                 limit_desc,
                 cursor_param.unwrap_or("<none>"),
                 tasks.len(),
@@ -812,29 +827,36 @@ mod api {
     }
 
     fn gather_messages(source: Option<&Value>) -> Vec<String> {
-        match source {
-            Some(Value::String(s)) => vec![s.to_string()],
-            Some(Value::Array(items)) => {
-                let mut out = Vec::new();
-                for item in items {
-                    out.extend(gather_messages(Some(item)));
-                }
-                out
-            }
-            Some(Value::Object(map)) => {
-                if let Some(messages) = map.get("messages") {
-                    return gather_messages(Some(messages));
-                }
-                if let Some(content) = map.get("content") {
-                    return gather_messages(Some(content));
-                }
-                if let Some(text) = map.get("text").and_then(Value::as_str) {
-                    return vec![text.to_string()];
-                }
-                Vec::new()
-            }
-            _ => Vec::new(),
+        let mut out = Vec::new();
+        let mut queue = VecDeque::new();
+        if let Some(value) = source {
+            queue.push_back(value);
         }
+
+        while let Some(cur) = queue.pop_front() {
+            match cur {
+                Value::String(s) => out.push(s.to_string()),
+                Value::Array(items) => {
+                    for item in items.iter().rev() {
+                        queue.push_front(item);
+                    }
+                }
+                Value::Object(map) => {
+                    if let Some(messages) = map.get("messages") {
+                        queue.push_front(messages);
+                    }
+                    if let Some(content) = map.get("content") {
+                        queue.push_front(content);
+                    }
+                    if let Some(text) = map.get("text").and_then(Value::as_str) {
+                        out.push(text.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        out
     }
 
     fn extract_diff_from_attempt(obj: &Map<String, Value>) -> Option<String> {
