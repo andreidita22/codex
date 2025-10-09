@@ -42,8 +42,8 @@ pub enum CloudCommand {
     /// Print the unified diff for a variant. Defaults to variant `1`.
     Diff(diff::DiffArgs),
 
-    /// Export patches and reports for variants. Each variant is written to a folder like `var1/`
-    /// containing both `patch.diff` and `report.json`. Defaults to variant `1`.
+    /// Export patches and reports for variants. Each variant is written to a `varN/` folder containing
+    /// both `patch.diff` and `report.json`. Defaults to variant `1`.
     Export(export::ExportArgs),
 
     /// Apply Cloud patches to the local workspace. Runs a preflight first; omit `--dry-run` to apply.
@@ -60,7 +60,6 @@ pub async fn run(cli: CloudCli, sandbox: Option<PathBuf>) -> Result<()> {
         None | Some(CloudCommand::Tui) => {
             let tui_cli = codex_cloud_tasks::Cli {
                 config_overrides: cli.config_overrides,
-                command: None,
             };
             codex_cloud_tasks::run_main(tui_cli, sandbox).await
         }

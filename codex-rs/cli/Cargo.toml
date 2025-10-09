@@ -30,6 +30,7 @@ codex-login = { workspace = true }
 codex-mcp-server = { workspace = true }
 codex-process-hardening = { workspace = true }
 codex-protocol = { workspace = true }
+codex-protocol-ts = { workspace = true }
 codex-responses-api-proxy = { workspace = true }
 codex-rmcp-client = { workspace = true }
 codex-cloud-tasks-client = { path = "../cloud-tasks-client" }
@@ -39,12 +40,9 @@ serde = { workspace = true, features = ["derive"] }
 codex-stdio-to-uds = { workspace = true }
 codex-tui = { workspace = true }
 ctor = { workspace = true }
-libc = { workspace = true }
 owo-colors = { workspace = true }
-regex-lite = { workspace = true}
 serde_json = { workspace = true }
 supports-color = { workspace = true }
-toml = { workspace = true }
 tokio = { workspace = true, features = [
     "io-std",
     "macros",
@@ -52,7 +50,6 @@ tokio = { workspace = true, features = [
     "rt-multi-thread",
     "signal",
 ] }
-tracing = { workspace = true }
 uuid = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]

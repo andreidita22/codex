@@ -16,7 +16,6 @@ pub struct TaskRow {
     pub lines_added: usize,
     pub lines_removed: usize,
     pub is_review: bool,
-    pub attempt_total: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize)]
