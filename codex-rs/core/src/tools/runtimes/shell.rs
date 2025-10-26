@@ -14,11 +14,13 @@ use crate::exec::StreamOutput;
 use crate::protocol::SandboxPolicy;
 use crate::sandboxing::execute_env;
 #[cfg(feature = "semantic_shell_pause")]
-use crate::semantic_shell::PauseReason as SemanticPauseReason;
-#[cfg(feature = "semantic_shell_pause")]
 use crate::semantic_shell::ShellExecRequest;
 #[cfg(feature = "semantic_shell_pause")]
 use crate::semantic_shell::ShellTurnResult;
+#[cfg(feature = "semantic_shell_pause")]
+use crate::semantic_shell::format_pause_reason;
+#[cfg(feature = "semantic_shell_pause")]
+use crate::semantic_shell::format_recent_lines;
 use crate::tools::runtimes::build_command_spec;
 use crate::tools::sandboxing::Approvable;
 use crate::tools::sandboxing::ApprovalCtx;
@@ -215,7 +217,14 @@ impl ToolRuntime<ShellRequest, ExecToolCallOutput> for ShellRuntime {
         let env = attempt
             .env_for(&spec)
             .map_err(|err| ToolError::Codex(err.into()))?;
+        #[cfg(feature = "semantic_shell_pause")]
+        let mut stdout_stream = Self::stdout_stream(ctx, req);
+        #[cfg(not(feature = "semantic_shell_pause"))]
         let stdout_stream = Self::stdout_stream(ctx, req);
+        #[cfg(feature = "semantic_shell_pause")]
+        if !(ctx.turn.tools_config.semantic_shell_pause && req.pause_policy.is_some()) {
+            stdout_stream.as_mut().map(|stream| stream.meta = None);
+        }
         #[cfg(feature = "semantic_shell_pause")]
         if ctx.turn.tools_config.semantic_shell_pause && req.pause_policy.is_some() {
             if let Some(pause_policy) = req.pause_policy.clone() {
@@ -285,7 +294,7 @@ fn semantic_result_to_output(result: ShellTurnResult) -> Result<ExecToolCallOutp
             last_stderr,
             started_at,
         } => {
-            let reason_text = format_pause_reason(&reason, idle_ms);
+            let reason_text = format_pause_reason(&reason);
             let stdout_snapshot = format_recent_lines(&last_stdout);
             let stderr_snapshot = format_recent_lines(&last_stderr);
             let summary = format!(
@@ -306,29 +315,4 @@ fn semantic_result_to_output(result: ShellTurnResult) -> Result<ExecToolCallOutp
         }
         ShellTurnResult::Failed { error } => Err(ToolError::Codex(CodexErr::Fatal(error))),
     }
-}
-
-#[cfg(feature = "semantic_shell_pause")]
-fn format_pause_reason(reason: &SemanticPauseReason, idle_ms: u64) -> String {
-    match reason {
-        SemanticPauseReason::Idle { silent_ms } => {
-            let seconds = (*silent_ms as f64) / 1_000.0;
-            let threshold = idle_ms as f64 / 1_000.0;
-            format!("idle for {:.1}s (threshold {:.1}s)", seconds, threshold)
-        }
-        SemanticPauseReason::Ready { pattern } => {
-            format!("ready pattern matched: `{pattern}`")
-        }
-        SemanticPauseReason::Prompt { pattern } => {
-            format!("prompt detected: `{pattern}`")
-        }
-    }
-}
-
-#[cfg(feature = "semantic_shell_pause")]
-fn format_recent_lines(lines: &[String]) -> String {
-    if lines.is_empty() {
-        return "<no output yet>".to_string();
-    }
-    lines.join("\n")
 }

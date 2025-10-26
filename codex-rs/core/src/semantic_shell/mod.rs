@@ -61,7 +61,7 @@ pub enum ShellTurnResult {
 /// Why the shell paused instead of completing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PauseReason {
-    Idle { silent_ms: u64 },
+    Idle { silent_ms: u64, threshold_ms: u64 },
     Ready { pattern: String },
     Prompt { pattern: String },
 }
@@ -125,6 +125,23 @@ struct Inner {
 }
 
 struct ProcessEntry {
+    child: Arc<Mutex<Child>>,
+    started_at: Instant,
+    started_at_wall: DateTime<Utc>,
+    last_output: Arc<Mutex<Instant>>,
+    tails: Arc<Mutex<Tails>>,
+    policy: Arc<RwLock<PausePolicy>>,
+    policy_state: PausePolicyState,
+    pause_trigger: PauseTrigger,
+    stdout_buf: Arc<Mutex<Vec<u8>>>,
+    stderr_buf: Arc<Mutex<Vec<u8>>>,
+    aggregated_buf: Arc<Mutex<Vec<u8>>>,
+    stdout_task: JoinHandle<()>,
+    stderr_task: JoinHandle<()>,
+    idle_task: JoinHandle<()>,
+}
+
+struct ProcessRegistration {
     child: Arc<Mutex<Child>>,
     started_at: Instant,
     started_at_wall: DateTime<Utc>,
@@ -354,38 +371,36 @@ impl SemanticShellManager {
                 stdout_task.abort();
                 stderr_task.abort();
                 idle_task.abort();
-                let exit_status = status?.code().unwrap_or(-1);
-                let stdout_text = buffer_to_string(&stdout_buf).await;
-                let stderr_text = buffer_to_string(&stderr_buf).await;
-                let aggregated_text = buffer_to_string(&aggregated_buf).await;
-                Ok(ShellTurnResult::Completed {
-                    exit: exit_status,
-                    duration_ms: started_at.elapsed().as_millis() as u64,
-                    stdout: stdout_text,
-                    stderr: stderr_text,
-                    aggregated: aggregated_text,
-                })
+                let status = status?;
+                return completed_from_buffers(
+                    status,
+                    started_at,
+                    &stdout_buf,
+                    &stderr_buf,
+                    &aggregated_buf,
+                )
+                .await;
             }
             reason = &mut pause_rx => {
                 match reason {
                     Ok(reason) => {
                         let run_id = self
-                            .register_process(
-                                child.clone(),
+                            .register_process(ProcessRegistration {
+                                child: child.clone(),
                                 started_at,
                                 started_at_wall,
-                                last_output.clone(),
-                                tails.clone(),
-                                policy.clone(),
-                                policy_state.clone(),
-                                pause_trigger.clone(),
-                                stdout_buf.clone(),
-                                stderr_buf.clone(),
-                                aggregated_buf.clone(),
+                                last_output: last_output.clone(),
+                                tails: tails.clone(),
+                                policy: policy.clone(),
+                                policy_state: policy_state.clone(),
+                                pause_trigger: pause_trigger.clone(),
+                                stdout_buf: stdout_buf.clone(),
+                                stderr_buf: stderr_buf.clone(),
+                                aggregated_buf: aggregated_buf.clone(),
                                 stdout_task,
                                 stderr_task,
                                 idle_task,
-                            )
+                            })
                             .await;
                         let (out_tail, err_tail) = tails.lock().await.snapshot();
                         let idle_ms = last_output.lock().await.elapsed().as_millis() as u64;
@@ -405,16 +420,14 @@ impl SemanticShellManager {
                         idle_task.abort();
                         let mut child_guard = child.lock().await;
                         let status = child_guard.wait().await?;
-                        let stdout_text = buffer_to_string(&stdout_buf).await;
-                        let stderr_text = buffer_to_string(&stderr_buf).await;
-                        let aggregated_text = buffer_to_string(&aggregated_buf).await;
-                        Ok(ShellTurnResult::Completed {
-                            exit: status.code().unwrap_or(-1),
-                            duration_ms: started_at.elapsed().as_millis() as u64,
-                            stdout: stdout_text,
-                            stderr: stderr_text,
-                            aggregated: aggregated_text,
-                        })
+                        return completed_from_buffers(
+                            status,
+                            started_at,
+                            &stdout_buf,
+                            &stderr_buf,
+                            &aggregated_buf,
+                        )
+                        .await;
                     }
                 }
             }
@@ -439,16 +452,10 @@ impl SemanticShellManager {
         tokio::pin!(pause_rx);
         tokio::select! {
             status = &mut completion => {
-                let exit_status = status?;
-                let (stdout_text, stderr_text, aggregated_text) = entry.collected_output().await;
+                let status = status?;
+                let result = entry.completed_result(status).await;
                 self.finish_run(run_id).await;
-                Ok(ShellTurnResult::Completed {
-                    exit: exit_status.code().unwrap_or(-1),
-                    duration_ms: entry.started_at.elapsed().as_millis() as u64,
-                    stdout: stdout_text,
-                    stderr: stderr_text,
-                    aggregated: aggregated_text,
-                })
+                result
             }
             reason = &mut pause_rx => {
                 match reason {
@@ -467,17 +474,10 @@ impl SemanticShellManager {
                         })
                     }
                     Err(_) => {
-                        let exit_status = completion.await?;
-                        let (stdout_text, stderr_text, aggregated_text) =
-                            entry.collected_output().await;
+                        let status = completion.await?;
+                        let result = entry.completed_result(status).await;
                         self.finish_run(run_id).await;
-                        Ok(ShellTurnResult::Completed {
-                            exit: exit_status.code().unwrap_or(-1),
-                            duration_ms: entry.started_at.elapsed().as_millis() as u64,
-                            stdout: stdout_text,
-                            stderr: stderr_text,
-                            aggregated: aggregated_text,
-                        })
+                        result
                     }
                 }
             }
@@ -592,39 +592,23 @@ impl SemanticShellManager {
         }
     }
 
-    async fn register_process(
-        &self,
-        child: Arc<Mutex<Child>>,
-        started_at: Instant,
-        started_at_wall: DateTime<Utc>,
-        last_output: Arc<Mutex<Instant>>,
-        tails: Arc<Mutex<Tails>>,
-        policy: Arc<RwLock<PausePolicy>>,
-        policy_state: PausePolicyState,
-        pause_trigger: PauseTrigger,
-        stdout_buf: Arc<Mutex<Vec<u8>>>,
-        stderr_buf: Arc<Mutex<Vec<u8>>>,
-        aggregated_buf: Arc<Mutex<Vec<u8>>>,
-        stdout_task: JoinHandle<()>,
-        stderr_task: JoinHandle<()>,
-        idle_task: JoinHandle<()>,
-    ) -> String {
+    async fn register_process(&self, registration: ProcessRegistration) -> String {
         let run_id = format!("r-{}", Uuid::new_v4().simple());
         let entry = Arc::new(ProcessEntry {
-            child,
-            started_at,
-            started_at_wall,
-            last_output,
-            tails,
-            policy,
-            policy_state,
-            pause_trigger,
-            stdout_buf,
-            stderr_buf,
-            aggregated_buf,
-            stdout_task,
-            stderr_task,
-            idle_task,
+            child: registration.child,
+            started_at: registration.started_at,
+            started_at_wall: registration.started_at_wall,
+            last_output: registration.last_output,
+            tails: registration.tails,
+            policy: registration.policy,
+            policy_state: registration.policy_state,
+            pause_trigger: registration.pause_trigger,
+            stdout_buf: registration.stdout_buf,
+            stderr_buf: registration.stderr_buf,
+            aggregated_buf: registration.aggregated_buf,
+            stdout_task: registration.stdout_task,
+            stderr_task: registration.stderr_task,
+            idle_task: registration.idle_task,
         });
         self.inner.runs.lock().await.insert(run_id.clone(), entry);
         run_id
@@ -708,6 +692,7 @@ impl SemanticShellManager {
                     pause_trigger
                         .trigger(PauseReason::Idle {
                             silent_ms: elapsed.as_millis() as u64,
+                            threshold_ms: ms,
                         })
                         .await;
                     last_reported = Some(observed);
@@ -732,6 +717,17 @@ impl ProcessEntry {
 
     async fn snapshot_tails(&self) -> (Vec<String>, Vec<String>) {
         self.tails.lock().await.snapshot()
+    }
+
+    async fn completed_result(&self, status: std::process::ExitStatus) -> Result<ShellTurnResult> {
+        let (stdout_text, stderr_text, aggregated_text) = self.collected_output().await;
+        Ok(ShellTurnResult::Completed {
+            exit: status.code().unwrap_or(-1),
+            duration_ms: self.started_at.elapsed().as_millis() as u64,
+            stdout: stdout_text,
+            stderr: stderr_text,
+            aggregated: aggregated_text,
+        })
     }
 
     async fn collected_output(&self) -> (String, String, String) {
@@ -786,6 +782,41 @@ async fn buffer_to_string(buf: &Arc<Mutex<Vec<u8>>>) -> String {
     String::from_utf8_lossy(&data).to_string()
 }
 
+async fn completed_from_buffers(
+    status: std::process::ExitStatus,
+    started_at: Instant,
+    stdout_buf: &Arc<Mutex<Vec<u8>>>,
+    stderr_buf: &Arc<Mutex<Vec<u8>>>,
+    aggregated_buf: &Arc<Mutex<Vec<u8>>>,
+) -> Result<ShellTurnResult> {
+    let stdout_text = buffer_to_string(stdout_buf).await;
+    let stderr_text = buffer_to_string(stderr_buf).await;
+    let aggregated_text = buffer_to_string(aggregated_buf).await;
+    Ok(build_completed(
+        status.code().unwrap_or(-1),
+        started_at.elapsed(),
+        stdout_text,
+        stderr_text,
+        aggregated_text,
+    ))
+}
+
+fn build_completed(
+    exit: i32,
+    duration: Duration,
+    stdout: String,
+    stderr: String,
+    aggregated: String,
+) -> ShellTurnResult {
+    ShellTurnResult::Completed {
+        exit,
+        duration_ms: duration.as_millis() as u64,
+        stdout,
+        stderr,
+        aggregated,
+    }
+}
+
 async fn send_stream_chunk(stream: &StdoutStream, chunk: &[u8], is_stderr: bool) {
     let event = Event {
         id: stream.sub_id.clone(),
@@ -800,4 +831,26 @@ async fn send_stream_chunk(stream: &StdoutStream, chunk: &[u8], is_stderr: bool)
         }),
     };
     let _ = stream.tx_event.send(event).await;
+}
+
+pub fn format_pause_reason(reason: &PauseReason) -> String {
+    match reason {
+        PauseReason::Idle {
+            silent_ms,
+            threshold_ms,
+        } => format!("idle for {}ms (threshold {}ms)", silent_ms, threshold_ms),
+        PauseReason::Ready { pattern } => {
+            format!("ready pattern matched: `{pattern}`")
+        }
+        PauseReason::Prompt { pattern } => {
+            format!("prompt detected: `{pattern}`")
+        }
+    }
+}
+
+pub fn format_recent_lines(lines: &[String]) -> String {
+    if lines.is_empty() {
+        return "<no output yet>".to_string();
+    }
+    lines.join("\n")
 }

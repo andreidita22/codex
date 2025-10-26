@@ -2,6 +2,7 @@
 use std::os::unix::process::ExitStatusExt;
 
 use std::collections::HashMap;
+use std::fmt;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
@@ -55,7 +56,7 @@ const AGGREGATE_BUFFER_INITIAL_CAPACITY: usize = 8 * 1024; // 8 KiB
 /// Aggregation still collects full output; only the live event stream is capped.
 pub(crate) const MAX_EXEC_OUTPUT_DELTAS_PER_CALL: usize = 10_000;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ExecParams {
     pub command: Vec<String>,
     pub cwd: PathBuf,
@@ -91,14 +92,16 @@ pub struct StdoutStream {
     pub meta: Option<ShellMeta>,
 }
 
-#[derive(Clone)]
-pub struct IdleWarningConfig {
-    pub threshold: Duration,
-    pub command_label: String,
-    pub cwd_display: String,
+impl fmt::Debug for StdoutStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StdoutStream")
+            .field("sub_id", &self.sub_id)
+            .field("call_id", &self.call_id)
+            .finish()
+    }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MetaShellConfig {
     pub silence_threshold: Duration,
     pub heartbeat_interval: Duration,
@@ -108,7 +111,7 @@ pub struct MetaShellConfig {
     pub interrupt_on_silence: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ShellMeta {
     pub meta_config: Option<MetaShellConfig>,
 }
@@ -116,6 +119,12 @@ pub struct ShellMeta {
 #[derive(Clone)]
 pub struct MetaObservationSink {
     session: Arc<Session>,
+}
+
+impl fmt::Debug for MetaObservationSink {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MetaObservationSink").finish()
+    }
 }
 
 impl MetaObservationSink {

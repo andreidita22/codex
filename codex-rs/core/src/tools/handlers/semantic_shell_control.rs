@@ -4,9 +4,10 @@ use serde::Deserialize;
 
 use crate::function_tool::FunctionCallError;
 use crate::semantic_shell::PausePolicy;
-use crate::semantic_shell::PauseReason;
 use crate::semantic_shell::RunListing;
 use crate::semantic_shell::ShellTurnResult;
+use crate::semantic_shell::format_pause_reason;
+use crate::semantic_shell::format_recent_lines;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
@@ -145,12 +146,12 @@ fn describe_turn_result(result: &ShellTurnResult) -> String {
             run_id,
             reason,
             pid,
-            idle_ms,
             last_stdout,
             last_stderr,
             started_at,
+            ..
         } => {
-            let reason_text = format_pause_reason(reason, *idle_ms);
+            let reason_text = format_pause_reason(reason);
             format!(
                 "Run {run_id} paused ({reason_text}). pid={pid} started_at={started_at}.\nRecent stdout:\n{stdout}\n\nRecent stderr:\n{stderr}",
                 stdout = format_recent_lines(last_stdout),
@@ -161,27 +162,6 @@ fn describe_turn_result(result: &ShellTurnResult) -> String {
             format!("Run failed: {error}")
         }
     }
-}
-
-fn format_pause_reason(reason: &PauseReason, idle_ms: u64) -> String {
-    match reason {
-        PauseReason::Idle { silent_ms } => {
-            format!("idle for {}ms (threshold {}ms)", silent_ms, idle_ms)
-        }
-        PauseReason::Ready { pattern } => {
-            format!("ready pattern matched: `{pattern}`")
-        }
-        PauseReason::Prompt { pattern } => {
-            format!("prompt detected: `{pattern}`")
-        }
-    }
-}
-
-fn format_recent_lines(lines: &[String]) -> String {
-    if lines.is_empty() {
-        return "<no output recorded>".to_string();
-    }
-    lines.join("\n")
 }
 
 fn format_run_list(listings: &[RunListing]) -> String {
