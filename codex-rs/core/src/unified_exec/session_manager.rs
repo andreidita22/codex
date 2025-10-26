@@ -311,6 +311,7 @@ impl UnifiedExecSessionManager {
         );
         let tool_ctx = ToolCtx {
             session: context.session.as_ref(),
+            session_arc: Arc::clone(&context.session),
             turn: context.turn.as_ref(),
             call_id: context.call_id.clone(),
             tool_name: "exec_command".to_string(),

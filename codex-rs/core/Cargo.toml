@@ -8,6 +8,10 @@ doctest = false
 name = "codex_core"
 path = "src/lib.rs"
 
+[features]
+default = []
+semantic_shell_pause = []
+
 [lints]
 workspace = true
 

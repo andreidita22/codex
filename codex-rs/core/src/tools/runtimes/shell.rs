@@ -6,9 +6,19 @@ builds a CommandSpec, and runs it under the current SandboxAttempt.
 */
 use crate::command_safety::is_dangerous_command::command_might_be_dangerous;
 use crate::command_safety::is_safe_command::is_known_safe_command;
+#[cfg(feature = "semantic_shell_pause")]
+use crate::error::CodexErr;
 use crate::exec::ExecToolCallOutput;
+#[cfg(feature = "semantic_shell_pause")]
+use crate::exec::StreamOutput;
 use crate::protocol::SandboxPolicy;
 use crate::sandboxing::execute_env;
+#[cfg(feature = "semantic_shell_pause")]
+use crate::semantic_shell::PauseReason as SemanticPauseReason;
+#[cfg(feature = "semantic_shell_pause")]
+use crate::semantic_shell::ShellExecRequest;
+#[cfg(feature = "semantic_shell_pause")]
+use crate::semantic_shell::ShellTurnResult;
 use crate::tools::runtimes::build_command_spec;
 use crate::tools::sandboxing::Approvable;
 use crate::tools::sandboxing::ApprovalCtx;
@@ -25,6 +35,8 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::ReviewDecision;
 use futures::future::BoxFuture;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Clone, Debug)]
 pub struct ShellRequest {
@@ -34,6 +46,29 @@ pub struct ShellRequest {
     pub env: std::collections::HashMap<String, String>,
     pub with_escalated_permissions: Option<bool>,
     pub justification: Option<String>,
+    #[cfg(feature = "semantic_shell_pause")]
+    pub pause_policy: Option<ShellPausePolicy>,
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+#[derive(Clone, Debug)]
+pub struct ShellPausePolicy {
+    pub pause_on_idle_ms: u64,
+    pub pause_on_ready_pattern: Option<String>,
+    pub pause_on_prompt_pattern: Option<String>,
+    pub tail_lines: usize,
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+impl Default for ShellPausePolicy {
+    fn default() -> Self {
+        Self {
+            pause_on_idle_ms: 60_000,
+            pause_on_ready_pattern: Some("Press Ctrl\\+C to stop\\.".to_string()),
+            pause_on_prompt_pattern: None,
+            tail_lines: 200,
+        }
+    }
 }
 
 impl ProvidesSandboxRetryData for ShellRequest {
@@ -60,11 +95,23 @@ impl ShellRuntime {
         Self
     }
 
-    fn stdout_stream(ctx: &ToolCtx<'_>) -> Option<crate::exec::StdoutStream> {
+    fn stdout_stream(ctx: &ToolCtx<'_>, req: &ShellRequest) -> Option<crate::exec::StdoutStream> {
         Some(crate::exec::StdoutStream {
             sub_id: ctx.turn.sub_id.clone(),
             call_id: ctx.call_id.clone(),
             tx_event: ctx.session.get_tx_event(),
+            meta: Some(crate::exec::ShellMeta {
+                meta_config: Some(crate::exec::MetaShellConfig {
+                    silence_threshold: Duration::from_secs(30),
+                    heartbeat_interval: Duration::from_secs(5),
+                    command_label: summarize_command(&req.command),
+                    cwd_display: req.cwd.display().to_string(),
+                    reporter: Some(crate::exec::MetaObservationSink::new(Arc::clone(
+                        &ctx.session_arc,
+                    ))),
+                    interrupt_on_silence: true,
+                }),
+            }),
         })
     }
 }
@@ -168,9 +215,120 @@ impl ToolRuntime<ShellRequest, ExecToolCallOutput> for ShellRuntime {
         let env = attempt
             .env_for(&spec)
             .map_err(|err| ToolError::Codex(err.into()))?;
-        let out = execute_env(&env, attempt.policy, Self::stdout_stream(ctx))
+        let stdout_stream = Self::stdout_stream(ctx, req);
+        #[cfg(feature = "semantic_shell_pause")]
+        if ctx.turn.tools_config.semantic_shell_pause && req.pause_policy.is_some() {
+            if let Some(pause_policy) = req.pause_policy.clone() {
+                let sem_req = ShellExecRequest {
+                    exec_env: env.clone(),
+                    sandbox_policy: ctx.turn.sandbox_policy.clone(),
+                    stdout_stream: stdout_stream.clone(),
+                    pause_on_idle_ms: Some(pause_policy.pause_on_idle_ms),
+                    pause_on_ready_pattern: pause_policy.pause_on_ready_pattern.clone(),
+                    pause_on_prompt_pattern: pause_policy.pause_on_prompt_pattern.clone(),
+                    tail_lines: pause_policy.tail_lines,
+                };
+                let manager = Arc::clone(&ctx.session.services.semantic_shell);
+                let result = manager
+                    .exec_with_semantic_pause(sem_req)
+                    .await
+                    .map_err(|err| {
+                        ToolError::Codex(CodexErr::Fatal(format!("semantic shell failed: {err:#}")))
+                    })?;
+                return semantic_result_to_output(result);
+            }
+        }
+        let out = execute_env(&env, attempt.policy, stdout_stream)
             .await
             .map_err(ToolError::Codex)?;
         Ok(out)
     }
+}
+
+fn summarize_command(command: &[String]) -> String {
+    const MAX_LEN: usize = 80;
+    if command.is_empty() {
+        return "<empty>".to_string();
+    }
+
+    let joined = command.join(" ");
+    if joined.len() <= MAX_LEN {
+        return joined;
+    }
+
+    format!("{}…", &joined[..MAX_LEN])
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+fn semantic_result_to_output(result: ShellTurnResult) -> Result<ExecToolCallOutput, ToolError> {
+    match result {
+        ShellTurnResult::Completed {
+            exit,
+            duration_ms,
+            stdout,
+            stderr,
+            aggregated,
+        } => Ok(ExecToolCallOutput {
+            exit_code: exit,
+            stdout: StreamOutput::new(stdout),
+            stderr: StreamOutput::new(stderr),
+            aggregated_output: StreamOutput::new(aggregated),
+            duration: Duration::from_millis(duration_ms),
+            timed_out: false,
+        }),
+        ShellTurnResult::Paused {
+            run_id,
+            reason,
+            pid,
+            idle_ms,
+            last_stdout,
+            last_stderr,
+            started_at,
+        } => {
+            let reason_text = format_pause_reason(&reason, idle_ms);
+            let stdout_snapshot = format_recent_lines(&last_stdout);
+            let stderr_snapshot = format_recent_lines(&last_stderr);
+            let summary = format!(
+                "Semantic shell paused: {reason_text}. run_id={run_id}, pid={pid}, started_at={started_at}.\
+                 \nUse `codex shell resume {run_id}` to continue or interrupt/kill as needed.\
+                 \nRecent stdout:\n{stdout}\n\nRecent stderr:\n{stderr}",
+                stdout = stdout_snapshot,
+                stderr = stderr_snapshot,
+            );
+            Ok(ExecToolCallOutput {
+                exit_code: 0,
+                stdout: StreamOutput::new(stdout_snapshot),
+                stderr: StreamOutput::new(stderr_snapshot),
+                aggregated_output: StreamOutput::new(summary),
+                duration: Duration::from_millis(idle_ms),
+                timed_out: true,
+            })
+        }
+        ShellTurnResult::Failed { error } => Err(ToolError::Codex(CodexErr::Fatal(error))),
+    }
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+fn format_pause_reason(reason: &SemanticPauseReason, idle_ms: u64) -> String {
+    match reason {
+        SemanticPauseReason::Idle { silent_ms } => {
+            let seconds = (*silent_ms as f64) / 1_000.0;
+            let threshold = idle_ms as f64 / 1_000.0;
+            format!("idle for {:.1}s (threshold {:.1}s)", seconds, threshold)
+        }
+        SemanticPauseReason::Ready { pattern } => {
+            format!("ready pattern matched: `{pattern}`")
+        }
+        SemanticPauseReason::Prompt { pattern } => {
+            format!("prompt detected: `{pattern}`")
+        }
+    }
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+fn format_recent_lines(lines: &[String]) -> String {
+    if lines.is_empty() {
+        return "<no output yet>".to_string();
+    }
+    lines.join("\n")
 }

@@ -63,6 +63,8 @@ pub mod project_doc;
 mod rollout;
 pub(crate) mod safety;
 pub mod seatbelt;
+#[cfg(feature = "semantic_shell_pause")]
+pub mod semantic_shell;
 pub mod shell;
 pub mod spawn;
 pub mod terminal;

@@ -6,18 +6,26 @@ use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::ExitStatus;
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
 use async_channel::Sender;
+use futures::future;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 use tokio::process::Child;
+use tokio::sync::oneshot;
+use tokio::sync::watch;
+use tokio::task::JoinHandle;
+use tokio::time::Instant as TokioInstant;
 
+use crate::codex::Session;
 use crate::error::CodexErr;
 use crate::error::Result;
 use crate::error::SandboxErr;
+use crate::protocol::BackgroundEventEvent;
 use crate::protocol::Event;
 use crate::protocol::EventMsg;
 use crate::protocol::ExecCommandOutputDeltaEvent;
@@ -28,6 +36,7 @@ use crate::sandboxing::ExecEnv;
 use crate::sandboxing::SandboxManager;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
+use codex_protocol::user_input::UserInput;
 
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 
@@ -46,7 +55,7 @@ const AGGREGATE_BUFFER_INITIAL_CAPACITY: usize = 8 * 1024; // 8 KiB
 /// Aggregation still collects full output; only the live event stream is capped.
 pub(crate) const MAX_EXEC_OUTPUT_DELTAS_PER_CALL: usize = 10_000;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ExecParams {
     pub command: Vec<String>,
     pub cwd: PathBuf,
@@ -79,6 +88,48 @@ pub struct StdoutStream {
     pub sub_id: String,
     pub call_id: String,
     pub tx_event: Sender<Event>,
+    pub meta: Option<ShellMeta>,
+}
+
+#[derive(Clone)]
+pub struct IdleWarningConfig {
+    pub threshold: Duration,
+    pub command_label: String,
+    pub cwd_display: String,
+}
+
+#[derive(Clone)]
+pub struct MetaShellConfig {
+    pub silence_threshold: Duration,
+    pub heartbeat_interval: Duration,
+    pub command_label: String,
+    pub cwd_display: String,
+    pub reporter: Option<MetaObservationSink>,
+    pub interrupt_on_silence: bool,
+}
+
+#[derive(Clone)]
+pub struct ShellMeta {
+    pub meta_config: Option<MetaShellConfig>,
+}
+
+#[derive(Clone)]
+pub struct MetaObservationSink {
+    session: Arc<Session>,
+}
+
+impl MetaObservationSink {
+    pub(crate) fn new(session: Arc<Session>) -> Self {
+        Self { session }
+    }
+
+    pub(crate) async fn observation(&self, message: &str) {
+        let text = format!("Observation: {message}");
+        let _ = self
+            .session
+            .inject_input(vec![UserInput::Text { text }])
+            .await;
+    }
 }
 
 pub async fn process_exec_tool_call(
@@ -405,17 +456,34 @@ async fn consume_truncated_output(
 
     let (agg_tx, agg_rx) = async_channel::unbounded::<Vec<u8>>();
 
+    let (meta_monitor, mut idle_interrupt_rx) = if let Some(config) = stdout_stream
+        .as_ref()
+        .and_then(|stream| stream.meta.clone())
+        .and_then(|meta| meta.meta_config)
+    {
+        let (monitor, idle_rx) =
+            MetaMonitor::start(stdout_stream.as_ref().unwrap().clone(), config);
+        (Some(monitor), idle_rx)
+    } else {
+        (None, None)
+    };
+    let activity_handle = meta_monitor
+        .as_ref()
+        .map(|monitor| monitor.activity_handle());
+
     let stdout_handle = tokio::spawn(read_capped(
         BufReader::new(stdout_reader),
         stdout_stream.clone(),
         false,
         Some(agg_tx.clone()),
+        activity_handle.clone(),
     ));
     let stderr_handle = tokio::spawn(read_capped(
         BufReader::new(stderr_reader),
         stdout_stream.clone(),
         true,
         Some(agg_tx.clone()),
+        activity_handle,
     ));
 
     let (exit_status, timed_out) = tokio::select! {
@@ -437,10 +505,25 @@ async fn consume_truncated_output(
             child.start_kill()?;
             (synthetic_exit_status(EXIT_CODE_SIGNAL_BASE + SIGKILL_CODE), false)
         }
+        _ = async {
+            if let Some(rx) = idle_interrupt_rx.as_mut() {
+                let _ = rx.await;
+            } else {
+                future::pending::<()>().await;
+            }
+        } => {
+            child.start_kill()?;
+            let exit_status = child.wait().await?;
+            (exit_status, true)
+        }
     };
 
     let stdout = stdout_handle.await??;
     let stderr = stderr_handle.await??;
+
+    if let Some(monitor) = meta_monitor {
+        monitor.shutdown().await;
+    }
 
     drop(agg_tx);
 
@@ -467,6 +550,7 @@ async fn read_capped<R: AsyncRead + Unpin + Send + 'static>(
     stream: Option<StdoutStream>,
     is_stderr: bool,
     aggregate_tx: Option<Sender<Vec<u8>>>,
+    idle_activity: Option<IdleActivityHandle>,
 ) -> io::Result<StreamOutput<Vec<u8>>> {
     let mut buf = Vec::with_capacity(AGGREGATE_BUFFER_INITIAL_CAPACITY);
     let mut tmp = [0u8; READ_CHUNK_SIZE];
@@ -478,6 +562,10 @@ async fn read_capped<R: AsyncRead + Unpin + Send + 'static>(
         let n = reader.read(&mut tmp).await?;
         if n == 0 {
             break;
+        }
+
+        if let Some(activity) = &idle_activity {
+            activity.bump();
         }
 
         if let Some(stream) = &stream
@@ -514,6 +602,116 @@ async fn read_capped<R: AsyncRead + Unpin + Send + 'static>(
         text: buf,
         truncated_after_lines: None,
     })
+}
+
+#[derive(Clone)]
+struct IdleActivityHandle {
+    tx: watch::Sender<Instant>,
+}
+
+impl IdleActivityHandle {
+    fn new(tx: watch::Sender<Instant>) -> Self {
+        Self { tx }
+    }
+
+    fn bump(&self) {
+        let _ = self.tx.send(Instant::now());
+    }
+}
+
+struct MetaMonitor {
+    activity: IdleActivityHandle,
+    join: JoinHandle<()>,
+}
+
+impl MetaMonitor {
+    fn start(
+        stream: StdoutStream,
+        config: MetaShellConfig,
+    ) -> (Self, Option<oneshot::Receiver<()>>) {
+        let (tx, mut rx) = watch::channel(Instant::now());
+        let activity = IdleActivityHandle::new(tx);
+        let (idle_tx, idle_rx) = if config.interrupt_on_silence {
+            let (idle_tx, idle_rx) = oneshot::channel();
+            (Some(idle_tx), Some(idle_rx))
+        } else {
+            (None, None)
+        };
+        let mut idle_tx = idle_tx;
+        let join = tokio::spawn(async move {
+            let mut last_activity = Instant::now();
+            let mut next_warning_time = last_activity + config.silence_threshold;
+            emit_background_event(
+                &stream,
+                &config,
+                format!(
+                    "[META start] `{}` (cwd: {})",
+                    config.command_label, config.cwd_display
+                ),
+            )
+            .await;
+            loop {
+                let sleep_until =
+                    tokio::time::sleep_until(TokioInstant::from_std(next_warning_time));
+                tokio::select! {
+                    _ = sleep_until => {
+                        let now = Instant::now();
+                        let silent_for = now.saturating_duration_since(last_activity);
+                        emit_background_event(
+                            &stream,
+                            &config,
+                            format!(
+                                "[META silence] `{}` idle for {}s; press Ctrl+C if waiting for input.",
+                                config.command_label,
+                                silent_for.as_secs().max(1),
+                            ),
+                        ).await;
+                        if let Some(tx) = idle_tx.take() {
+                            let _ = tx.send(());
+                        }
+                        next_warning_time += config.silence_threshold;
+                    }
+                    changed = rx.changed() => {
+                        match changed {
+                            Ok(()) => {
+                                last_activity = *rx.borrow();
+                                next_warning_time = last_activity + config.silence_threshold;
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                }
+            }
+        });
+
+        (Self { activity, join }, idle_rx)
+    }
+
+    fn activity_handle(&self) -> IdleActivityHandle {
+        self.activity.clone()
+    }
+
+    async fn shutdown(self) {
+        drop(self.activity);
+        let _ = self.join.await;
+    }
+}
+
+async fn emit_background_event(stream: &StdoutStream, config: &MetaShellConfig, message: String) {
+    if let Some(reporter) = &config.reporter {
+        reporter.observation(&message).await;
+    }
+    let event = Event {
+        id: stream.sub_id.clone(),
+        msg: EventMsg::BackgroundEvent(BackgroundEventEvent {
+            message: format!("{} | {}", message, stylize_context(config)),
+        }),
+    };
+    let _ = stream.tx_event.send(event).await;
+}
+
+fn stylize_context(config: &MetaShellConfig) -> String {
+    format!("cmd=`{}` cwd={}", config.command_label, config.cwd_display)
 }
 
 #[cfg(unix)]
