@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use async_channel::unbounded;
-use codex_core::exec::MetaObservationSink;
 use codex_core::exec::MetaShellConfig;
 use codex_core::exec::SandboxType;
 use codex_core::exec::ShellMeta;
@@ -54,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
         }),
     };
 
-    let mut rx_task = tokio::spawn(async move {
+    let rx_task = tokio::spawn(async move {
         while let Ok(event) = rx.recv().await {
             match event.msg {
                 EventMsg::BackgroundEvent(ev) => println!("[background] {}", ev.message),

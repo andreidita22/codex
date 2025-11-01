@@ -79,6 +79,10 @@ which = { workspace = true }
 wildmatch = { workspace = true }
 
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
+
+
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = { workspace = true }
 seccompiler = { workspace = true }

@@ -217,21 +217,18 @@ impl ToolRuntime<ShellRequest, ExecToolCallOutput> for ShellRuntime {
         let env = attempt
             .env_for(&spec)
             .map_err(|err| ToolError::Codex(err.into()))?;
-        #[cfg(feature = "semantic_shell_pause")]
-        let mut stdout_stream = Self::stdout_stream(ctx, req);
-        #[cfg(not(feature = "semantic_shell_pause"))]
         let stdout_stream = Self::stdout_stream(ctx, req);
         #[cfg(feature = "semantic_shell_pause")]
-        if !(ctx.turn.tools_config.semantic_shell_pause && req.pause_policy.is_some()) {
-            stdout_stream.as_mut().map(|stream| stream.meta = None);
-        }
-        #[cfg(feature = "semantic_shell_pause")]
-        if ctx.turn.tools_config.semantic_shell_pause && req.pause_policy.is_some() {
+        if ctx.turn.tools_config.semantic_shell_pause {
             if let Some(pause_policy) = req.pause_policy.clone() {
+                let mut paused_stdout_stream = stdout_stream.clone();
+                if let Some(stream) = paused_stdout_stream.as_mut() {
+                    stream.meta = None;
+                }
                 let sem_req = ShellExecRequest {
                     exec_env: env.clone(),
                     sandbox_policy: ctx.turn.sandbox_policy.clone(),
-                    stdout_stream: stdout_stream.clone(),
+                    stdout_stream: paused_stdout_stream,
                     pause_on_idle_ms: Some(pause_policy.pause_on_idle_ms),
                     pause_on_ready_pattern: pause_policy.pause_on_ready_pattern.clone(),
                     pause_on_prompt_pattern: pause_policy.pause_on_prompt_pattern.clone(),
@@ -261,11 +258,13 @@ fn summarize_command(command: &[String]) -> String {
     }
 
     let joined = command.join(" ");
-    if joined.len() <= MAX_LEN {
+    if joined.chars().count() <= MAX_LEN {
         return joined;
     }
 
-    format!("{}…", &joined[..MAX_LEN])
+    let mut truncated: String = joined.chars().take(MAX_LEN - 1).collect();
+    truncated.push('…');
+    truncated
 }
 
 #[cfg(feature = "semantic_shell_pause")]
@@ -310,7 +309,7 @@ fn semantic_result_to_output(result: ShellTurnResult) -> Result<ExecToolCallOutp
                 stderr: StreamOutput::new(stderr_snapshot),
                 aggregated_output: StreamOutput::new(summary),
                 duration: Duration::from_millis(idle_ms),
-                timed_out: true,
+                timed_out: false,
             })
         }
         ShellTurnResult::Failed { error } => Err(ToolError::Codex(CodexErr::Fatal(error))),

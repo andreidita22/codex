@@ -23,8 +23,15 @@ use tokio::sync::RwLock;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
+#[cfg(windows)]
+use windows_sys::Win32::System::Console::CTRL_BREAK_EVENT;
+#[cfg(windows)]
+use windows_sys::Win32::System::Console::GenerateConsoleCtrlEvent;
+#[cfg(windows)]
+use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
 
 use crate::exec::StdoutStream;
+use crate::protocol::BackgroundEventEvent;
 use crate::protocol::Event;
 use crate::protocol::EventMsg;
 use crate::protocol::ExecCommandOutputDeltaEvent;
@@ -33,6 +40,11 @@ use crate::protocol::SandboxPolicy;
 use crate::sandboxing::ExecEnv;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
+
+const STDOUT_CAPTURE_LIMIT_BYTES: usize = 512 * 1024;
+const STDERR_CAPTURE_LIMIT_BYTES: usize = 512 * 1024;
+const AGGREGATED_CAPTURE_LIMIT_BYTES: usize = 1024 * 1024;
+const AUTO_EXIT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Result of a shell turn when semantic pause is enabled.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,9 +145,11 @@ struct ProcessEntry {
     policy: Arc<RwLock<PausePolicy>>,
     policy_state: PausePolicyState,
     pause_trigger: PauseTrigger,
-    stdout_buf: Arc<Mutex<Vec<u8>>>,
-    stderr_buf: Arc<Mutex<Vec<u8>>>,
-    aggregated_buf: Arc<Mutex<Vec<u8>>>,
+    stdout_buf: Arc<Mutex<CaptureBuffer>>,
+    stderr_buf: Arc<Mutex<CaptureBuffer>>,
+    aggregated_buf: Arc<Mutex<CaptureBuffer>>,
+    stdout_stream: Option<StdoutStream>,
+    completed_status: Arc<Mutex<Option<std::process::ExitStatus>>>,
     stdout_task: JoinHandle<()>,
     stderr_task: JoinHandle<()>,
     idle_task: JoinHandle<()>,
@@ -150,9 +164,11 @@ struct ProcessRegistration {
     policy: Arc<RwLock<PausePolicy>>,
     policy_state: PausePolicyState,
     pause_trigger: PauseTrigger,
-    stdout_buf: Arc<Mutex<Vec<u8>>>,
-    stderr_buf: Arc<Mutex<Vec<u8>>>,
-    aggregated_buf: Arc<Mutex<Vec<u8>>>,
+    stdout_buf: Arc<Mutex<CaptureBuffer>>,
+    stderr_buf: Arc<Mutex<CaptureBuffer>>,
+    aggregated_buf: Arc<Mutex<CaptureBuffer>>,
+    stdout_stream: Option<StdoutStream>,
+    completed_status: Arc<Mutex<Option<std::process::ExitStatus>>>,
     stdout_task: JoinHandle<()>,
     stderr_task: JoinHandle<()>,
     idle_task: JoinHandle<()>,
@@ -308,7 +324,9 @@ impl SemanticShellManager {
         let mut child = spawn_from_exec_env(&req.exec_env, &req.sandbox_policy)
             .await
             .with_context(|| "failed to spawn semantic shell child".to_string())?;
-        let pid = child.id().unwrap_or(0);
+        let pid = child
+            .id()
+            .ok_or_else(|| anyhow!("spawned process has no PID"))?;
 
         let stdout = child
             .stdout
@@ -322,10 +340,13 @@ impl SemanticShellManager {
         let child = Arc::new(Mutex::new(child));
         let last_output = Arc::new(Mutex::new(Instant::now()));
         let tails = Arc::new(Mutex::new(Tails::new(req.tail_lines)));
-        let stdout_buf = Arc::new(Mutex::new(Vec::new()));
-        let stderr_buf = Arc::new(Mutex::new(Vec::new()));
-        let aggregated_buf = Arc::new(Mutex::new(Vec::new()));
+        let stdout_buf = Arc::new(Mutex::new(CaptureBuffer::new(STDOUT_CAPTURE_LIMIT_BYTES)));
+        let stderr_buf = Arc::new(Mutex::new(CaptureBuffer::new(STDERR_CAPTURE_LIMIT_BYTES)));
+        let aggregated_buf = Arc::new(Mutex::new(CaptureBuffer::new(
+            AGGREGATED_CAPTURE_LIMIT_BYTES,
+        )));
         let stdout_stream = req.stdout_stream.clone();
+        let completed_status = Arc::new(Mutex::new(None));
         let (pause_trigger, pause_rx) = PauseTrigger::new();
 
         let policy_value = PausePolicy::from(&req);
@@ -397,6 +418,8 @@ impl SemanticShellManager {
                                 stdout_buf: stdout_buf.clone(),
                                 stderr_buf: stderr_buf.clone(),
                                 aggregated_buf: aggregated_buf.clone(),
+                                stdout_stream: stdout_stream.clone(),
+                                completed_status: completed_status.clone(),
                                 stdout_task,
                                 stderr_task,
                                 idle_task,
@@ -446,6 +469,12 @@ impl SemanticShellManager {
             *stored = new_policy;
         }
 
+        if let Some(status) = entry.completed_status().await {
+            let result = entry.completed_result(status).await;
+            self.finish_run(run_id).await;
+            return result;
+        }
+
         let completion = wait_for_exit(entry.child.clone());
         tokio::pin!(completion);
         let pause_rx = entry.pause_trigger.arm().await;
@@ -453,6 +482,7 @@ impl SemanticShellManager {
         tokio::select! {
             status = &mut completion => {
                 let status = status?;
+                entry.mark_completed(status).await;
                 let result = entry.completed_result(status).await;
                 self.finish_run(run_id).await;
                 result
@@ -462,7 +492,7 @@ impl SemanticShellManager {
                     Ok(reason) => {
                         let (out_tail, err_tail) = entry.snapshot_tails().await;
                         let idle_ms = entry.last_output.lock().await.elapsed().as_millis() as u64;
-                        let pid = entry.child.lock().await.id().unwrap_or(0) as u32;
+                        let pid = child_pid(&entry.child).await?;
                         Ok(ShellTurnResult::Paused {
                             run_id: run_id.to_string(),
                             reason,
@@ -475,6 +505,7 @@ impl SemanticShellManager {
                     }
                     Err(_) => {
                         let status = completion.await?;
+                        entry.mark_completed(status).await;
                         let result = entry.completed_result(status).await;
                         self.finish_run(run_id).await;
                         result
@@ -498,7 +529,22 @@ impl SemanticShellManager {
 
         #[cfg(windows)]
         {
-            let _ = entry.child.lock().await.start_kill();
+            match child_pid(&entry.child).await {
+                Ok(pid) => {
+                    if let Err(err) = send_ctrl_break(pid) {
+                        tracing::warn!(
+                            pid,
+                            error = %err,
+                            "failed to send CTRL_BREAK_EVENT; falling back to force kill if needed"
+                        );
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "semantic shell interrupt requested for exited process: {err:#}"
+                    );
+                }
+            }
         }
 
         let wait = tokio::time::timeout(
@@ -508,11 +554,13 @@ impl SemanticShellManager {
         .await;
         match wait {
             Ok(status) => {
-                let _ = status?;
+                let status = status?;
+                entry.mark_completed(status).await;
             }
             Err(_) => {
                 entry.child.lock().await.start_kill()?;
-                let _ = entry.child.lock().await.wait().await?;
+                let status = entry.child.lock().await.wait().await?;
+                entry.mark_completed(status).await;
             }
         }
         self.finish_run(run_id).await;
@@ -528,7 +576,8 @@ impl SemanticShellManager {
             .remove(run_id)
             .ok_or_else(|| anyhow!("unknown run_id"))?;
         let _ = entry.child.lock().await.start_kill();
-        let _ = entry.child.lock().await.wait().await?;
+        let status = entry.child.lock().await.wait().await?;
+        entry.mark_completed(status).await;
         entry.abort_tasks();
         Ok(())
     }
@@ -542,7 +591,7 @@ impl SemanticShellManager {
             .get(run_id)
             .cloned()
             .ok_or_else(|| anyhow!("unknown run_id"))?;
-        let pid = entry.child.lock().await.id().unwrap_or(0) as u32;
+        let pid = child_pid(&entry.child).await?;
         let uptime_ms = entry.started_at.elapsed().as_millis() as u64;
         let last_output_ms = entry.last_output.lock().await.elapsed().as_millis() as u64;
         Ok(ExecStatus {
@@ -562,7 +611,7 @@ impl SemanticShellManager {
 
         let mut listings = Vec::with_capacity(snapshots.len());
         for (run_id, entry) in snapshots {
-            let pid = entry.child.lock().await.id().unwrap_or(0) as u32;
+            let pid = child_pid(&entry.child).await?;
             let uptime_ms = entry.started_at.elapsed().as_millis() as u64;
             let last_output_ms = entry.last_output.lock().await.elapsed().as_millis() as u64;
             listings.push(RunListing {
@@ -606,12 +655,56 @@ impl SemanticShellManager {
             stdout_buf: registration.stdout_buf,
             stderr_buf: registration.stderr_buf,
             aggregated_buf: registration.aggregated_buf,
+            stdout_stream: registration.stdout_stream,
+            completed_status: registration.completed_status,
             stdout_task: registration.stdout_task,
             stderr_task: registration.stderr_task,
             idle_task: registration.idle_task,
         });
-        self.inner.runs.lock().await.insert(run_id.clone(), entry);
+        self.inner
+            .runs
+            .lock()
+            .await
+            .insert(run_id.clone(), Arc::clone(&entry));
+        self.spawn_exit_monitor(run_id.clone(), Arc::clone(&self.inner), entry);
         run_id
+    }
+
+    fn spawn_exit_monitor(&self, run_id: String, inner: Arc<Inner>, entry: Arc<ProcessEntry>) {
+        tokio::spawn(async move {
+            loop {
+                if entry.completed_status().await.is_some() {
+                    break;
+                }
+                tokio::time::sleep(AUTO_EXIT_POLL_INTERVAL).await;
+                let status_opt = {
+                    let mut child = entry.child.lock().await;
+                    match child.try_wait() {
+                        Ok(opt) => opt,
+                        Err(err) => {
+                            tracing::debug!(
+                                error = %err,
+                                run_id,
+                                "semantic shell try_wait failed while monitoring exit"
+                            );
+                            None
+                        }
+                    }
+                };
+                if let Some(status) = status_opt {
+                    if entry.mark_completed(status).await {
+                        let still_registered = {
+                            let runs = inner.runs.lock().await;
+                            runs.contains_key(&run_id)
+                        };
+                        if still_registered {
+                            entry.emit_completion_event(&run_id, status).await;
+                        }
+                    }
+                    break;
+                }
+            }
+        });
     }
 
     fn spawn_stdout_reader(
@@ -620,8 +713,8 @@ impl SemanticShellManager {
         tails: Arc<Mutex<Tails>>,
         pause_trigger: PauseTrigger,
         policy_state: PausePolicyState,
-        stdout_buf: Arc<Mutex<Vec<u8>>>,
-        aggregated_buf: Arc<Mutex<Vec<u8>>>,
+        stdout_buf: Arc<Mutex<CaptureBuffer>>,
+        aggregated_buf: Arc<Mutex<CaptureBuffer>>,
         stdout_stream: Option<StdoutStream>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
@@ -647,8 +740,8 @@ impl SemanticShellManager {
     fn spawn_stderr_reader(
         stderr: ChildStderr,
         tails: Arc<Mutex<Tails>>,
-        stderr_buf: Arc<Mutex<Vec<u8>>>,
-        aggregated_buf: Arc<Mutex<Vec<u8>>>,
+        stderr_buf: Arc<Mutex<CaptureBuffer>>,
+        aggregated_buf: Arc<Mutex<CaptureBuffer>>,
         stdout_stream: Option<StdoutStream>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
@@ -701,10 +794,46 @@ impl SemanticShellManager {
         })
     }
 
-    async fn append_line(buf: &Arc<Mutex<Vec<u8>>>, line: &str) {
-        let mut guard = buf.lock().await;
-        guard.extend_from_slice(line.as_bytes());
-        guard.push(b'\n');
+    async fn append_line(buf: &Arc<Mutex<CaptureBuffer>>, line: &str) {
+        buf.lock().await.append_line(line);
+    }
+}
+
+struct CaptureBuffer {
+    data: Vec<u8>,
+    truncated: bool,
+    cap: usize,
+}
+
+impl CaptureBuffer {
+    fn new(cap: usize) -> Self {
+        Self {
+            data: Vec::new(),
+            truncated: false,
+            cap,
+        }
+    }
+
+    fn append_line(&mut self, line: &str) {
+        self.data.extend_from_slice(line.as_bytes());
+        self.data.push(b'\n');
+        if self.data.len() > self.cap {
+            let overflow = self.data.len().saturating_sub(self.cap);
+            self.data.drain(0..overflow);
+            self.truncated = true;
+        }
+    }
+
+    fn snapshot(&self) -> String {
+        let text = String::from_utf8_lossy(&self.data).to_string();
+        if self.truncated {
+            format!(
+                "[semantic shell captured last {} bytes]\n{}",
+                self.cap, text
+            )
+        } else {
+            text
+        }
     }
 }
 
@@ -717,6 +846,36 @@ impl ProcessEntry {
 
     async fn snapshot_tails(&self) -> (Vec<String>, Vec<String>) {
         self.tails.lock().await.snapshot()
+    }
+
+    async fn mark_completed(&self, status: std::process::ExitStatus) -> bool {
+        let mut guard = self.completed_status.lock().await;
+        if guard.is_none() {
+            *guard = Some(status);
+            true
+        } else {
+            false
+        }
+    }
+
+    async fn completed_status(&self) -> Option<std::process::ExitStatus> {
+        *self.completed_status.lock().await
+    }
+
+    async fn emit_completion_event(&self, run_id: &str, status: std::process::ExitStatus) {
+        let Some(stream) = &self.stdout_stream else {
+            return;
+        };
+        let exit_code = status.code().unwrap_or(-1);
+        let elapsed_secs = self.started_at.elapsed().as_secs();
+        let message = format!(
+            "Semantic shell run {run_id} exited with code {exit_code} after {elapsed_secs}s. Run `codex shell resume {run_id}` to collect final output."
+        );
+        let event = Event {
+            id: stream.sub_id.clone(),
+            msg: EventMsg::BackgroundEvent(BackgroundEventEvent { message }),
+        };
+        let _ = stream.tx_event.send(event).await;
     }
 
     async fn completed_result(&self, status: std::process::ExitStatus) -> Result<ShellTurnResult> {
@@ -777,17 +936,16 @@ async fn spawn_from_exec_env(env: &ExecEnv, policy: &SandboxPolicy) -> Result<Ch
     .map_err(|err| anyhow!("failed to spawn child process: {err}"))
 }
 
-async fn buffer_to_string(buf: &Arc<Mutex<Vec<u8>>>) -> String {
-    let data = buf.lock().await.clone();
-    String::from_utf8_lossy(&data).to_string()
+async fn buffer_to_string(buf: &Arc<Mutex<CaptureBuffer>>) -> String {
+    buf.lock().await.snapshot()
 }
 
 async fn completed_from_buffers(
     status: std::process::ExitStatus,
     started_at: Instant,
-    stdout_buf: &Arc<Mutex<Vec<u8>>>,
-    stderr_buf: &Arc<Mutex<Vec<u8>>>,
-    aggregated_buf: &Arc<Mutex<Vec<u8>>>,
+    stdout_buf: &Arc<Mutex<CaptureBuffer>>,
+    stderr_buf: &Arc<Mutex<CaptureBuffer>>,
+    aggregated_buf: &Arc<Mutex<CaptureBuffer>>,
 ) -> Result<ShellTurnResult> {
     let stdout_text = buffer_to_string(stdout_buf).await;
     let stderr_text = buffer_to_string(stderr_buf).await;
@@ -831,6 +989,31 @@ async fn send_stream_chunk(stream: &StdoutStream, chunk: &[u8], is_stderr: bool)
         }),
     };
     let _ = stream.tx_event.send(event).await;
+}
+
+async fn child_pid(child: &Arc<Mutex<Child>>) -> Result<u32> {
+    child
+        .lock()
+        .await
+        .id()
+        .map(|pid| pid as u32)
+        .ok_or_else(|| anyhow!("child process has already exited"))
+}
+
+#[cfg(windows)]
+fn send_ctrl_break(pid: u32) -> Result<()> {
+    unsafe {
+        if SetConsoleCtrlHandler(None, 1) == 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let result = GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid);
+        let signal_err = std::io::Error::last_os_error();
+        let _ = SetConsoleCtrlHandler(None, 0);
+        if result == 0 {
+            return Err(signal_err.into());
+        }
+    }
+    Ok(())
 }
 
 pub fn format_pause_reason(reason: &PauseReason) -> String {
