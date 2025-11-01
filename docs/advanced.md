@@ -6,6 +6,59 @@ If you already lean on Codex every day and just need a little more control, this
 
 Most day-to-day tuning lives in `config.toml`: set approval + sandbox presets, pin model defaults, and add MCP server launchers. The [Config guide](./config.md) walks through every option and provides copy-paste examples for common setups.
 
+## Semantic shell pause (experimental) {#semantic-shell-pause}
+
+When you run `shell` tool calls in long-lived workflows (local dev servers, `npm run dev`, etc.) the model used to get wedged waiting for CTRL+C. The **semantic shell pause** feature teaches Codex how to pause the agent’s turn while keeping the underlying process alive, return a `run_id`, and let the agent (or you) decide whether to resume, interrupt, or kill the job later.
+
+### Enabling the feature
+
+Add the flag to `~/.codex/config.toml` (or an individual profile) and restart Codex:
+
+```toml
+[features]
+semantic_shell_pause = true
+```
+
+When enabled:
+
+1. Every `shell` call runs through a semantic wrapper that mirrors the sandbox/env from the legacy path.
+2. Stdout/stderr continue streaming live to the UI while a ring buffer captures the most recent lines.
+3. If the command becomes idle (default: 60s) or matches a “ready/prompt” regex, the tool returns a **Paused** response with a `run_id`, reason, pid, idle duration, and the buffered stdout/stderr tail.
+4. The OS process continues running under Codex supervision until it exits or you issue a control action.
+
+### Managing paused runs inside a turn
+
+The feature automatically exposes a `semantic_shell_control` tool. Use it exactly like any other function/tool call:
+
+```jsonc
+{
+  "name": "semantic_shell_control",
+  "arguments": {
+    "action": "resume",
+    "run_id": "r-8d0bdf21",
+    "pause_on_idle_ms": 30000
+  }
+}
+```
+
+Supported actions:
+
+| Action     | Required args | Optional args                   | Description                                                                 |
+| ---------- | ------------- | --------------------------------| --------------------------------------------------------------------------- |
+| `resume`   | `run_id`      | `pause_on_idle_ms`, `pause_on_ready_pattern`, `pause_on_prompt_pattern` | Re-arm pause rules and continue streaming output until the next pause/exit. |
+| `interrupt`| `run_id`      | `graceful_ms` (default 5000)    | Send SIGINT, wait `graceful_ms`, then SIGKILL if the process is still alive.|
+| `kill`     | `run_id`      | –                              | Immediate `SIGKILL`.                                                        |
+| `status`   | `run_id`      | –                              | Returns pid, uptime, and ms since last output.                              |
+| `list`     | –             | –                              | Lists every currently paused run (run_id, pid, uptime, idle).               |
+
+### Tool responses
+
+- `Completed`: command exited; `stdout/stderr/aggregated_output` contain the full buffered text (same shape as the legacy shell output).
+- `Paused`: the agent turn ends with metadata, e.g. “idle for 60s… run_id=r-a1b2c3”. The wrapper keeps reading stdout/stderr, so the next `resume` call picks up without losing logs.
+- `Failed`: something went wrong before we could pause (spawn error, sandbox failure, etc.).
+
+This makes loops like “start dev server → automatically pause → run tests → resume/kick server” possible without manual intervention.
+
 ## Tracing / verbose logging {#tracing-verbose-logging}
 
 Because Codex is written in Rust, it honors the `RUST_LOG` environment variable to configure its logging behavior.

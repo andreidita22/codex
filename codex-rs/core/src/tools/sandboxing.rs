@@ -20,6 +20,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use futures::Future;
 use futures::future::BoxFuture;
@@ -154,6 +155,7 @@ pub(crate) trait Sandboxable {
 
 pub(crate) struct ToolCtx<'a> {
     pub session: &'a Session,
+    pub session_arc: Arc<Session>,
     pub turn: &'a TurnContext,
     pub call_id: String,
     pub tool_name: String,

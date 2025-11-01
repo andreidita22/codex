@@ -13,6 +13,8 @@ use crate::parse_command::parse_command;
 use crate::parse_turn_item;
 use crate::response_processing::process_items;
 use crate::review_format::format_review_findings_block;
+#[cfg(feature = "semantic_shell_pause")]
+use crate::semantic_shell::SemanticShellManager;
 use crate::terminal;
 use crate::user_notification::UserNotifier;
 use async_channel::Receiver;
@@ -545,6 +547,8 @@ impl Session {
 
         // Create the mutable state for the Session.
         let state = SessionState::new(session_configuration.clone());
+        #[cfg(feature = "semantic_shell_pause")]
+        let semantic_shell = Arc::new(SemanticShellManager::new());
 
         let services = SessionServices {
             mcp_connection_manager,
@@ -556,6 +560,8 @@ impl Session {
             auth_manager: Arc::clone(&auth_manager),
             otel_event_manager,
             tool_approvals: Mutex::new(ApprovalStore::default()),
+            #[cfg(feature = "semantic_shell_pause")]
+            semantic_shell,
         };
 
         let sess = Arc::new(Session {
@@ -2605,6 +2611,8 @@ mod tests {
         };
 
         let state = SessionState::new(session_configuration.clone());
+        #[cfg(feature = "semantic_shell_pause")]
+        let semantic_shell = Arc::new(SemanticShellManager::new());
 
         let services = SessionServices {
             mcp_connection_manager: McpConnectionManager::default(),
@@ -2616,6 +2624,8 @@ mod tests {
             auth_manager: Arc::clone(&auth_manager),
             otel_event_manager: otel_event_manager.clone(),
             tool_approvals: Mutex::new(ApprovalStore::default()),
+            #[cfg(feature = "semantic_shell_pause")]
+            semantic_shell,
         };
 
         let turn_context = Session::make_turn_context(
@@ -2673,6 +2683,8 @@ mod tests {
         };
 
         let state = SessionState::new(session_configuration.clone());
+        #[cfg(feature = "semantic_shell_pause")]
+        let semantic_shell = Arc::new(SemanticShellManager::new());
 
         let services = SessionServices {
             mcp_connection_manager: McpConnectionManager::default(),
@@ -2684,6 +2696,8 @@ mod tests {
             auth_manager: Arc::clone(&auth_manager),
             otel_event_manager: otel_event_manager.clone(),
             tool_approvals: Mutex::new(ApprovalStore::default()),
+            #[cfg(feature = "semantic_shell_pause")]
+            semantic_shell,
         };
 
         let turn_context = Arc::new(Session::make_turn_context(

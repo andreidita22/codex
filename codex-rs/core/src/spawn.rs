@@ -1,9 +1,13 @@
 use std::collections::HashMap;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::process::Child;
 use tokio::process::Command;
 use tracing::trace;
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP;
 
 use crate::protocol::SandboxPolicy;
 
@@ -49,6 +53,10 @@ pub(crate) async fn spawn_child_async(
     );
 
     let mut cmd = Command::new(&program);
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    }
     #[cfg(unix)]
     cmd.arg0(arg0.map_or_else(|| program.to_string_lossy().to_string(), String::from));
     cmd.args(args);

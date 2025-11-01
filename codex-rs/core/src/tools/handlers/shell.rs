@@ -19,6 +19,8 @@ use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 use crate::tools::runtimes::apply_patch::ApplyPatchRequest;
 use crate::tools::runtimes::apply_patch::ApplyPatchRuntime;
+#[cfg(feature = "semantic_shell_pause")]
+use crate::tools::runtimes::shell::ShellPausePolicy;
 use crate::tools::runtimes::shell::ShellRequest;
 use crate::tools::runtimes::shell::ShellRuntime;
 use crate::tools::sandboxing::ToolCtx;
@@ -163,6 +165,7 @@ impl ShellHandler {
                         let mut runtime = ApplyPatchRuntime::new();
                         let tool_ctx = ToolCtx {
                             session: session.as_ref(),
+                            session_arc: Arc::clone(&session),
                             turn: turn.as_ref(),
                             call_id: call_id.clone(),
                             tool_name: tool_name.to_string(),
@@ -210,11 +213,18 @@ impl ShellHandler {
             env: exec_params.env.clone(),
             with_escalated_permissions: exec_params.with_escalated_permissions,
             justification: exec_params.justification.clone(),
+            #[cfg(feature = "semantic_shell_pause")]
+            pause_policy: if turn.tools_config.semantic_shell_pause {
+                Some(ShellPausePolicy::default())
+            } else {
+                None
+            },
         };
         let mut orchestrator = ToolOrchestrator::new();
         let mut runtime = ShellRuntime::new();
         let tool_ctx = ToolCtx {
             session: session.as_ref(),
+            session_arc: Arc::clone(&session),
             turn: turn.as_ref(),
             call_id: call_id.clone(),
             tool_name: tool_name.to_string(),
