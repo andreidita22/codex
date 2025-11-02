@@ -12,6 +12,8 @@ use codex_cloud_tasks_client::CloudBackend;
 use codex_cloud_tasks_client::HttpClient;
 use codex_cloud_tasks_client::MockClient;
 use codex_common::CliConfigOverrides;
+use codex_core::config::Config;
+use codex_core::config::ConfigOverrides;
 
 /// Fresh backend handles for each headless invocation.
 #[allow(dead_code)]
@@ -60,7 +62,17 @@ impl CloudContext {
 
         let codex_home = codex_core::config::find_codex_home()
             .context("Not signed in. Run 'codex login' to sign in with ChatGPT.")?;
-        let auth_manager = codex_login::AuthManager::new(codex_home, false);
+        let cli_overrides = overrides
+            .parse_overrides()
+            .map_err(|e| anyhow!("Error parsing -c overrides: {e}"))?;
+        let config = Config::load_with_cli_overrides(cli_overrides, ConfigOverrides::default())
+            .await
+            .context("Error loading configuration")?;
+        let auth_manager = codex_login::AuthManager::new(
+            codex_home.clone(),
+            false,
+            config.cli_auth_credentials_store_mode,
+        );
         let auth = auth_manager
             .auth()
             .ok_or_else(|| anyhow!("Not signed in. Run 'codex login' to sign in with ChatGPT."))?;
