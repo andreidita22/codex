@@ -6,6 +6,20 @@ If you already lean on Codex every day and just need a little more control, this
 
 Most day-to-day tuning lives in `config.toml`: set approval + sandbox presets, pin model defaults, and add MCP server launchers. The [Config guide](./config.md) walks through every option and provides copy-paste examples for common setups.
 
+### Semantic shell pause (experimental)
+
+Long-running shell commands can now pause the agent turn instead of blocking it indefinitely. To opt in:
+
+1. Build Codex with the feature flag enabled: `cargo build -p codex-cli --features codex-core/semantic_shell_pause` (or add the flag to your release build step).
+2. Enable the runtime toggle in your config:
+
+```toml
+[features]
+semantic_shell_pause = true
+```
+
+When a command runs idle past the threshold (or prints a "ready" prompt), Codex emits a background event and returns the tool call as `semantic_shell_control` output. The model can then `resume`, `interrupt`, `kill`, or `status` the run via the new tool. You can also drive it manually with `semantic_shell_control` requests from automations or scripted workflows.
+
 ## Tracing / verbose logging {#tracing-verbose-logging}
 
 Because Codex is written in Rust, it honors the `RUST_LOG` environment variable to configure its logging behavior.

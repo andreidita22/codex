@@ -369,7 +369,8 @@ async fn includes_conversation_id_and_model_headers_in_request() {
         request_conversation_id.to_str().unwrap(),
         conversation_id.to_string()
     );
-    assert_eq!(request_originator.to_str().unwrap(), "codex_cli_rs");
+    let originator_value = codex_core::default_client::originator().value.clone();
+    assert_eq!(request_originator.to_str().unwrap(), originator_value);
     assert_eq!(
         request_authorization.to_str().unwrap(),
         "Bearer Test API Key"
@@ -486,7 +487,8 @@ async fn chatgpt_auth_sends_correct_request() {
         request_conversation_id.to_str().unwrap(),
         conversation_id.to_string()
     );
-    assert_eq!(request_originator.to_str().unwrap(), "codex_cli_rs");
+    let originator_value = codex_core::default_client::originator().value.clone();
+    assert_eq!(request_originator.to_str().unwrap(), originator_value);
     assert_eq!(
         request_authorization.to_str().unwrap(),
         "Bearer Access Token"

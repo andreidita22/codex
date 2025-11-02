@@ -31,6 +31,8 @@ pub(crate) struct ToolsConfig {
     pub web_search_request: bool,
     pub include_view_image_tool: bool,
     pub experimental_supported_tools: Vec<String>,
+    #[cfg(feature = "semantic_shell_pause")]
+    pub semantic_shell_pause: bool,
 }
 
 pub(crate) struct ToolsConfigParams<'a> {
@@ -47,6 +49,8 @@ impl ToolsConfig {
         let include_apply_patch_tool = features.enabled(Feature::ApplyPatchFreeform);
         let include_web_search_request = features.enabled(Feature::WebSearchRequest);
         let include_view_image_tool = features.enabled(Feature::ViewImageTool);
+        #[cfg(feature = "semantic_shell_pause")]
+        let use_semantic_shell_pause = features.enabled(Feature::SemanticShellPause);
 
         let shell_type = if features.enabled(Feature::UnifiedExec) {
             ConfigShellToolType::UnifiedExec
@@ -74,6 +78,8 @@ impl ToolsConfig {
             web_search_request: include_web_search_request,
             include_view_image_tool,
             experimental_supported_tools: model_family.experimental_supported_tools.clone(),
+            #[cfg(feature = "semantic_shell_pause")]
+            semantic_shell_pause: use_semantic_shell_pause,
         }
     }
 }
@@ -348,6 +354,70 @@ fn create_shell_command_tool() -> ToolSpec {
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["command".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+fn create_semantic_shell_control_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "action".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Action to perform: one of resume, interrupt, kill, status, list.".to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "run_id".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Run identifier returned by a paused semantic shell invocation.".to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "pause_on_idle_ms".to_string(),
+        JsonSchema::Number {
+            description: Some("Optional idle threshold in milliseconds when resuming.".to_string()),
+        },
+    );
+    properties.insert(
+        "pause_on_ready_pattern".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Optional regex; pause when lines matching this pattern appear.".to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "pause_on_prompt_pattern".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Optional regex for interactive prompts; pause when matched.".to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "graceful_ms".to_string(),
+        JsonSchema::Number {
+            description: Some(
+                "Interrupt grace period in milliseconds (interrupt action).".to_string(),
+            ),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "semantic_shell_control".to_string(),
+        description:
+            "Inspect or manage paused semantic shell runs (resume, interrupt, kill, status, list)."
+                .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["action".to_string()]),
             additional_properties: Some(false.into()),
         },
     })
@@ -947,6 +1017,8 @@ pub(crate) fn build_specs(
     use crate::tools::handlers::TestSyncHandler;
     use crate::tools::handlers::UnifiedExecHandler;
     use crate::tools::handlers::ViewImageHandler;
+    #[cfg(feature = "semantic_shell_pause")]
+    use crate::tools::handlers::SemanticShellControlHandler;
     use std::sync::Arc;
 
     let mut builder = ToolRegistryBuilder::new();
@@ -956,6 +1028,8 @@ pub(crate) fn build_specs(
     let plan_handler = Arc::new(PlanHandler);
     let apply_patch_handler = Arc::new(ApplyPatchHandler);
     let view_image_handler = Arc::new(ViewImageHandler);
+    #[cfg(feature = "semantic_shell_pause")]
+    let semantic_shell_handler = Arc::new(SemanticShellControlHandler);
     let mcp_handler = Arc::new(McpHandler);
     let mcp_resource_handler = Arc::new(McpResourceHandler);
     let shell_command_handler = Arc::new(ShellCommandHandler);
@@ -1050,6 +1124,12 @@ pub(crate) fn build_specs(
     if config.include_view_image_tool {
         builder.push_spec_with_parallel_support(create_view_image_tool(), true);
         builder.register_handler("view_image", view_image_handler);
+    }
+
+    #[cfg(feature = "semantic_shell_pause")]
+    if config.semantic_shell_pause {
+        builder.push_spec(create_semantic_shell_control_tool());
+        builder.register_handler("semantic_shell_control", semantic_shell_handler);
     }
 
     if let Some(mcp_tools) = mcp_tools {

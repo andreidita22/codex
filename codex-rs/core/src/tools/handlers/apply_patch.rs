@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::apply_patch;
 use crate::apply_patch::InternalApplyPatchInvocation;
@@ -114,6 +115,7 @@ impl ToolHandler for ApplyPatchHandler {
                         let mut orchestrator = ToolOrchestrator::new();
                         let mut runtime = ApplyPatchRuntime::new();
                         let tool_ctx = ToolCtx {
+                            session_arc: Arc::clone(&session),
                             session: session.as_ref(),
                             turn: turn.as_ref(),
                             call_id: call_id.clone(),

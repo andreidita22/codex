@@ -24,6 +24,8 @@ mod environment_context;
 pub mod error;
 pub mod exec;
 pub mod exec_env;
+#[cfg(feature = "semantic_shell_pause")]
+pub mod extensions;
 pub mod features;
 mod flags;
 pub mod git_info;

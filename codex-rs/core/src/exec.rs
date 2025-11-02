@@ -2,22 +2,41 @@
 use std::os::unix::process::ExitStatusExt;
 
 use std::collections::HashMap;
+use std::fmt;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::ExitStatus;
+#[cfg(feature = "semantic_shell_pause")]
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
 use async_channel::Sender;
+#[cfg(feature = "semantic_shell_pause")]
+use futures::future::BoxFuture;
+#[cfg(feature = "semantic_shell_pause")]
+use futures::future::{self};
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 use tokio::process::Child;
+#[cfg(feature = "semantic_shell_pause")]
+use tokio::sync::oneshot;
+#[cfg(feature = "semantic_shell_pause")]
+use tokio::sync::watch;
+#[cfg(feature = "semantic_shell_pause")]
+use tokio::task::JoinHandle;
+#[cfg(feature = "semantic_shell_pause")]
+use tokio::time::Instant as TokioInstant;
 
+#[cfg(feature = "semantic_shell_pause")]
+use crate::codex::Session;
 use crate::error::CodexErr;
 use crate::error::Result;
 use crate::error::SandboxErr;
+#[cfg(feature = "semantic_shell_pause")]
+use crate::protocol::BackgroundEventEvent;
 use crate::protocol::Event;
 use crate::protocol::EventMsg;
 use crate::protocol::ExecCommandOutputDeltaEvent;
@@ -28,6 +47,8 @@ use crate::sandboxing::ExecEnv;
 use crate::sandboxing::SandboxManager;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
+#[cfg(feature = "semantic_shell_pause")]
+use codex_protocol::user_input::UserInput;
 
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 
@@ -82,6 +103,73 @@ pub struct StdoutStream {
     pub sub_id: String,
     pub call_id: String,
     pub tx_event: Sender<Event>,
+    #[cfg(feature = "semantic_shell_pause")]
+    pub meta: Option<ShellMeta>,
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+impl fmt::Debug for StdoutStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StdoutStream")
+            .field("sub_id", &self.sub_id)
+            .field("call_id", &self.call_id)
+            .finish()
+    }
+}
+
+#[cfg(not(feature = "semantic_shell_pause"))]
+impl fmt::Debug for StdoutStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StdoutStream")
+            .field("sub_id", &self.sub_id)
+            .field("call_id", &self.call_id)
+            .finish()
+    }
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+#[derive(Clone, Debug)]
+pub struct MetaShellConfig {
+    pub silence_threshold: Duration,
+    pub heartbeat_interval: Duration,
+    pub command_label: String,
+    pub cwd_display: String,
+    pub reporter: Option<MetaObservationSink>,
+    pub interrupt_on_silence: bool,
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+#[derive(Clone, Debug)]
+pub struct ShellMeta {
+    pub meta_config: Option<MetaShellConfig>,
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+#[derive(Clone)]
+pub struct MetaObservationSink {
+    session: Arc<Session>,
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+impl fmt::Debug for MetaObservationSink {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MetaObservationSink").finish()
+    }
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+impl MetaObservationSink {
+    pub(crate) fn new(session: Arc<Session>) -> Self {
+        Self { session }
+    }
+
+    pub(crate) async fn observation(&self, message: &str) {
+        let text = format!("Observation: {message}");
+        let _ = self
+            .session
+            .inject_input(vec![UserInput::Text { text }])
+            .await;
+    }
 }
 
 pub async fn process_exec_tool_call(
@@ -496,19 +584,76 @@ async fn consume_truncated_output(
 
     let (agg_tx, agg_rx) = async_channel::unbounded::<Vec<u8>>();
 
+    #[cfg(feature = "semantic_shell_pause")]
+    let (meta_monitor, idle_interrupt_rx) = if let Some(stream) = stdout_stream.clone()
+        && let Some(meta) = stream.meta.clone()
+        && let Some(config) = meta.meta_config
+    {
+        let (monitor, idle_rx) = MetaMonitor::start(stream, config);
+        (Some(monitor), idle_rx)
+    } else {
+        (None, None)
+    };
+
+    #[cfg(feature = "semantic_shell_pause")]
+    let activity_handle = meta_monitor.as_ref().map(MetaMonitor::activity_handle);
+
+    #[cfg(not(feature = "semantic_shell_pause"))]
+    let activity_handle: Option<IdleActivityHandle> = None;
+
     let stdout_handle = tokio::spawn(read_capped(
         BufReader::new(stdout_reader),
         stdout_stream.clone(),
         false,
         Some(agg_tx.clone()),
+        activity_handle.clone(),
     ));
     let stderr_handle = tokio::spawn(read_capped(
         BufReader::new(stderr_reader),
         stdout_stream.clone(),
         true,
         Some(agg_tx.clone()),
+        activity_handle,
     ));
 
+    #[cfg(feature = "semantic_shell_pause")]
+    let (exit_status, timed_out) = {
+        let mut idle_future: BoxFuture<'static, ()> = if let Some(rx) = idle_interrupt_rx {
+            Box::pin(async move {
+                let _ = rx.await;
+            })
+        } else {
+            Box::pin(future::pending())
+        };
+
+        tokio::select! {
+            result = tokio::time::timeout(timeout, child.wait()) => {
+                match result {
+                    Ok(status_result) => {
+                        let exit_status = status_result?;
+                        (exit_status, false)
+                    }
+                    Err(_) => {
+                        // timeout
+                        child.start_kill()?;
+                        // Debatable whether `child.wait().await` should be called here.
+                        (synthetic_exit_status(EXIT_CODE_SIGNAL_BASE + TIMEOUT_CODE), true)
+                    }
+                }
+            }
+            _ = tokio::signal::ctrl_c() => {
+                child.start_kill()?;
+                (synthetic_exit_status(EXIT_CODE_SIGNAL_BASE + SIGKILL_CODE), false)
+            }
+            _ = &mut idle_future => {
+                child.start_kill()?;
+                let exit_status = child.wait().await?;
+                (exit_status, true)
+            }
+        }
+    };
+
+    #[cfg(not(feature = "semantic_shell_pause"))]
     let (exit_status, timed_out) = tokio::select! {
         result = tokio::time::timeout(timeout, child.wait()) => {
             match result {
@@ -581,6 +726,11 @@ async fn consume_truncated_output(
 
     drop(agg_tx);
 
+    #[cfg(feature = "semantic_shell_pause")]
+    if let Some(monitor) = meta_monitor {
+        monitor.stop();
+    }
+
     let mut combined_buf = Vec::with_capacity(AGGREGATE_BUFFER_INITIAL_CAPACITY);
     while let Ok(chunk) = agg_rx.recv().await {
         append_all(&mut combined_buf, &chunk);
@@ -604,6 +754,7 @@ async fn read_capped<R: AsyncRead + Unpin + Send + 'static>(
     stream: Option<StdoutStream>,
     is_stderr: bool,
     aggregate_tx: Option<Sender<Vec<u8>>>,
+    idle_activity: Option<IdleActivityHandle>,
 ) -> io::Result<StreamOutput<Vec<u8>>> {
     let mut buf = Vec::with_capacity(AGGREGATE_BUFFER_INITIAL_CAPACITY);
     let mut tmp = [0u8; READ_CHUNK_SIZE];
@@ -615,6 +766,10 @@ async fn read_capped<R: AsyncRead + Unpin + Send + 'static>(
         let n = reader.read(&mut tmp).await?;
         if n == 0 {
             break;
+        }
+
+        if let Some(activity) = &idle_activity {
+            activity.bump();
         }
 
         if let Some(stream) = &stream
@@ -651,6 +806,131 @@ async fn read_capped<R: AsyncRead + Unpin + Send + 'static>(
         text: buf,
         truncated_after_lines: None,
     })
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+#[derive(Clone)]
+struct IdleActivityHandle {
+    tx: watch::Sender<Instant>,
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+impl IdleActivityHandle {
+    fn new(tx: watch::Sender<Instant>) -> Self {
+        Self { tx }
+    }
+
+    fn bump(&self) {
+        let _ = self.tx.send(Instant::now());
+    }
+}
+
+#[cfg(not(feature = "semantic_shell_pause"))]
+#[derive(Clone)]
+struct IdleActivityHandle;
+
+#[cfg(not(feature = "semantic_shell_pause"))]
+impl IdleActivityHandle {
+    fn bump(&self) {}
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+struct MetaMonitor {
+    activity: IdleActivityHandle,
+    join: JoinHandle<()>,
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+impl MetaMonitor {
+    fn start(
+        stream: StdoutStream,
+        config: MetaShellConfig,
+    ) -> (Self, Option<oneshot::Receiver<()>>) {
+        let (tx, mut rx) = watch::channel(Instant::now());
+        let activity = IdleActivityHandle::new(tx);
+        let (idle_tx, idle_rx) = if config.interrupt_on_silence {
+            let (idle_tx, idle_rx) = oneshot::channel();
+            (Some(idle_tx), Some(idle_rx))
+        } else {
+            (None, None)
+        };
+        let mut idle_tx = idle_tx;
+        let join = tokio::spawn(async move {
+            let mut last_activity = Instant::now();
+            let mut next_warning_time = last_activity + config.silence_threshold;
+            emit_background_event(
+                &stream,
+                &config,
+                format!(
+                    "[META start] `{}` (cwd: {})",
+                    config.command_label, config.cwd_display
+                ),
+            )
+            .await;
+            loop {
+                let sleep_until =
+                    tokio::time::sleep_until(TokioInstant::from_std(next_warning_time));
+                tokio::select! {
+                    _ = sleep_until => {
+                        let now = Instant::now();
+                        let silent_for = now.saturating_duration_since(last_activity);
+                        emit_background_event(
+                            &stream,
+                            &config,
+                            format!(
+                                "[META silence] `{}` idle for {}s; press Ctrl+C if waiting for input.",
+                                config.command_label,
+                                silent_for.as_secs().max(1),
+                            ),
+                        ).await;
+                        if let Some(tx) = idle_tx.take() {
+                            let _ = tx.send(());
+                        }
+                        next_warning_time += config.silence_threshold;
+                    }
+                    changed = rx.changed() => {
+                        match changed {
+                            Ok(()) => {
+                                last_activity = *rx.borrow();
+                                next_warning_time = last_activity + config.silence_threshold;
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                }
+            }
+        });
+
+        (Self { activity, join }, idle_rx)
+    }
+
+    fn activity_handle(&self) -> IdleActivityHandle {
+        self.activity.clone()
+    }
+
+    fn stop(self) {
+        self.join.abort();
+    }
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+async fn emit_background_event(stream: &StdoutStream, config: &MetaShellConfig, message: String) {
+    let context = stylize_context(config);
+    let event = Event {
+        id: stream.sub_id.clone(),
+        msg: EventMsg::BackgroundEvent(BackgroundEventEvent {
+            message: format!("{message} [{context}]"),
+        }),
+    };
+    let _ = stream.tx_event.send(event).await;
+    if let Some(reporter) = &config.reporter {
+        reporter.observation(&message).await;
+    }
+}
+
+#[cfg(feature = "semantic_shell_pause")]
+fn stylize_context(config: &MetaShellConfig) -> String {
+    format!("cmd=`{}` cwd={}", config.command_label, config.cwd_display)
 }
 
 #[cfg(unix)]

@@ -42,6 +42,8 @@ pub enum Feature {
     WebSearchRequest,
     /// Enable the model-based risk assessments for sandboxed commands.
     SandboxCommandAssessment,
+    /// Allow experimental semantic shell pause wrapper.
+    SemanticShellPause,
     /// Create a ghost commit at each turn.
     GhostCommit,
     /// Enable Windows sandbox (restricted token) on Windows.
@@ -286,6 +288,12 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::SandboxCommandAssessment,
         key: "experimental_sandbox_command_assessment",
+        stage: Stage::Experimental,
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::SemanticShellPause,
+        key: "semantic_shell_pause",
         stage: Stage::Experimental,
         default_enabled: false,
     },
