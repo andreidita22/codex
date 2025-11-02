@@ -288,7 +288,9 @@ mod tests {
     #[test]
     fn test_get_codex_user_agent() {
         let user_agent = get_codex_user_agent();
-        assert!(user_agent.starts_with("codex_cli_rs/"));
+        let originator = originator();
+        let expected_prefix = format!("{}/", originator.value);
+        assert!(user_agent.starts_with(&expected_prefix));
     }
 
     #[tokio::test]
@@ -302,6 +304,8 @@ mod tests {
         use wiremock::matchers::path;
 
         let client = create_client();
+        let expected_ua = get_codex_user_agent();
+        let originator_value = originator().value.clone();
 
         // Spin up a local mock server and capture a request.
         let server = MockServer::start().await;
@@ -329,10 +333,9 @@ mod tests {
         let originator_header = headers
             .get("originator")
             .expect("originator header missing");
-        assert_eq!(originator_header.to_str().unwrap(), "codex_cli_rs");
+        assert_eq!(originator_header.to_str().unwrap(), originator_value);
 
         // User-Agent matches the computed Codex UA for that originator
-        let expected_ua = get_codex_user_agent();
         let ua_header = headers
             .get("user-agent")
             .expect("user-agent header missing");
