@@ -21,7 +21,6 @@ pub use mcp::McpHandler;
 pub use mcp_resource::McpResourceHandler;
 pub use plan::PlanHandler;
 pub use read_file::ReadFileHandler;
-pub use shell::ShellCommandHandler;
 #[cfg(feature = "semantic_shell_pause")]
 pub use semantic_shell_control::SemanticShellControlHandler;
 pub use shell::ShellHandler;
