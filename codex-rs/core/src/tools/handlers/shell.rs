@@ -4,24 +4,26 @@ use codex_protocol::models::ShellToolCallParams;
 use std::sync::Arc;
 
 use crate::codex::TurnContext;
+use crate::exec::ExecExpiration;
 use crate::exec::ExecParams;
 use crate::exec_env::create_env;
 use crate::exec_policy::create_exec_approval_requirement_for_command;
+#[cfg(feature = "semantic_shell_pause")]
+use crate::extensions::semantic_shell::{format_pause_reason, ShellExecRequest, ShellTurnResult};
 use crate::function_tool::FunctionCallError;
+use crate::get_platform_sandbox;
 use crate::is_safe_command::is_known_safe_command;
 use crate::protocol::ExecCommandSource;
+use crate::sandboxing::{SandboxManager, SandboxPermissions, SandboxType};
 use crate::shell::Shell;
-use crate::tools::context::ToolInvocation;
-use crate::tools::context::ToolOutput;
-use crate::tools::context::ToolPayload;
-use crate::tools::events::ToolEmitter;
-use crate::tools::events::ToolEventCtx;
+use crate::tools::context::{ToolInvocation, ToolOutput, ToolPayload};
+use crate::tools::events::{ToolEmitter, ToolEventCtx};
 use crate::tools::handlers::apply_patch::intercept_apply_patch;
 use crate::tools::orchestrator::ToolOrchestrator;
-use crate::tools::registry::ToolHandler;
-use crate::tools::registry::ToolKind;
-use crate::tools::runtimes::shell::ShellRequest;
-use crate::tools::runtimes::shell::ShellRuntime;
+use crate::tools::registry::{ToolHandler, ToolKind};
+use crate::tools::runtimes::apply_patch::{ApplyPatchRequest, ApplyPatchRuntime};
+use crate::tools::runtimes::build_command_spec;
+use crate::tools::runtimes::shell::{ShellRequest, ShellRuntime};
 use crate::tools::sandboxing::ToolCtx;
 
 pub struct ShellHandler;
@@ -225,7 +227,6 @@ impl ShellHandler {
             )));
         }
 
-        // Intercept apply_patch if present.
         if let Some(output) = intercept_apply_patch(
             &exec_params.command,
             &exec_params.cwd,
@@ -271,9 +272,99 @@ impl ShellHandler {
             justification: exec_params.justification.clone(),
             exec_approval_requirement,
         };
+
+        #[cfg(feature = "semantic_shell_pause")]
+        if turn.tools_config.semantic_shell_pause {
+            let spec = build_command_spec(
+                &req.command,
+                &req.cwd,
+                &req.env,
+                ExecExpiration::from(req.timeout_ms),
+                req.with_escalated_permissions,
+                req.justification.clone(),
+            )?;
+            let manager = SandboxManager::new();
+            let sandbox_type = match &turn.sandbox_policy {
+                SandboxPolicy::DangerFullAccess => SandboxType::None,
+                _ => get_platform_sandbox().unwrap_or(SandboxType::None),
+            };
+            let exec_env = manager
+                .transform(
+                    spec,
+                    &turn.sandbox_policy,
+                    sandbox_type,
+                    turn.cwd.clone(),
+                    turn.codex_linux_sandbox_exe.as_ref(),
+                )
+                .map_err(FunctionCallError::from)?;
+
+            let pause_on_idle_ms = req.timeout_ms;
+            let manager = session.services.semantic_shell.clone();
+            let result = manager
+                .exec_with_semantic_pause(ShellExecRequest {
+                    exec_env,
+                    sandbox_policy: turn.sandbox_policy.clone(),
+                    stdout_stream: Some(crate::exec::StdoutStream {
+                        sub_id: turn.sub_id.clone(),
+                        call_id: call_id.clone(),
+                        tx_event: session.get_tx_event(),
+                    }),
+                    pause_on_idle_ms,
+                    pause_on_ready_pattern: None,
+                    pause_on_prompt_pattern: None,
+                    tail_lines: 200,
+                })
+                .await
+                .map_err(|err| FunctionCallError::Fatal(err.to_string()))?;
+
+            return match result {
+                ShellTurnResult::Completed {
+                    exit,
+                    duration_ms,
+                    stdout,
+                    stderr,
+                    aggregated,
+                } => Ok(ToolOutput::Function {
+                    content: serde_json::json!({
+                        "exit": exit,
+                        "duration_ms": duration_ms,
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "aggregated_output": aggregated,
+                    }),
+                    content_items: None,
+                    success: Some(true),
+                }),
+                ShellTurnResult::Paused {
+                    run_id,
+                    reason,
+                    pid,
+                    idle_ms,
+                    last_stdout,
+                    last_stderr,
+                    started_at,
+                } => Ok(ToolOutput::Function {
+                    content: serde_json::json!({
+                        "status": "paused",
+                        "run_id": run_id,
+                        "reason": format_pause_reason(&reason),
+                        "pid": pid,
+                        "idle_ms": idle_ms,
+                        "last_stdout": last_stdout,
+                        "last_stderr": last_stderr,
+                        "started_at": started_at,
+                    }),
+                    content_items: None,
+                    success: Some(true),
+                }),
+                ShellTurnResult::Failed { error } => Err(FunctionCallError::Fatal(error)),
+            };
+        }
+
         let mut orchestrator = ToolOrchestrator::new();
         let mut runtime = ShellRuntime::new();
         let tool_ctx = ToolCtx {
+            session_arc: Arc::clone(&session),
             session: session.as_ref(),
             turn: turn.as_ref(),
             call_id: call_id.clone(),
@@ -297,11 +388,6 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use codex_protocol::models::ShellCommandToolCallParams;
-    use pretty_assertions::assert_eq;
-
-    use crate::codex::make_session_and_context;
-    use crate::exec_env::create_env;
     use crate::is_safe_command::is_known_safe_command;
     use crate::sandboxing::SandboxPermissions;
     use crate::shell::Shell;
@@ -309,9 +395,6 @@ mod tests {
     use crate::shell_snapshot::ShellSnapshot;
     use crate::tools::handlers::ShellCommandHandler;
 
-    /// The logic for is_known_safe_command() has heuristics for known shells,
-    /// so we must ensure the commands generated by [ShellCommandHandler] can be
-    /// recognized as safe if the `command` is safe.
     #[test]
     fn commands_generated_by_shell_command_handler_can_be_matched_by_is_known_safe_command() {
         let bash_shell = Shell {

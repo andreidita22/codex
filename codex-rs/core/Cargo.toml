@@ -90,9 +90,10 @@ which = { workspace = true }
 wildmatch = { workspace = true }
 
 [features]
+default = []
+semantic_shell_pause = []
 deterministic_process_ids = []
 test-support = []
-
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { workspace = true, features = ["linux-native-async-persistent"] }

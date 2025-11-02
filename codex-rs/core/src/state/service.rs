@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use crate::AuthManager;
 use crate::RolloutRecorder;
+#[cfg(feature = "semantic_shell_pause")]
+use crate::extensions::semantic_shell::SemanticShellManager;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::openai_models::models_manager::ModelsManager;
 use crate::skills::SkillLoadOutcome;
@@ -26,4 +28,6 @@ pub(crate) struct SessionServices {
     pub(crate) otel_event_manager: OtelEventManager,
     pub(crate) tool_approvals: Mutex<ApprovalStore>,
     pub(crate) skills: Option<SkillLoadOutcome>,
+    #[cfg(feature = "semantic_shell_pause")]
+    pub(crate) semantic_shell: Arc<SemanticShellManager>,
 }

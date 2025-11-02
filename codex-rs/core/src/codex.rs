@@ -12,6 +12,8 @@ use crate::compact::run_inline_auto_compact_task;
 use crate::compact::should_use_remote_compact_task;
 use crate::compact_remote::run_inline_remote_auto_compact_task;
 use crate::exec_policy::load_exec_policy_for_features;
+#[cfg(feature = "semantic_shell_pause")]
+use crate::extensions::semantic_shell::SemanticShellManager;
 use crate::features::Feature;
 use crate::features::Features;
 use crate::openai_models::model_family::ModelFamily;
@@ -619,6 +621,9 @@ impl Session {
         }
         let state = SessionState::new(session_configuration.clone());
 
+        #[cfg(feature = "semantic_shell_pause")]
+        let semantic_shell = Arc::new(SemanticShellManager::new());
+
         let services = SessionServices {
             mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::default())),
             mcp_startup_cancellation_token: CancellationToken::new(),
@@ -632,6 +637,8 @@ impl Session {
             models_manager: Arc::clone(&models_manager),
             tool_approvals: Mutex::new(ApprovalStore::default()),
             skills: skills.clone(),
+            #[cfg(feature = "semantic_shell_pause")]
+            semantic_shell,
         };
 
         let sess = Arc::new(Session {
@@ -2925,6 +2932,9 @@ mod tests {
 
         let state = SessionState::new(session_configuration.clone());
 
+        #[cfg(feature = "semantic_shell_pause")]
+        let semantic_shell = Arc::new(SemanticShellManager::new());
+
         let services = SessionServices {
             mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::default())),
             mcp_startup_cancellation_token: CancellationToken::new(),
@@ -2938,6 +2948,8 @@ mod tests {
             models_manager,
             tool_approvals: Mutex::new(ApprovalStore::default()),
             skills: None,
+            #[cfg(feature = "semantic_shell_pause")]
+            semantic_shell,
         };
 
         let turn_context = Session::make_turn_context(
@@ -3011,6 +3023,9 @@ mod tests {
 
         let state = SessionState::new(session_configuration.clone());
 
+        #[cfg(feature = "semantic_shell_pause")]
+        let semantic_shell = Arc::new(SemanticShellManager::new());
+
         let services = SessionServices {
             mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::default())),
             mcp_startup_cancellation_token: CancellationToken::new(),
@@ -3024,6 +3039,8 @@ mod tests {
             models_manager,
             tool_approvals: Mutex::new(ApprovalStore::default()),
             skills: None,
+            #[cfg(feature = "semantic_shell_pause")]
+            semantic_shell,
         };
 
         let turn_context = Arc::new(Session::make_turn_context(

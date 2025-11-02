@@ -118,6 +118,7 @@ impl ToolHandler for ApplyPatchHandler {
                         let mut orchestrator = ToolOrchestrator::new();
                         let mut runtime = ApplyPatchRuntime::new();
                         let tool_ctx = ToolCtx {
+                            session_arc: Arc::clone(&session),
                             session: session.as_ref(),
                             turn: turn.as_ref(),
                             call_id: call_id.clone(),
