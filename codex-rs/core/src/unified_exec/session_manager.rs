@@ -310,6 +310,7 @@ impl UnifiedExecSessionManager {
             create_env(&context.turn.shell_environment_policy),
         );
         let tool_ctx = ToolCtx {
+            session_arc: Arc::clone(&context.session),
             session: context.session.as_ref(),
             turn: context.turn.as_ref(),
             call_id: context.call_id.clone(),
