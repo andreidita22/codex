@@ -23,6 +23,7 @@ pub use plan::PlanHandler;
 pub use read_file::ReadFileHandler;
 #[cfg(feature = "semantic_shell_pause")]
 pub use semantic_shell_control::SemanticShellControlHandler;
+pub use shell::ShellCommandHandler;
 pub use shell::ShellHandler;
 pub use test_sync::TestSyncHandler;
 pub use unified_exec::UnifiedExecHandler;
