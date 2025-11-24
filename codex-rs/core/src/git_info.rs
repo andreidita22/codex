@@ -102,10 +102,20 @@ pub async fn collect_git_info(cwd: &Path) -> Option<GitInfo> {
         && output.status.success()
         && let Ok(url) = String::from_utf8(output.stdout)
     {
-        git_info.repository_url = Some(url.trim().to_string());
+        git_info.repository_url = Some(normalize_remote_url(url.trim()));
     }
 
     Some(git_info)
+}
+
+fn normalize_remote_url(url: &str) -> String {
+    if let Some(rest) = url.strip_prefix("git@github.com:") {
+        format!("https://github.com/{rest}")
+    } else if let Some(rest) = url.strip_prefix("ssh://git@github.com/") {
+        format!("https://github.com/{rest}")
+    } else {
+        url.to_string()
+    }
 }
 
 /// A minimal commit summary entry used for pickers (subject + timestamp + sha).
@@ -840,6 +850,33 @@ mod tests {
 
         // Should have repository URL
         assert_eq!(git_info.repository_url, Some(expected_remote));
+    }
+
+    #[tokio::test]
+    async fn test_collect_git_info_with_ssh_remote() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let repo_path = create_test_git_repo(&temp_dir).await;
+
+        Command::new("git")
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "ssh://git@github.com/example/repo.git",
+            ])
+            .current_dir(&repo_path)
+            .output()
+            .await
+            .expect("Failed to add remote");
+
+        let git_info = collect_git_info(&repo_path)
+            .await
+            .expect("Should collect git info from repo");
+
+        assert_eq!(
+            git_info.repository_url,
+            Some("https://github.com/example/repo.git".to_string())
+        );
     }
 
     #[tokio::test]

@@ -5,6 +5,8 @@ mod mcp;
 mod mcp_resource;
 mod plan;
 mod read_file;
+#[cfg(feature = "semantic_shell_pause")]
+mod semantic_shell_control;
 mod shell;
 mod test_sync;
 mod unified_exec;
@@ -19,6 +21,8 @@ pub use mcp::McpHandler;
 pub use mcp_resource::McpResourceHandler;
 pub use plan::PlanHandler;
 pub use read_file::ReadFileHandler;
+#[cfg(feature = "semantic_shell_pause")]
+pub use semantic_shell_control::SemanticShellControlHandler;
 pub use shell::ShellCommandHandler;
 pub use shell::ShellHandler;
 pub use test_sync::TestSyncHandler;

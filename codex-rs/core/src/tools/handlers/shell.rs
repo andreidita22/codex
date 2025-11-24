@@ -250,6 +250,7 @@ impl ShellHandler {
                         let mut orchestrator = ToolOrchestrator::new();
                         let mut runtime = ApplyPatchRuntime::new();
                         let tool_ctx = ToolCtx {
+                            session_arc: Arc::clone(&session),
                             session: session.as_ref(),
                             turn: turn.as_ref(),
                             call_id: call_id.clone(),
@@ -312,9 +313,99 @@ impl ShellHandler {
                 SandboxPermissions::from(exec_params.with_escalated_permissions.unwrap_or(false)),
             ),
         };
+        #[cfg(feature = "semantic_shell_pause")]
+        if turn.tools_config.semantic_shell_pause {
+            // Build ExecEnv for semantic shell manager
+            let spec = build_command_spec(
+                &req.command,
+                &req.cwd,
+                &req.env,
+                ExecExpiration::from(req.timeout_ms),
+                req.with_escalated_permissions,
+                req.justification.clone(),
+            )?;
+            let manager = SandboxManager::new();
+            let exec_env = manager
+                .transform(
+                    spec,
+                    &turn.sandbox_policy,
+                    attempt.policy,
+                    turn.cwd.clone(),
+                    &turn.codex_linux_sandbox_exe,
+                )
+                .map_err(FunctionCallError::from)?;
+
+            // Pause policy defaults to the execution timeout if provided.
+            let pause_on_idle_ms = req.timeout_ms;
+            let manager = session.services.semantic_shell.clone();
+            let result = manager
+                .exec_with_semantic_pause(crate::extensions::semantic_shell::ShellExecRequest {
+                    exec_env,
+                    sandbox_policy: turn.sandbox_policy.clone(),
+                    stdout_stream: Some(
+                        crate::exec::StdoutStream {
+                            sub_id: turn.sub_id.clone(),
+                            call_id: call_id.clone(),
+                            tx_event: session.get_tx_event(),
+                        },
+                    ),
+                    pause_on_idle_ms,
+                    pause_on_ready_pattern: None,
+                    pause_on_prompt_pattern: None,
+                    tail_lines: 200,
+                })
+                .await
+                .map_err(|err| FunctionCallError::Fatal(err.to_string()))?;
+
+            return match result {
+                crate::extensions::semantic_shell::ShellTurnResult::Completed {
+                    exit,
+                    duration_ms,
+                    stdout,
+                    stderr,
+                    aggregated,
+                } => Ok(ToolOutput::Function {
+                    content: serde_json::json!({
+                        "exit": exit,
+                        "duration_ms": duration_ms,
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "aggregated_output": aggregated,
+                    }),
+                    content_items: None,
+                    success: Some(true),
+                }),
+                crate::extensions::semantic_shell::ShellTurnResult::Paused {
+                    run_id,
+                    reason,
+                    pid,
+                    idle_ms,
+                    last_stdout,
+                    last_stderr,
+                    started_at,
+                } => Ok(ToolOutput::Function {
+                    content: serde_json::json!({
+                        "status": "paused",
+                        "run_id": run_id,
+                        "reason": format_pause_reason(&reason),
+                        "pid": pid,
+                        "idle_ms": idle_ms,
+                        "last_stdout": last_stdout,
+                        "last_stderr": last_stderr,
+                        "started_at": started_at,
+                    }),
+                    content_items: None,
+                    success: Some(true),
+                }),
+                crate::extensions::semantic_shell::ShellTurnResult::Failed { error } => {
+                    Err(FunctionCallError::Fatal(error))
+                }
+            };
+        }
         let mut orchestrator = ToolOrchestrator::new();
         let mut runtime = ShellRuntime::new();
         let tool_ctx = ToolCtx {
+            session_arc: Arc::clone(&session),
             session: session.as_ref(),
             turn: turn.as_ref(),
             call_id: call_id.clone(),

@@ -43,6 +43,8 @@ pub enum Feature {
     ExecPolicy,
     /// Enable the model-based risk assessments for sandboxed commands.
     SandboxCommandAssessment,
+    /// Allow experimental semantic shell pause wrapper.
+    SemanticShellPause,
     /// Enable Windows sandbox (restricted token) on Windows.
     WindowsSandbox,
     /// Remote compaction enabled (only for ChatGPT auth)
@@ -299,6 +301,12 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::SandboxCommandAssessment,
         key: "experimental_sandbox_command_assessment",
+        stage: Stage::Experimental,
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::SemanticShellPause,
+        key: "semantic_shell_pause",
         stage: Stage::Experimental,
         default_enabled: false,
     },

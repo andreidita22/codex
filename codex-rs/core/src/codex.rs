@@ -6,6 +6,8 @@ use std::sync::atomic::AtomicU64;
 
 use crate::AuthManager;
 use crate::client_common::REVIEW_PROMPT;
+#[cfg(feature = "semantic_shell_pause")]
+use crate::extensions::semantic_shell::SemanticShellManager;
 use crate::compact;
 use crate::compact::run_inline_auto_compact_task;
 use crate::compact::should_use_remote_compact_task;
@@ -553,6 +555,9 @@ impl Session {
         // Create the mutable state for the Session.
         let state = SessionState::new(session_configuration.clone());
 
+        #[cfg(feature = "semantic_shell_pause")]
+        let semantic_shell = Arc::new(SemanticShellManager::new());
+
         let services = SessionServices {
             mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::default())),
             mcp_startup_cancellation_token: CancellationToken::new(),
@@ -561,6 +566,8 @@ impl Session {
             rollout: Mutex::new(Some(rollout_recorder)),
             user_shell: default_shell,
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
+            #[cfg(feature = "semantic_shell_pause")]
+            semantic_shell,
             auth_manager: Arc::clone(&auth_manager),
             otel_event_manager,
             tool_approvals: Mutex::new(ApprovalStore::default()),
