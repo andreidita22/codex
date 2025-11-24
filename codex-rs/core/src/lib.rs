@@ -25,6 +25,7 @@ mod environment_context;
 pub mod error;
 pub mod exec;
 pub mod exec_env;
+mod exec_policy;
 #[cfg(feature = "semantic_shell_pause")]
 pub mod extensions;
 pub mod features;
@@ -40,6 +41,7 @@ pub mod parse_command;
 pub mod powershell;
 mod response_processing;
 pub mod sandboxing;
+mod text_encoding;
 pub mod token_data;
 mod truncate;
 mod unified_exec;

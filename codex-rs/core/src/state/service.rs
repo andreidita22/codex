@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use crate::AuthManager;
 use crate::RolloutRecorder;
+use crate::mcp_connection_manager::McpConnectionManager;
 #[cfg(feature = "semantic_shell_pause")]
 use crate::extensions::semantic_shell::SemanticShellManager;
-use crate::mcp_connection_manager::McpConnectionManager;
 use crate::tools::sandboxing::ApprovalStore;
 use crate::unified_exec::UnifiedExecSessionManager;
 use crate::user_notification::UserNotifier;
@@ -21,9 +21,9 @@ pub(crate) struct SessionServices {
     pub(crate) rollout: Mutex<Option<RolloutRecorder>>,
     pub(crate) user_shell: crate::shell::Shell,
     pub(crate) show_raw_agent_reasoning: bool,
+    #[cfg(feature = "semantic_shell_pause")]
+    pub(crate) semantic_shell: Arc<SemanticShellManager>,
     pub(crate) auth_manager: Arc<AuthManager>,
     pub(crate) otel_event_manager: OtelEventManager,
     pub(crate) tool_approvals: Mutex<ApprovalStore>,
-    #[cfg(feature = "semantic_shell_pause")]
-    pub(crate) semantic_shell: Arc<SemanticShellManager>,
 }

@@ -9,9 +9,11 @@ use crate::apply_patch::convert_apply_patch_to_protocol;
 use crate::codex::TurnContext;
 use crate::exec::ExecParams;
 use crate::exec_env::create_env;
+use crate::exec_policy::create_approval_requirement_for_command;
 use crate::function_tool::FunctionCallError;
 use crate::is_safe_command::is_known_safe_command;
 use crate::protocol::ExecCommandSource;
+use crate::sandboxing::SandboxPermissions;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
@@ -22,8 +24,6 @@ use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 use crate::tools::runtimes::apply_patch::ApplyPatchRequest;
 use crate::tools::runtimes::apply_patch::ApplyPatchRuntime;
-#[cfg(feature = "semantic_shell_pause")]
-use crate::tools::runtimes::shell::ShellPausePolicy;
 use crate::tools::runtimes::shell::ShellRequest;
 use crate::tools::runtimes::shell::ShellRuntime;
 use crate::tools::sandboxing::ToolCtx;
@@ -37,7 +37,7 @@ impl ShellHandler {
         ExecParams {
             command: params.command,
             cwd: turn_context.resolve_path(params.workdir.clone()),
-            timeout_ms: params.timeout_ms,
+            expiration: params.timeout_ms.into(),
             env: create_env(&turn_context.shell_environment_policy),
             with_escalated_permissions: params.with_escalated_permissions,
             justification: params.justification,
@@ -59,7 +59,7 @@ impl ShellCommandHandler {
         ExecParams {
             command,
             cwd: turn_context.resolve_path(params.workdir.clone()),
-            timeout_ms: params.timeout_ms,
+            expiration: params.timeout_ms.into(),
             env: create_env(&turn_context.shell_environment_policy),
             with_escalated_permissions: params.with_escalated_permissions,
             justification: params.justification,
@@ -243,7 +243,7 @@ impl ShellHandler {
                         let req = ApplyPatchRequest {
                             patch: apply.action.patch.clone(),
                             cwd: apply.action.cwd.clone(),
-                            timeout_ms: exec_params.timeout_ms,
+                            timeout_ms: exec_params.expiration.timeout_ms(),
                             user_explicitly_approved: apply.user_explicitly_approved_this_action,
                             codex_exe: turn.codex_linux_sandbox_exe.clone(),
                         };
@@ -301,17 +301,107 @@ impl ShellHandler {
         let req = ShellRequest {
             command: exec_params.command.clone(),
             cwd: exec_params.cwd.clone(),
-            timeout_ms: exec_params.timeout_ms,
+            timeout_ms: exec_params.expiration.timeout_ms(),
             env: exec_params.env.clone(),
             with_escalated_permissions: exec_params.with_escalated_permissions,
             justification: exec_params.justification.clone(),
-            #[cfg(feature = "semantic_shell_pause")]
-            pause_policy: if turn.tools_config.semantic_shell_pause {
-                Some(ShellPausePolicy::default())
-            } else {
-                None
-            },
+            approval_requirement: create_approval_requirement_for_command(
+                &turn.exec_policy,
+                &exec_params.command,
+                turn.approval_policy,
+                &turn.sandbox_policy,
+                SandboxPermissions::from(exec_params.with_escalated_permissions.unwrap_or(false)),
+            ),
         };
+        #[cfg(feature = "semantic_shell_pause")]
+        if turn.tools_config.semantic_shell_pause {
+            // Build ExecEnv for semantic shell manager
+            let spec = build_command_spec(
+                &req.command,
+                &req.cwd,
+                &req.env,
+                ExecExpiration::from(req.timeout_ms),
+                req.with_escalated_permissions,
+                req.justification.clone(),
+            )?;
+            let manager = SandboxManager::new();
+            let exec_env = manager
+                .transform(
+                    spec,
+                    &turn.sandbox_policy,
+                    attempt.policy,
+                    turn.cwd.clone(),
+                    &turn.codex_linux_sandbox_exe,
+                )
+                .map_err(FunctionCallError::from)?;
+
+            // Pause policy defaults to the execution timeout if provided.
+            let pause_on_idle_ms = req.timeout_ms;
+            let manager = session.services.semantic_shell.clone();
+            let result = manager
+                .exec_with_semantic_pause(crate::extensions::semantic_shell::ShellExecRequest {
+                    exec_env,
+                    sandbox_policy: turn.sandbox_policy.clone(),
+                    stdout_stream: Some(
+                        crate::exec::StdoutStream {
+                            sub_id: turn.sub_id.clone(),
+                            call_id: call_id.clone(),
+                            tx_event: session.get_tx_event(),
+                        },
+                    ),
+                    pause_on_idle_ms,
+                    pause_on_ready_pattern: None,
+                    pause_on_prompt_pattern: None,
+                    tail_lines: 200,
+                })
+                .await
+                .map_err(|err| FunctionCallError::Fatal(err.to_string()))?;
+
+            return match result {
+                crate::extensions::semantic_shell::ShellTurnResult::Completed {
+                    exit,
+                    duration_ms,
+                    stdout,
+                    stderr,
+                    aggregated,
+                } => Ok(ToolOutput::Function {
+                    content: serde_json::json!({
+                        "exit": exit,
+                        "duration_ms": duration_ms,
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "aggregated_output": aggregated,
+                    }),
+                    content_items: None,
+                    success: Some(true),
+                }),
+                crate::extensions::semantic_shell::ShellTurnResult::Paused {
+                    run_id,
+                    reason,
+                    pid,
+                    idle_ms,
+                    last_stdout,
+                    last_stderr,
+                    started_at,
+                } => Ok(ToolOutput::Function {
+                    content: serde_json::json!({
+                        "status": "paused",
+                        "run_id": run_id,
+                        "reason": format_pause_reason(&reason),
+                        "pid": pid,
+                        "idle_ms": idle_ms,
+                        "last_stdout": last_stdout,
+                        "last_stderr": last_stderr,
+                        "started_at": started_at,
+                    }),
+                    content_items: None,
+                    success: Some(true),
+                }),
+                crate::extensions::semantic_shell::ShellTurnResult::Failed { error } => {
+                    Err(FunctionCallError::Fatal(error))
+                }
+            };
+        }
         let mut orchestrator = ToolOrchestrator::new();
         let mut runtime = ShellRuntime::new();
         let tool_ctx = ToolCtx {
@@ -339,29 +429,30 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::is_safe_command::is_known_safe_command;
-    use crate::shell::BashShell;
-    use crate::shell::PowerShellConfig;
     use crate::shell::Shell;
-    use crate::shell::ZshShell;
+    use crate::shell::ShellType;
 
     /// The logic for is_known_safe_command() has heuristics for known shells,
     /// so we must ensure the commands generated by [ShellCommandHandler] can be
     /// recognized as safe if the `command` is safe.
     #[test]
     fn commands_generated_by_shell_command_handler_can_be_matched_by_is_known_safe_command() {
-        let bash_shell = Shell::Bash(BashShell {
+        let bash_shell = Shell {
+            shell_type: ShellType::Bash,
             shell_path: PathBuf::from("/bin/bash"),
-        });
+        };
         assert_safe(&bash_shell, "ls -la");
 
-        let zsh_shell = Shell::Zsh(ZshShell {
+        let zsh_shell = Shell {
+            shell_type: ShellType::Zsh,
             shell_path: PathBuf::from("/bin/zsh"),
-        });
+        };
         assert_safe(&zsh_shell, "ls -la");
 
-        let powershell = Shell::PowerShell(PowerShellConfig {
+        let powershell = Shell {
+            shell_type: ShellType::PowerShell,
             shell_path: PathBuf::from("pwsh.exe"),
-        });
+        };
         assert_safe(&powershell, "ls -Name");
     }
 
