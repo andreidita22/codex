@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use crate::AuthManager;
 use crate::RolloutRecorder;
-#[cfg(feature = "semantic_shell_pause")]
-use crate::extensions::semantic_shell::SemanticShellManager;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::openai_models::models_manager::ModelsManager;
 use crate::skills::SkillLoadOutcome;
 use crate::tools::sandboxing::ApprovalStore;
 use crate::unified_exec::UnifiedExecSessionManager;
 use crate::user_notification::UserNotifier;
+#[cfg(feature = "semantic_shell_pause")]
+use crate::extensions::semantic_shell::SemanticShellManager;
 use codex_otel::otel_event_manager::OtelEventManager;
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
