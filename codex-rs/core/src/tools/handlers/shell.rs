@@ -4,8 +4,7 @@ use codex_protocol::models::ShellToolCallParams;
 use std::sync::Arc;
 
 use crate::codex::TurnContext;
-use crate::exec::ExecExpiration;
-use crate::exec::ExecParams;
+use crate::exec::{ExecExpiration, ExecParams};
 use crate::exec_env::create_env;
 use crate::exec_policy::create_exec_approval_requirement_for_command;
 #[cfg(feature = "semantic_shell_pause")]
@@ -91,7 +90,7 @@ impl ToolHandler for ShellHandler {
                     .unwrap_or(true)
             }
             ToolPayload::LocalShell { params } => !is_known_safe_command(&params.command),
-            _ => true, // unknown payloads => assume mutating
+            _ => true,
         }
     }
 

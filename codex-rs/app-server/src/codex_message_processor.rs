@@ -7,6 +7,7 @@ use crate::outgoing_message::OutgoingMessageSender;
 use crate::outgoing_message::OutgoingNotification;
 use chrono::DateTime;
 use chrono::Utc;
+use codex_core::exec::SandboxType;
 use codex_app_server_protocol::Account;
 use codex_app_server_protocol::AccountLoginCompletedNotification;
 use codex_app_server_protocol::AccountUpdatedNotification;
@@ -1214,10 +1215,15 @@ impl CodexMessageProcessor {
         let outgoing = self.outgoing.clone();
         let req_id = request_id;
         let sandbox_cwd = self.config.cwd.clone();
+        let sandbox_type = match &effective_policy {
+            codex_core::protocol::SandboxPolicy::DangerFullAccess => SandboxType::None,
+            _ => codex_core::get_platform_sandbox().unwrap_or(SandboxType::None),
+        };
 
         tokio::spawn(async move {
             match codex_core::exec::process_exec_tool_call(
                 exec_params,
+                sandbox_type,
                 &effective_policy,
                 sandbox_cwd.as_path(),
                 &codex_linux_sandbox_exe,

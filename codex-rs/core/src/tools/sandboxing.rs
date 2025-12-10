@@ -212,6 +212,7 @@ pub(crate) trait Sandboxable {
 }
 
 pub(crate) struct ToolCtx<'a> {
+    #[cfg_attr(not(feature = "semantic_shell_pause"), allow(dead_code))]
     pub session_arc: Arc<Session>,
     pub session: &'a Session,
     pub turn: &'a TurnContext,

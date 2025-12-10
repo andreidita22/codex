@@ -510,6 +510,14 @@ async fn integration_git_info_unit_test() {
         .unwrap()
         .trim()
         .to_string();
+    let expected_remote_url = if let Some(rest) = expected_remote_url.strip_prefix("git@github.com:")
+    {
+        format!("https://github.com/{rest}")
+    } else if let Some(rest) = expected_remote_url.strip_prefix("ssh://git@github.com/") {
+        format!("https://github.com/{rest}")
+    } else {
+        expected_remote_url
+    };
     assert_eq!(
         repo_url, &expected_remote_url,
         "Repository URL should match git remote get-url output"

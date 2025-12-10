@@ -844,10 +844,11 @@ mod tests {
             .expect("Failed to read remote url");
         // Some dev environments rewrite remotes (e.g., force SSH), so compare against
         // whatever URL Git reports instead of a fixed placeholder.
-        let expected_remote = String::from_utf8(remote_url_output.stdout)
-            .unwrap()
-            .trim()
-            .to_string();
+        let expected_remote = normalize_remote_url(
+            String::from_utf8(remote_url_output.stdout)
+                .unwrap()
+                .trim(),
+        );
 
         // Should have repository URL
         assert_eq!(git_info.repository_url, Some(expected_remote));

@@ -9,6 +9,8 @@ use anyhow::Context as _;
 use path_absolutize::Absolutize as _;
 
 use codex_core::SandboxState;
+use codex_core::exec::SandboxType;
+use codex_core::get_platform_sandbox;
 use codex_core::exec::process_exec_tool_call;
 use codex_core::sandboxing::SandboxPermissions;
 use tokio::process::Command;
@@ -72,6 +74,10 @@ impl EscalateServer {
             timeout_ms: _,
             login,
         } = params;
+        let sandbox_type = match &sandbox_state.sandbox_policy {
+            codex_core::protocol::SandboxPolicy::DangerFullAccess => SandboxType::None,
+            _ => get_platform_sandbox().unwrap_or(SandboxType::None),
+        };
         let result = process_exec_tool_call(
             codex_core::exec::ExecParams {
                 command: vec![
@@ -90,6 +96,7 @@ impl EscalateServer {
                 justification: None,
                 arg0: None,
             },
+            sandbox_type,
             &sandbox_state.sandbox_policy,
             &sandbox_state.sandbox_cwd,
             &sandbox_state.codex_linux_sandbox_exe,

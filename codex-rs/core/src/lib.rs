@@ -26,7 +26,6 @@ pub mod error;
 pub mod exec;
 pub mod exec_env;
 mod exec_policy;
-mod exec_policy;
 #[cfg(feature = "semantic_shell_pause")]
 pub mod extensions;
 pub mod features;
