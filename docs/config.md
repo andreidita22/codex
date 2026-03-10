@@ -36,6 +36,17 @@ Codex can run a notification hook when the agent finishes a turn. See the config
 
 When Codex knows which client started the turn, the legacy notify JSON payload also includes a top-level `client` field. The TUI reports `codex-tui`, and the app server reports the `clientInfo.name` value from `initialize`.
 
+## Compaction bridge
+
+This fork adds a pre-compaction continuation bridge that is generated with a normal structured `/responses` call before compaction runs. You can override the prompt used for that bridge in `~/.codex/config.toml` with either:
+
+- `continuation_bridge_prompt = "..."` for an inline prompt override
+- `continuation_bridge_prompt_file = "/absolute/path/to/prompt.md"` for a file-backed prompt override
+
+Inline text wins over the file setting when both are present.
+
+The default bridge schema now lives as a standalone artifact at `codex-rs/core/templates/continuation_bridge/schema.json`, so schema experiments do not require editing the main Rust module.
+
 ## JSON Schema
 
 The generated JSON Schema for `config.toml` lives at `codex-rs/core/config.schema.json`.

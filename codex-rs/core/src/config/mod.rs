@@ -283,6 +283,9 @@ pub struct Config {
     /// Compact prompt override.
     pub compact_prompt: Option<String>,
 
+    /// Continuation-bridge prompt override used before context compaction.
+    pub continuation_bridge_prompt: Option<String>,
+
     /// Optional commit attribution text for commit message co-author trailers.
     ///
     /// - `None`: use default attribution (`Codex <noreply@openai.com>`)
@@ -1146,6 +1149,9 @@ pub struct ConfigToml {
     /// Compact prompt used for history compaction.
     pub compact_prompt: Option<String>,
 
+    /// Continuation-bridge prompt used before context compaction.
+    pub continuation_bridge_prompt: Option<String>,
+
     /// Optional commit attribution text for commit message co-author trailers.
     ///
     /// Set to an empty string to disable automatic commit attribution.
@@ -1387,6 +1393,7 @@ pub struct ConfigToml {
     #[schemars(skip)]
     pub experimental_instructions_file: Option<AbsolutePathBuf>,
     pub experimental_compact_prompt_file: Option<AbsolutePathBuf>,
+    pub continuation_bridge_prompt_file: Option<AbsolutePathBuf>,
     pub experimental_use_unified_exec_tool: Option<bool>,
     pub experimental_use_freeform_apply_patch: Option<bool>,
     /// Preferred OSS provider for local models, e.g. "lmstudio" or "ollama".
@@ -2399,6 +2406,14 @@ impl Config {
                 Some(trimmed.to_string())
             }
         });
+        let continuation_bridge_prompt = cfg.continuation_bridge_prompt.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
 
         let commit_attribution = cfg.commit_attribution;
 
@@ -2434,6 +2449,12 @@ impl Config {
             "experimental compact prompt file",
         )?;
         let compact_prompt = compact_prompt.or(file_compact_prompt);
+        let continuation_bridge_prompt_file = Self::try_read_non_empty_file(
+            cfg.continuation_bridge_prompt_file.as_ref(),
+            "continuation bridge prompt file",
+        )?;
+        let continuation_bridge_prompt =
+            continuation_bridge_prompt.or(continuation_bridge_prompt_file);
         let js_repl_node_path = js_repl_node_path_override
             .or(config_profile.js_repl_node_path.map(Into::into))
             .or(cfg.js_repl_node_path.map(Into::into));
@@ -2578,6 +2599,7 @@ impl Config {
             personality,
             developer_instructions,
             compact_prompt,
+            continuation_bridge_prompt,
             commit_attribution,
             // The config.toml omits "_mode" because it's a config file. However, "_mode"
             // is important in code to differentiate the mode from the store implementation.

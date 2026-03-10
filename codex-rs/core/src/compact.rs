@@ -9,6 +9,7 @@ use crate::codex::PreviousTurnSettings;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::codex::get_last_assistant_message_from_turn;
+use crate::continuation_bridge::generate_continuation_bridge_item;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
 use crate::protocol::CompactedItem;
@@ -27,6 +28,7 @@ use codex_utils_output_truncation::approx_token_count;
 use codex_utils_output_truncation::truncate_text;
 use futures::prelude::*;
 use tracing::error;
+use tracing::warn;
 
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
@@ -99,6 +101,21 @@ async fn run_compact_task_inner(
     let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
 
     let mut history = sess.clone_history().await;
+    let continuation_bridge_item = match generate_continuation_bridge_item(
+        &sess,
+        turn_context.as_ref(),
+        history
+            .clone()
+            .for_prompt(&turn_context.model_info.input_modalities),
+    )
+    .await
+    {
+        Ok(item) => item,
+        Err(err) => {
+            warn!(error = %err, "failed generating continuation bridge before local compaction");
+            None
+        }
+    };
     history.record_items(
         &[initial_input_for_turn.into()],
         turn_context.truncation_policy,
@@ -203,6 +220,12 @@ async fn run_compact_task_inner(
         let initial_context = sess.build_initial_context(turn_context.as_ref()).await;
         new_history =
             insert_initial_context_before_last_real_user_or_summary(new_history, initial_context);
+    }
+    if let Some(continuation_bridge_item) = continuation_bridge_item {
+        new_history = insert_items_before_last_summary_or_compaction(
+            new_history,
+            vec![continuation_bridge_item],
+        );
     }
     let ghost_snapshots: Vec<ResponseItem> = history_items
         .iter()
@@ -316,6 +339,44 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
         compacted_history.splice(insertion_index..insertion_index, initial_context);
     } else {
         compacted_history.extend(initial_context);
+    }
+
+    compacted_history
+}
+
+/// Inserts authoritative post-compaction artifacts before the last summary or compaction marker.
+///
+/// Placement rules:
+/// - Prefer immediately before the last compaction item, if present.
+/// - Otherwise, insert before the last user-message-like item (including summaries).
+/// - If neither exists, append the items.
+pub(crate) fn insert_items_before_last_summary_or_compaction(
+    mut compacted_history: Vec<ResponseItem>,
+    items: Vec<ResponseItem>,
+) -> Vec<ResponseItem> {
+    let last_user_or_summary_index =
+        compacted_history
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(i, item)| {
+                matches!(
+                    crate::event_mapping::parse_turn_item(item),
+                    Some(TurnItem::UserMessage(_))
+                )
+                .then_some(i)
+            });
+    let last_compaction_index = compacted_history
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(i, item)| matches!(item, ResponseItem::Compaction { .. }).then_some(i));
+    let insertion_index = last_compaction_index.or(last_user_or_summary_index);
+
+    if let Some(insertion_index) = insertion_index {
+        compacted_history.splice(insertion_index..insertion_index, items);
+    } else {
+        compacted_history.extend(items);
     }
 
     compacted_history

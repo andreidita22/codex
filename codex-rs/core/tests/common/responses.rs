@@ -1165,6 +1165,90 @@ pub async fn mount_models_once_with_etag(
     models_mock
 }
 
+fn default_continuation_bridge_output() -> Value {
+    serde_json::json!({
+        "schema": "continuation_bridge_v1",
+        "task": {
+            "objective": "",
+            "current_phase": "",
+            "success_condition": ""
+        },
+        "state": {
+            "completed": [],
+            "in_progress": [],
+            "not_started": []
+        },
+        "artifacts": {
+            "files_touched": [],
+            "authoritative_files": [],
+            "partial_implementations": []
+        },
+        "invariants": {
+            "must_preserve": [],
+            "must_not_do": [],
+            "assumptions_in_force": []
+        },
+        "epistemics": {
+            "known_uncertainties": [],
+            "questions_already_resolved": [],
+            "questions_still_open": []
+        },
+        "provenance": {
+            "why_current_code_looks_like_this": [],
+            "rejected_paths": [],
+            "pending_decisions": []
+        },
+        "next": {
+            "immediate_next_action": "",
+            "fallback_if_blocked": "",
+            "validation_step": ""
+        }
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ContinuationBridgeRequestMatcher;
+
+impl Match for ContinuationBridgeRequestMatcher {
+    fn matches(&self, request: &wiremock::Request) -> bool {
+        if request.url.path() != "/v1/responses" {
+            return false;
+        }
+        let body = decode_body_bytes(
+            &request.body,
+            request
+                .headers
+                .get("content-encoding")
+                .and_then(|value| value.to_str().ok()),
+        );
+        let Ok(body_json): Result<Value, _> = serde_json::from_slice(&body) else {
+            return false;
+        };
+        body_json
+            .pointer("/text/format/schema/properties/schema/enum/0")
+            .and_then(Value::as_str)
+            == Some("continuation_bridge_v1")
+    }
+}
+
+pub async fn mount_default_continuation_bridge_responder(server: &MockServer) -> ResponseMock {
+    let bridge_body = serde_json::to_string(&default_continuation_bridge_output())
+        .expect("serialize continuation bridge output");
+    let bridge_response = sse(vec![
+        ev_assistant_message("bridge-message", &bridge_body),
+        ev_completed("bridge-response"),
+    ]);
+
+    let (mock, response_mock) = base_mock();
+    mock.and(ContinuationBridgeRequestMatcher)
+        .respond_with(sse_response(bridge_response))
+        .up_to_n_times(128)
+        .mount(server)
+        .await;
+
+    response_mock
+}
+
 pub async fn start_mock_server() -> MockServer {
     let server = MockServer::builder()
         .body_print_limit(BodyPrintLimit::Limited(80_000))
@@ -1173,6 +1257,9 @@ pub async fn start_mock_server() -> MockServer {
 
     // Provide a default `/models` response so tests remain hermetic when the client queries it.
     let _ = mount_models_once(&server, ModelsResponse { models: Vec::new() }).await;
+    // Provide a default continuation-bridge response so compaction tests only need to mock the
+    // compaction-specific turn responses they care about.
+    let _ = mount_default_continuation_bridge_responder(&server).await;
 
     server
 }

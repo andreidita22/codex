@@ -3198,6 +3198,99 @@ fn load_config_ignores_empty_requirements_guardian_developer_instructions() -> s
     )?;
 
     assert_eq!(config.guardian_developer_instructions, None);
+    
+    Ok(())
+}
+
+#[test]
+fn loads_continuation_bridge_prompt_from_config() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cfg = ConfigToml {
+        continuation_bridge_prompt: Some("  carry state forward  ".to_string()),
+        ..Default::default()
+    };
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(
+        config.continuation_bridge_prompt.as_deref(),
+        Some("carry state forward")
+    );
+
+    Ok(())
+}
+
+#[test]
+fn loads_continuation_bridge_prompt_from_file() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let workspace = codex_home.path().join("workspace");
+    std::fs::create_dir_all(&workspace)?;
+
+    let prompt_path = workspace.join("continuation_bridge_prompt.txt");
+    std::fs::write(&prompt_path, "  bridge the state  ")?;
+
+    let cfg = ConfigToml {
+        continuation_bridge_prompt_file: Some(AbsolutePathBuf::from_absolute_path(
+            prompt_path,
+        )?),
+        ..Default::default()
+    };
+
+    let overrides = ConfigOverrides {
+        cwd: Some(workspace),
+        ..Default::default()
+    };
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        overrides,
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(
+        config.continuation_bridge_prompt.as_deref(),
+        Some("bridge the state")
+    );
+
+    Ok(())
+}
+
+#[test]
+fn continuation_bridge_prompt_prefers_inline_over_file() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let workspace = codex_home.path().join("workspace");
+    std::fs::create_dir_all(&workspace)?;
+
+    let prompt_path = workspace.join("continuation_bridge_prompt.txt");
+    std::fs::write(&prompt_path, "from file")?;
+
+    let cfg = ConfigToml {
+        continuation_bridge_prompt: Some("  use inline  ".to_string()),
+        continuation_bridge_prompt_file: Some(AbsolutePathBuf::from_absolute_path(
+            prompt_path,
+        )?),
+        ..Default::default()
+    };
+
+    let overrides = ConfigOverrides {
+        cwd: Some(workspace),
+        ..Default::default()
+    };
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        overrides,
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(
+        config.continuation_bridge_prompt.as_deref(),
+        Some("use inline")
+    );
 
     Ok(())
 }
@@ -4470,6 +4563,7 @@ fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             developer_instructions: None,
             guardian_developer_instructions: None,
             compact_prompt: None,
+            continuation_bridge_prompt: None,
             commit_attribution: None,
             forced_chatgpt_workspace_id: None,
             forced_login_method: None,
@@ -4612,6 +4706,7 @@ fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         developer_instructions: None,
         guardian_developer_instructions: None,
         compact_prompt: None,
+        continuation_bridge_prompt: None,
         commit_attribution: None,
         forced_chatgpt_workspace_id: None,
         forced_login_method: None,
@@ -4752,6 +4847,7 @@ fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         developer_instructions: None,
         guardian_developer_instructions: None,
         compact_prompt: None,
+        continuation_bridge_prompt: None,
         commit_attribution: None,
         forced_chatgpt_workspace_id: None,
         forced_login_method: None,
@@ -4878,6 +4974,7 @@ fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         developer_instructions: None,
         guardian_developer_instructions: None,
         compact_prompt: None,
+        continuation_bridge_prompt: None,
         commit_attribution: None,
         forced_chatgpt_workspace_id: None,
         forced_login_method: None,

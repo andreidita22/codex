@@ -1229,6 +1229,7 @@ async fn remote_compact_and_resume_refresh_stale_developer_instructions() -> Res
     skip_if_no_network!(Ok(()));
 
     let server = wiremock::MockServer::start().await;
+    let _bridge_mock = responses::mount_default_continuation_bridge_responder(&server).await;
     let stale_developer_message = "STALE_DEVELOPER_INSTRUCTIONS_SHOULD_BE_REMOVED";
 
     let mut start_builder =
@@ -1372,6 +1373,7 @@ async fn remote_compact_refreshes_stale_developer_instructions_without_resume() 
     skip_if_no_network!(Ok(()));
 
     let server = wiremock::MockServer::start().await;
+    let _bridge_mock = responses::mount_default_continuation_bridge_responder(&server).await;
     let stale_developer_message = "STALE_DEVELOPER_INSTRUCTIONS_SHOULD_BE_REMOVED";
 
     let mut builder = test_codex().with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing());
@@ -1463,6 +1465,7 @@ async fn snapshot_request_shape_remote_pre_turn_compaction_restates_realtime_sta
     skip_if_no_network!(Ok(()));
 
     let server = wiremock::MockServer::start().await;
+    let _bridge_mock = responses::mount_default_continuation_bridge_responder(&server).await;
     let realtime_server = start_remote_realtime_server().await;
     let mut builder = remote_realtime_test_codex_builder(&realtime_server).with_config(|config| {
         config.model_auto_compact_token_limit = Some(200);
@@ -1596,6 +1599,7 @@ async fn snapshot_request_shape_remote_pre_turn_compaction_restates_realtime_end
     skip_if_no_network!(Ok(()));
 
     let server = wiremock::MockServer::start().await;
+    let _bridge_mock = responses::mount_default_continuation_bridge_responder(&server).await;
     let realtime_server = start_remote_realtime_server().await;
     let mut builder = remote_realtime_test_codex_builder(&realtime_server).with_config(|config| {
         config.model_auto_compact_token_limit = Some(200);
@@ -1683,6 +1687,7 @@ async fn snapshot_request_shape_remote_manual_compact_restates_realtime_start() 
     skip_if_no_network!(Ok(()));
 
     let server = wiremock::MockServer::start().await;
+    let _bridge_mock = responses::mount_default_continuation_bridge_responder(&server).await;
     let realtime_server = start_remote_realtime_server().await;
     let mut builder = remote_realtime_test_codex_builder(&realtime_server);
     let test = builder.build(&server).await?;
@@ -1771,6 +1776,7 @@ async fn snapshot_request_shape_remote_mid_turn_compaction_does_not_restate_real
     skip_if_no_network!(Ok(()));
 
     let server = wiremock::MockServer::start().await;
+    let _bridge_mock = responses::mount_default_continuation_bridge_responder(&server).await;
     let realtime_server = start_remote_realtime_server().await;
     let mut builder = remote_realtime_test_codex_builder(&realtime_server).with_config(|config| {
         config.model_auto_compact_token_limit = Some(200);
@@ -1871,6 +1877,7 @@ async fn snapshot_request_shape_remote_compact_resume_restates_realtime_end() ->
     skip_if_no_network!(Ok(()));
 
     let server = wiremock::MockServer::start().await;
+    let _bridge_mock = responses::mount_default_continuation_bridge_responder(&server).await;
     let realtime_server = start_remote_realtime_server().await;
     let mut builder = remote_realtime_test_codex_builder(&realtime_server);
     let initial = builder.build(&server).await?;
