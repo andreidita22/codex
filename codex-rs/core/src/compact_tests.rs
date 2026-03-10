@@ -571,3 +571,105 @@ fn insert_initial_context_before_last_real_user_or_summary_keeps_compaction_last
     ];
     assert_eq!(refreshed, expected);
 }
+
+#[test]
+fn insert_items_before_last_summary_or_compaction_keeps_summary_last() {
+    let compacted_history = vec![
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "latest user".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: format!("{SUMMARY_PREFIX}\nsummary text"),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+    ];
+    let continuation_bridge_items = vec![ResponseItem::Message {
+        id: None,
+        role: "developer".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "<continuation_bridge />".to_string(),
+        }],
+        end_turn: None,
+        phase: None,
+    }];
+
+    let refreshed =
+        insert_items_before_last_summary_or_compaction(compacted_history, continuation_bridge_items);
+    let expected = vec![
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "latest user".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "developer".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "<continuation_bridge />".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: format!("{SUMMARY_PREFIX}\nsummary text"),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+    ];
+
+    assert_eq!(refreshed, expected);
+}
+
+#[test]
+fn insert_items_before_last_summary_or_compaction_keeps_compaction_last() {
+    let compacted_history = vec![ResponseItem::Compaction {
+        encrypted_content: "encrypted".to_string(),
+    }];
+    let continuation_bridge_items = vec![ResponseItem::Message {
+        id: None,
+        role: "developer".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "<continuation_bridge />".to_string(),
+        }],
+        end_turn: None,
+        phase: None,
+    }];
+
+    let refreshed =
+        insert_items_before_last_summary_or_compaction(compacted_history, continuation_bridge_items);
+    let expected = vec![
+        ResponseItem::Message {
+            id: None,
+            role: "developer".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "<continuation_bridge />".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Compaction {
+            encrypted_content: "encrypted".to_string(),
+        },
+    ];
+
+    assert_eq!(refreshed, expected);
+}

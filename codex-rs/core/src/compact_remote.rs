@@ -7,10 +7,12 @@ use crate::codex::TurnContext;
 use crate::codex::built_tools;
 use crate::compact::InitialContextInjection;
 use crate::compact::insert_initial_context_before_last_real_user_or_summary;
+use crate::compact::insert_items_before_last_summary_or_compaction;
 use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
 use crate::context_manager::estimate_response_item_model_visible_bytes;
 use crate::context_manager::is_codex_generated_item;
+use crate::continuation_bridge::generate_continuation_bridge_item;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::ContextCompactionItem;
@@ -24,6 +26,7 @@ use futures::TryFutureExt;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 use tracing::info;
+use tracing::warn;
 
 pub(crate) async fn run_inline_remote_auto_compact_task(
     sess: Arc<Session>,
@@ -114,6 +117,19 @@ async fn run_remote_compact_task_inner_impl(
         personality: turn_context.personality,
         output_schema: None,
     };
+    let continuation_bridge_item = match generate_continuation_bridge_item(
+        sess.as_ref(),
+        turn_context.as_ref(),
+        prompt.input.clone(),
+    )
+    .await
+    {
+        Ok(item) => item,
+        Err(err) => {
+            warn!(error = %err, "failed generating continuation bridge before remote compaction");
+            None
+        }
+    };
 
     let mut new_history = sess
         .services
@@ -145,6 +161,12 @@ async fn run_remote_compact_task_inner_impl(
         initial_context_injection,
     )
     .await;
+    if let Some(continuation_bridge_item) = continuation_bridge_item {
+        new_history = insert_items_before_last_summary_or_compaction(
+            new_history,
+            vec![continuation_bridge_item],
+        );
+    }
 
     if !ghost_snapshots.is_empty() {
         new_history.extend(ghost_snapshots);

@@ -1040,6 +1040,13 @@ impl TurnContext {
             .unwrap_or(compact::SUMMARIZATION_PROMPT)
     }
 
+    pub(crate) fn continuation_bridge_prompt(&self) -> &str {
+        self.config
+            .continuation_bridge_prompt
+            .as_deref()
+            .unwrap_or(crate::continuation_bridge::CONTINUATION_BRIDGE_PROMPT)
+    }
+
     pub(crate) fn to_turn_context_item(&self) -> TurnContextItem {
         TurnContextItem {
             turn_id: Some(self.sub_id.clone()),

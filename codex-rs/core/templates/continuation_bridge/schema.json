@@ -1,0 +1,90 @@
+{
+  "type": "object",
+  "properties": {
+    "schema": {
+      "type": "string",
+      "enum": ["continuation_bridge_v1"]
+    },
+    "task": {
+      "type": "object",
+      "properties": {
+        "objective": { "type": "string" },
+        "current_phase": { "type": "string" },
+        "success_condition": { "type": "string" }
+      },
+      "required": ["objective", "current_phase", "success_condition"],
+      "additionalProperties": false
+    },
+    "state": {
+      "type": "object",
+      "properties": {
+        "completed": { "type": "array", "items": { "type": "string" } },
+        "in_progress": { "type": "array", "items": { "type": "string" } },
+        "not_started": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["completed", "in_progress", "not_started"],
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "files_touched": { "type": "array", "items": { "type": "string" } },
+        "authoritative_files": { "type": "array", "items": { "type": "string" } },
+        "partial_implementations": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["files_touched", "authoritative_files", "partial_implementations"],
+      "additionalProperties": false
+    },
+    "invariants": {
+      "type": "object",
+      "properties": {
+        "must_preserve": { "type": "array", "items": { "type": "string" } },
+        "must_not_do": { "type": "array", "items": { "type": "string" } },
+        "assumptions_in_force": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["must_preserve", "must_not_do", "assumptions_in_force"],
+      "additionalProperties": false
+    },
+    "epistemics": {
+      "type": "object",
+      "properties": {
+        "known_uncertainties": { "type": "array", "items": { "type": "string" } },
+        "questions_already_resolved": { "type": "array", "items": { "type": "string" } },
+        "questions_still_open": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["known_uncertainties", "questions_already_resolved", "questions_still_open"],
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "why_current_code_looks_like_this": { "type": "array", "items": { "type": "string" } },
+        "rejected_paths": { "type": "array", "items": { "type": "string" } },
+        "pending_decisions": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["why_current_code_looks_like_this", "rejected_paths", "pending_decisions"],
+      "additionalProperties": false
+    },
+    "next": {
+      "type": "object",
+      "properties": {
+        "immediate_next_action": { "type": "string" },
+        "fallback_if_blocked": { "type": "string" },
+        "validation_step": { "type": "string" }
+      },
+      "required": ["immediate_next_action", "fallback_if_blocked", "validation_step"],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema",
+    "task",
+    "state",
+    "artifacts",
+    "invariants",
+    "epistemics",
+    "provenance",
+    "next"
+  ],
+  "additionalProperties": false
+}

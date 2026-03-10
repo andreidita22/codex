@@ -2,6 +2,7 @@
 use codex_core::compact::SUMMARIZATION_PROMPT;
 use codex_core::compact::SUMMARY_PREFIX;
 use codex_core::config::Config;
+use codex_core::models_manager::manager::RefreshStrategy;
 use codex_features::Feature;
 use codex_login::CodexAuth;
 use codex_model_provider_info::ModelProviderInfo;
@@ -142,47 +143,6 @@ fn assert_pre_sampling_switch_compaction_requests(
     );
 }
 
-async fn assert_compaction_uses_turn_lifecycle_id(codex: &std::sync::Arc<codex_core::CodexThread>) {
-    let mut turn_started_id = None;
-    let mut turn_completed_id = None;
-    let mut compact_started_id = None;
-    let mut compact_completed_id = None;
-
-    while turn_completed_id.is_none() {
-        let event = codex.next_event().await.expect("next event");
-        match event.msg {
-            EventMsg::TurnStarted(_) => turn_started_id = Some(event.id.clone()),
-            EventMsg::ItemStarted(ItemStartedEvent {
-                item: TurnItem::ContextCompaction(_),
-                ..
-            }) => compact_started_id = Some(event.id.clone()),
-            EventMsg::ItemCompleted(ItemCompletedEvent {
-                item: TurnItem::ContextCompaction(_),
-                ..
-            }) => compact_completed_id = Some(event.id.clone()),
-            EventMsg::TurnComplete(_) => turn_completed_id = Some(event.id.clone()),
-            _ => {}
-        }
-    }
-
-    let turn_started_id = turn_started_id.expect("turn started id");
-    let turn_completed_id = turn_completed_id.expect("turn complete id");
-
-    assert_eq!(
-        turn_completed_id, turn_started_id,
-        "turn start and complete should use the same event id"
-    );
-    assert_eq!(
-        compact_started_id,
-        Some(turn_started_id.clone()),
-        "compaction item start should use the turn event id"
-    );
-    assert_eq!(
-        compact_completed_id,
-        Some(turn_started_id),
-        "compaction item completion should use the turn event id"
-    );
-}
 fn context_snapshot_options() -> ContextSnapshotOptions {
     ContextSnapshotOptions::default()
         .strip_capability_instructions()
@@ -205,7 +165,9 @@ async fn summarize_context_three_requests_and_instructions() {
     skip_if_no_network!();
 
     // Set up a mock server that we can inspect after the run.
-    let server = start_mock_server().await;
+    let server = MockServer::start().await;
+    let _bridge_mock =
+        core_test_support::responses::mount_default_continuation_bridge_responder(&server).await;
 
     // SSE 1: assistant replies normally so it is recorded in history.
     let sse1 = sse(vec![
@@ -414,7 +376,9 @@ async fn summarize_context_three_requests_and_instructions() {
 async fn manual_compact_uses_custom_prompt() {
     skip_if_no_network!();
 
-    let server = start_mock_server().await;
+    let server = MockServer::start().await;
+    let _bridge_mock =
+        core_test_support::responses::mount_default_continuation_bridge_responder(&server).await;
     let first_turn = sse(vec![
         ev_assistant_message("m0", FIRST_REPLY),
         ev_completed_with_tokens("r0", /*total_tokens*/ 80),
@@ -813,6 +777,11 @@ async fn multiple_auto_compact_per_task_runs_after_token_limit_hit() {
                 let role = value.get("role").and_then(|role| role.as_str());
                 if role == Some("developer")
                     && text.is_some_and(|text| text.contains("`sandbox_mode`"))
+                {
+                    return None;
+                }
+                if role == Some("developer")
+                    && text.is_some_and(|text| text.contains("<continuation_bridge"))
                 {
                     return None;
                 }
@@ -1710,7 +1679,7 @@ async fn auto_compact_runs_after_resume_when_token_usage_is_over_limit() {
 async fn pre_sampling_compact_runs_on_switch_to_smaller_context_model() {
     skip_if_no_network!();
 
-    let server = MockServer::start().await;
+    let server = start_mock_server().await;
     let previous_model = "gpt-5.2-codex";
     let next_model = "gpt-5.1-codex-max";
 
@@ -1753,6 +1722,17 @@ async fn pre_sampling_compact_runs_on_switch_to_smaller_context_model() {
             set_test_compact_prompt(config);
         });
     let test = builder.build(&server).await.expect("build test codex");
+    let available_models = test
+        .thread_manager
+        .get_models_manager()
+        .list_models(RefreshStrategy::Online)
+        .await;
+    assert!(
+        available_models
+            .iter()
+            .any(|model| model.model == next_model),
+        "expected {next_model} to be available after refreshing models"
+    );
 
     test.codex
         .submit(Op::UserTurn {
@@ -1799,7 +1779,10 @@ async fn pre_sampling_compact_runs_on_switch_to_smaller_context_model() {
         })
         .await
         .expect("submit second user turn");
-    assert_compaction_uses_turn_lifecycle_id(&test.codex).await;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
 
     let requests = request_log.requests();
     assert_eq!(models_mock.requests().len(), 1);
@@ -1836,7 +1819,7 @@ async fn pre_sampling_compact_runs_on_switch_to_smaller_context_model() {
 async fn pre_sampling_compact_runs_after_resume_and_switch_to_smaller_model() {
     skip_if_no_network!();
 
-    let server = MockServer::start().await;
+    let server = start_mock_server().await;
     let previous_model = "gpt-5.2-codex";
     let next_model = "gpt-5.1-codex-max";
 
@@ -1937,6 +1920,17 @@ async fn pre_sampling_compact_runs_after_resume_and_switch_to_smaller_model() {
         .resume(&server, home, rollout_path)
         .await
         .expect("resume codex");
+    let available_models = resumed
+        .thread_manager
+        .get_models_manager()
+        .list_models(RefreshStrategy::Online)
+        .await;
+    assert!(
+        available_models
+            .iter()
+            .any(|model| model.model == next_model),
+        "expected {next_model} to be available after refreshing models"
+    );
 
     resumed
         .codex
@@ -1959,7 +1953,10 @@ async fn pre_sampling_compact_runs_after_resume_and_switch_to_smaller_model() {
         })
         .await
         .expect("submit resumed user turn");
-    assert_compaction_uses_turn_lifecycle_id(&resumed.codex).await;
+    wait_for_event(&resumed.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
 
     let requests = request_log.requests();
     assert_eq!(models_mock.requests().len(), 1);

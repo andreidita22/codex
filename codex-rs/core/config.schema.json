@@ -2087,6 +2087,13 @@
       "description": "Compact prompt used for history compaction.",
       "type": "string"
     },
+    "continuation_bridge_prompt": {
+      "description": "Continuation-bridge prompt used before context compaction.",
+      "type": "string"
+    },
+    "continuation_bridge_prompt_file": {
+      "$ref": "#/definitions/AbsolutePathBuf"
+    },
     "default_permissions": {
       "description": "Default named permissions profile to apply from the `[permissions]` table.",
       "type": "string"

@@ -271,6 +271,9 @@ pub struct Config {
     /// Compact prompt override.
     pub compact_prompt: Option<String>,
 
+    /// Continuation-bridge prompt override used before context compaction.
+    pub continuation_bridge_prompt: Option<String>,
+
     /// Optional commit attribution text for commit message co-author trailers.
     ///
     /// - `None`: use default attribution (`Codex <noreply@openai.com>`)
@@ -1812,6 +1815,14 @@ impl Config {
                 Some(trimmed.to_string())
             }
         });
+        let continuation_bridge_prompt = cfg.continuation_bridge_prompt.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
 
         let commit_attribution = cfg.commit_attribution;
 
@@ -1858,6 +1869,12 @@ impl Config {
             "experimental compact prompt file",
         )?;
         let compact_prompt = compact_prompt.or(file_compact_prompt);
+        let continuation_bridge_prompt_file = Self::try_read_non_empty_file(
+            cfg.continuation_bridge_prompt_file.as_ref(),
+            "continuation bridge prompt file",
+        )?;
+        let continuation_bridge_prompt =
+            continuation_bridge_prompt.or(continuation_bridge_prompt_file);
         let js_repl_node_path = js_repl_node_path_override
             .or(config_profile.js_repl_node_path.map(Into::into))
             .or(cfg.js_repl_node_path.map(Into::into));
@@ -2009,6 +2026,7 @@ impl Config {
             personality,
             developer_instructions,
             compact_prompt,
+            continuation_bridge_prompt,
             commit_attribution,
             include_permissions_instructions,
             include_apps_instructions,
