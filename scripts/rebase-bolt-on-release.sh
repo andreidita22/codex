@@ -22,6 +22,10 @@ require_command() {
   fi
 }
 
+have_command() {
+  command -v "$1" >/dev/null 2>&1
+}
+
 normalize_tag() {
   case "${1:-latest}" in
     "" | latest)
@@ -53,6 +57,65 @@ resolve_latest_tag() {
     exit 1
   fi
   printf '%s\n' "$latest_tag"
+}
+
+refresh_workspace_lockfile_versions() {
+  workspace_manifest="codex-rs/Cargo.toml"
+  lockfile="codex-rs/Cargo.lock"
+
+  if [ ! -f "$workspace_manifest" ] || [ ! -f "$lockfile" ]; then
+    return 0
+  fi
+
+  if ! have_command cargo; then
+    printf 'Note: skipping Cargo.lock workspace version refresh because cargo is unavailable.\n' >&2
+    return 0
+  fi
+
+  if ! have_command python3; then
+    printf 'Note: skipping Cargo.lock workspace version refresh because python3 is unavailable.\n' >&2
+    return 0
+  fi
+
+  printf '==> Refreshing workspace package versions in `%s`\n' "$lockfile"
+  metadata_file="$(mktemp)"
+  cargo metadata --manifest-path "$workspace_manifest" --format-version 1 --no-deps >"$metadata_file"
+  if ! python3 - "$lockfile" "$metadata_file" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+lockfile = pathlib.Path(sys.argv[1])
+metadata_path = pathlib.Path(sys.argv[2])
+metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+workspace_versions = {
+    package["name"]: package["version"]
+    for package in metadata["packages"]
+}
+
+text = lockfile.read_text(encoding="utf-8")
+package_pattern = re.compile(
+    r'(\[\[package\]\]\nname = "([^"]+)"\nversion = ")([^"]+)(")',
+    re.MULTILINE,
+)
+
+def replace(match: re.Match[str]) -> str:
+    prefix, package_name, current_version, suffix = match.groups()
+    new_version = workspace_versions.get(package_name)
+    if new_version is None or new_version == current_version:
+        return match.group(0)
+    return f"{prefix}{new_version}{suffix}"
+
+updated = package_pattern.sub(replace, text)
+if updated != text:
+    lockfile.write_text(updated, encoding="utf-8")
+PY
+  then
+    rm -f "$metadata_file"
+    return 1
+  fi
+  rm -f "$metadata_file"
 }
 
 require_command git
@@ -116,6 +179,8 @@ git branch "$backup_branch" HEAD
 
 printf '==> Rebasing `%s` from `%s` onto `%s`\n' "$branch" "$current_base_tag" "$target_tag"
 git rebase --onto "$target_tag" "$current_base_tag"
+
+refresh_workspace_lockfile_versions
 
 printf '\nRebase complete.\n'
 printf 'Backup branch: %s\n' "$backup_branch"
