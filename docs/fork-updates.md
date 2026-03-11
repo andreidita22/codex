@@ -38,6 +38,7 @@ What the script does:
 - infers the current branch's merged `rust-v*` base tag
 - creates a timestamped `backup/...` branch
 - rebases the current branch from the old release tag onto the new one
+- refreshes workspace package version entries in [Cargo.lock](/home/rose/work/codex/fork/codex-rs/Cargo.lock) without regenerating the dependency graph
 
 Assumption:
 
@@ -73,6 +74,11 @@ Fast path after the rebase:
    just fix -p codex-core
    just fmt
    ```
+
+   Note:
+   the rebase helper already refreshes the workspace-version entries in
+   [Cargo.lock](/home/rose/work/codex/fork/codex-rs/Cargo.lock), so you should
+   not need a separate lockfile-only commit after a routine release bump.
 
 Optional slow path:
 
