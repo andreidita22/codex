@@ -6,12 +6,12 @@ Scenario: After a prior manual /compact produced an older remote compaction item
 
 ## Remote Compaction Request
 00:message/user:USER_ONE
-01:message/developer:<continuation_bridge schema="continuation_bridge_v1">\n{\n  "sch...
+01:message/developer:<continuation_bridge schema="continuation_bridge_v2">\n{\n  "sch...
 02:compaction:encrypted=true
 
 ## Second Turn Request (After Compaction)
 00:message/user:USER_ONE
-01:message/developer:<continuation_bridge schema="continuation_bridge_v1">\n{\n  "sch...
+01:message/developer:<continuation_bridge schema="continuation_bridge_v2">\n{\n  "sch...
 02:compaction:encrypted=true
 03:message/developer:<PERMISSIONS_INSTRUCTIONS>
 04:message/user[2]:

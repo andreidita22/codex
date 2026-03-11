@@ -30,6 +30,7 @@ use core_test_support::responses::ResponseMock;
 use core_test_support::responses::ResponsesRequest;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
+use core_test_support::responses::mount_default_continuation_bridge_responder;
 use core_test_support::responses::mount_sse_once_match;
 use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
@@ -468,6 +469,7 @@ async fn snapshot_rollback_past_compaction_replays_append_only_history() -> Resu
     ]);
     let sse4 = sse(vec![ev_completed("r4")]);
 
+    let _bridge_request_log = mount_default_continuation_bridge_responder(&server).await;
     let request_log = mount_sse_sequence(&server, vec![sse1, sse2, sse3, sse4]).await;
 
     let (_home, _config, _manager, base) = start_test_conversation(&server, /*model*/ None).await;

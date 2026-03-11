@@ -13,14 +13,24 @@ Scenario: rollback past compaction replay after rollback
 
 ## before rollback
 00:message/user:hello world
-01:message/user:<COMPACTION_SUMMARY>\nSUMMARY_ONLY_CONTEXT
-02:message/developer:<PERMISSIONS_INSTRUCTIONS>
-03:message/user:<ENVIRONMENT_CONTEXT:cwd=<CWD>>
-04:message/user:EDITED_AFTER_COMPACT
+01:message/developer:<continuation_bridge schema="continuation_bridge_v2">\n{\n  "sch...
+02:message/user:<COMPACTION_SUMMARY>\nSUMMARY_ONLY_CONTEXT
+03:message/developer:<PERMISSIONS_INSTRUCTIONS>
+04:message/user[2]:
+    [01] <AGENTS_MD>
+    [02] <ENVIRONMENT_CONTEXT:cwd=<CWD>>
+05:message/user:EDITED_AFTER_COMPACT
 
 ## after rollback
 00:message/user:hello world
-01:message/user:<COMPACTION_SUMMARY>\nSUMMARY_ONLY_CONTEXT
-02:message/developer:<PERMISSIONS_INSTRUCTIONS>
-03:message/user:<ENVIRONMENT_CONTEXT:cwd=<CWD>>
-04:message/user:AFTER_ROLLBACK
+01:message/developer:<continuation_bridge schema="continuation_bridge_v2">\n{\n  "sch...
+02:message/user:<COMPACTION_SUMMARY>\nSUMMARY_ONLY_CONTEXT
+03:message/developer:<PERMISSIONS_INSTRUCTIONS>
+04:message/user[2]:
+    [01] <AGENTS_MD>
+    [02] <ENVIRONMENT_CONTEXT:cwd=<CWD>>
+05:message/developer:<PERMISSIONS_INSTRUCTIONS>
+06:message/user[2]:
+    [01] <AGENTS_MD>
+    [02] <ENVIRONMENT_CONTEXT:cwd=<CWD>>
+07:message/user:AFTER_ROLLBACK

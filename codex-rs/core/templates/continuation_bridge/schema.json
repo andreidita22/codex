@@ -3,7 +3,7 @@
   "properties": {
     "schema": {
       "type": "string",
-      "enum": ["continuation_bridge_v1"]
+      "enum": ["continuation_bridge_v2"]
     },
     "task": {
       "type": "object",
@@ -13,6 +13,18 @@
         "success_condition": { "type": "string" }
       },
       "required": ["objective", "current_phase", "success_condition"],
+      "additionalProperties": false
+    },
+    "repo_identity": {
+      "type": "object",
+      "properties": {
+        "repo_root": { "type": "string" },
+        "branch": { "type": "string" },
+        "head_commit": { "type": "string" },
+        "worktree_dirty": { "type": "boolean" },
+        "dirty_files": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["repo_root", "branch", "head_commit", "worktree_dirty", "dirty_files"],
       "additionalProperties": false
     },
     "state": {
@@ -25,6 +37,29 @@
       "required": ["completed", "in_progress", "not_started"],
       "additionalProperties": false
     },
+    "blocking_state": {
+      "type": "object",
+      "properties": {
+        "blocking": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": { "type": "string" },
+              "reason": { "type": "string" },
+              "owner": { "type": "string" },
+              "unblocks": { "type": "string" }
+            },
+            "required": ["kind", "reason", "owner", "unblocks"],
+            "additionalProperties": false
+          }
+        },
+        "non_blocking": { "type": "array", "items": { "type": "string" } },
+        "optional_followups": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["blocking", "non_blocking", "optional_followups"],
+      "additionalProperties": false
+    },
     "artifacts": {
       "type": "object",
       "properties": {
@@ -34,6 +69,64 @@
       },
       "required": ["files_touched", "authoritative_files", "partial_implementations"],
       "additionalProperties": false
+    },
+    "active_subagents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "agent_id": { "type": "string" },
+          "thread_id": { "type": "string" },
+          "role": { "type": "string" },
+          "task": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "running", "completed", "failed"]
+          },
+          "blocking": { "type": "boolean" },
+          "last_result_summary": { "type": "string" }
+        },
+        "required": [
+          "agent_id",
+          "thread_id",
+          "role",
+          "task",
+          "status",
+          "blocking",
+          "last_result_summary"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "key_claims_with_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "claim": { "type": "string" },
+          "confidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low"]
+          },
+          "ready_for_output": { "type": "boolean" },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": { "type": "string" },
+                "line": { "type": "integer", "minimum": 1 },
+                "kind": { "type": "string" },
+                "why_it_supports_claim": { "type": "string" }
+              },
+              "required": ["path", "line", "kind", "why_it_supports_claim"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["claim", "confidence", "ready_for_output", "evidence"],
+        "additionalProperties": false
+      }
     },
     "invariants": {
       "type": "object",
@@ -65,6 +158,20 @@
       "required": ["why_current_code_looks_like_this", "rejected_paths", "pending_decisions"],
       "additionalProperties": false
     },
+    "working_thesis": {
+      "type": "object",
+      "properties": {
+        "current_best_answer": { "type": "string" },
+        "main_caveats": { "type": "array", "items": { "type": "string" } },
+        "likely_conclusion": { "type": "string" }
+      },
+      "required": ["current_best_answer", "main_caveats", "likely_conclusion"],
+      "additionalProperties": false
+    },
+    "recommended_output_shape": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
     "next": {
       "type": "object",
       "properties": {
@@ -79,11 +186,17 @@
   "required": [
     "schema",
     "task",
+    "repo_identity",
     "state",
+    "blocking_state",
     "artifacts",
+    "active_subagents",
+    "key_claims_with_evidence",
     "invariants",
     "epistemics",
     "provenance",
+    "working_thesis",
+    "recommended_output_shape",
     "next"
   ],
   "additionalProperties": false

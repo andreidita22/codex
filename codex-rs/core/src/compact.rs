@@ -113,7 +113,7 @@ async fn run_compact_task_inner(
     {
         Ok(item) => item,
         Err(err) => {
-            warn!(error = %err, "failed generating continuation bridge before local compaction");
+            warn!("failed generating continuation bridge before local compaction: {err}");
             None
         }
     };

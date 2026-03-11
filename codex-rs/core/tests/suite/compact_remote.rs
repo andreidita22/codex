@@ -343,6 +343,108 @@ async fn remote_compact_replaces_history_for_followups() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_compact_keeps_continuation_bridge_when_bridge_response_has_trailing_text()
+-> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = wiremock::MockServer::start().await;
+    let _bridge_mock = responses::mount_default_continuation_bridge_responder_with_suffix(
+        &server,
+        "\nTrailing commentary that should be ignored.",
+    )
+    .await;
+
+    let mut builder = test_codex().with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let test = builder.build(&server).await?;
+
+    let responses_mock = responses::mount_sse_sequence(
+        &server,
+        vec![
+            responses::sse(vec![
+                responses::ev_assistant_message("m1", "BASELINE_REPLY"),
+                responses::ev_completed("resp-1"),
+            ]),
+            responses::sse(vec![
+                responses::ev_assistant_message("m2", "AFTER_COMPACT_REPLY"),
+                responses::ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let compact_mock = responses::mount_compact_json_once(
+        &server,
+        serde_json::json!({
+            "output": compacted_summary_only_output("REMOTE_COMPACTED_SUMMARY")
+        }),
+    )
+    .await;
+
+    test.codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "start remote compact flow".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+        })
+        .await?;
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    test.codex.submit(Op::Compact).await?;
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    test.codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "after compact in same session".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+        })
+        .await?;
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    assert_eq!(compact_mock.requests().len(), 1);
+    let requests = responses_mock.requests();
+    assert_eq!(requests.len(), 2, "expected two model requests");
+
+    let after_compact_body = requests[1].body_json();
+    let has_bridge = after_compact_body
+        .get("input")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|item| item.get("role").and_then(serde_json::Value::as_str) == Some("developer"))
+        .flat_map(|item| {
+            item.get("content")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .any(|content| {
+            content
+                .get("text")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|text| {
+                    text.contains("<continuation_bridge schema=\"continuation_bridge_v2\">")
+                })
+        });
+    assert!(
+        has_bridge,
+        "expected follow-up request to include continuation bridge despite trailing bridge output"
+    );
+    assert!(
+        !after_compact_body
+            .to_string()
+            .contains("Trailing commentary that should be ignored."),
+        "expected trailing bridge output to be excluded from follow-up history"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_compact_runs_automatically() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
