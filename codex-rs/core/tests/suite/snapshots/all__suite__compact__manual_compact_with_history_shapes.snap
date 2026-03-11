@@ -13,7 +13,7 @@ Scenario: Manual /compact with prior user history compacts existing history and 
 
 ## Local Post-Compaction History Layout
 00:message/user:first manual turn
-01:message/developer:<continuation_bridge schema="continuation_bridge_v1">\n{\n  "sch...
+01:message/developer:<continuation_bridge schema="continuation_bridge_v2">\n{\n  "sch...
 02:message/user:<COMPACTION_SUMMARY>\nFIRST_MANUAL_SUMMARY
 03:message/developer:<PERMISSIONS_INSTRUCTIONS>
 04:message/user[2]:

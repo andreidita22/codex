@@ -125,7 +125,7 @@ async fn run_remote_compact_task_inner_impl(
     {
         Ok(item) => item,
         Err(err) => {
-            warn!(error = %err, "failed generating continuation bridge before remote compaction");
+            warn!("failed generating continuation bridge before remote compaction: {err}");
             None
         }
     };

@@ -74,6 +74,15 @@ fi
 
 ensure_clean_worktree
 
+if [ "$(git config --bool --get rerere.enabled || true)" != "true" ]; then
+  cat >&2 <<'EOF'
+Note: git rerere is disabled for this repo.
+Enable it once to reuse future conflict resolutions:
+  git config --local rerere.enabled true
+  git config --local rerere.autoupdate true
+EOF
+fi
+
 printf '==> Fetching upstream tags\n'
 git fetch upstream --tags
 
@@ -106,7 +115,7 @@ printf '==> Creating backup branch `%s`\n' "$backup_branch"
 git branch "$backup_branch" HEAD
 
 printf '==> Rebasing `%s` from `%s` onto `%s`\n' "$branch" "$current_base_tag" "$target_tag"
-git rebase --onto "$target_tag" "$current_base_tag" HEAD
+git rebase --onto "$target_tag" "$current_base_tag"
 
 printf '\nRebase complete.\n'
 printf 'Backup branch: %s\n' "$backup_branch"

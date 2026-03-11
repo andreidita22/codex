@@ -3234,9 +3234,7 @@ fn loads_continuation_bridge_prompt_from_file() -> std::io::Result<()> {
     std::fs::write(&prompt_path, "  bridge the state  ")?;
 
     let cfg = ConfigToml {
-        continuation_bridge_prompt_file: Some(AbsolutePathBuf::from_absolute_path(
-            prompt_path,
-        )?),
+        continuation_bridge_prompt_file: Some(AbsolutePathBuf::from_absolute_path(prompt_path)?),
         ..Default::default()
     };
 
@@ -3270,9 +3268,7 @@ fn continuation_bridge_prompt_prefers_inline_over_file() -> std::io::Result<()> 
 
     let cfg = ConfigToml {
         continuation_bridge_prompt: Some("  use inline  ".to_string()),
-        continuation_bridge_prompt_file: Some(AbsolutePathBuf::from_absolute_path(
-            prompt_path,
-        )?),
+        continuation_bridge_prompt_file: Some(AbsolutePathBuf::from_absolute_path(prompt_path)?),
         ..Default::default()
     };
 

@@ -10,12 +10,15 @@ use futures::StreamExt;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
+use tracing::warn;
 
 pub(crate) const CONTINUATION_BRIDGE_PROMPT: &str =
     include_str!("../templates/continuation_bridge/prompt.md");
 pub(crate) const CONTINUATION_BRIDGE_OUTPUT_SCHEMA: &str =
     include_str!("../templates/continuation_bridge/schema.json");
-pub(crate) const CONTINUATION_BRIDGE_SCHEMA: &str = "continuation_bridge_v1";
+pub(crate) const CONTINUATION_BRIDGE_SCHEMA: &str = "continuation_bridge_v2";
+#[cfg(test)]
+const CONTINUATION_BRIDGE_LEGACY_SCHEMA: &str = "continuation_bridge_v1";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ContinuationBridge {
@@ -24,15 +27,27 @@ pub(crate) struct ContinuationBridge {
     #[serde(default)]
     task: ContinuationBridgeTask,
     #[serde(default)]
+    repo_identity: ContinuationBridgeRepoIdentity,
+    #[serde(default)]
     state: ContinuationBridgeListSection,
     #[serde(default)]
+    blocking_state: ContinuationBridgeBlockingState,
+    #[serde(default)]
     artifacts: ContinuationBridgeArtifacts,
+    #[serde(default)]
+    active_subagents: Vec<ContinuationBridgeSubagent>,
+    #[serde(default)]
+    key_claims_with_evidence: Vec<ContinuationBridgeClaim>,
     #[serde(default)]
     invariants: ContinuationBridgeInvariants,
     #[serde(default)]
     epistemics: ContinuationBridgeEpistemics,
     #[serde(default)]
     provenance: ContinuationBridgeProvenance,
+    #[serde(default)]
+    working_thesis: ContinuationBridgeWorkingThesis,
+    #[serde(default)]
+    recommended_output_shape: Vec<String>,
     #[serde(default)]
     next: ContinuationBridgeNext,
 }
@@ -48,6 +63,20 @@ struct ContinuationBridgeTask {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct ContinuationBridgeRepoIdentity {
+    #[serde(default)]
+    repo_root: String,
+    #[serde(default)]
+    branch: String,
+    #[serde(default)]
+    head_commit: String,
+    #[serde(default)]
+    worktree_dirty: bool,
+    #[serde(default)]
+    dirty_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct ContinuationBridgeListSection {
     #[serde(default)]
     completed: Vec<String>,
@@ -58,6 +87,28 @@ struct ContinuationBridgeListSection {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct ContinuationBridgeBlockingState {
+    #[serde(default)]
+    blocking: Vec<ContinuationBridgeBlocker>,
+    #[serde(default)]
+    non_blocking: Vec<String>,
+    #[serde(default)]
+    optional_followups: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct ContinuationBridgeBlocker {
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    reason: String,
+    #[serde(default)]
+    owner: String,
+    #[serde(default)]
+    unblocks: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct ContinuationBridgeArtifacts {
     #[serde(default)]
     files_touched: Vec<String>,
@@ -65,6 +116,48 @@ struct ContinuationBridgeArtifacts {
     authoritative_files: Vec<String>,
     #[serde(default)]
     partial_implementations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct ContinuationBridgeSubagent {
+    #[serde(default)]
+    agent_id: String,
+    #[serde(default)]
+    thread_id: String,
+    #[serde(default)]
+    role: String,
+    #[serde(default)]
+    task: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    blocking: bool,
+    #[serde(default)]
+    last_result_summary: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct ContinuationBridgeClaim {
+    #[serde(default)]
+    claim: String,
+    #[serde(default)]
+    confidence: String,
+    #[serde(default)]
+    ready_for_output: bool,
+    #[serde(default)]
+    evidence: Vec<ContinuationBridgeEvidence>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct ContinuationBridgeEvidence {
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    line: u32,
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    why_it_supports_claim: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +188,16 @@ struct ContinuationBridgeProvenance {
     rejected_paths: Vec<String>,
     #[serde(default)]
     pending_decisions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct ContinuationBridgeWorkingThesis {
+    #[serde(default)]
+    current_best_answer: String,
+    #[serde(default)]
+    main_caveats: Vec<String>,
+    #[serde(default)]
+    likely_conclusion: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,6 +241,43 @@ impl ContinuationBridge {
             phase: None,
         })
     }
+}
+
+fn preview_text(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let preview: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{preview}...")
+    } else {
+        preview
+    }
+}
+
+fn parse_continuation_bridge_response(result: &str) -> Result<ContinuationBridge> {
+    let mut stream = serde_json::Deserializer::from_str(result).into_iter::<ContinuationBridge>();
+    let bridge = match stream.next() {
+        Some(Ok(bridge)) => bridge,
+        Some(Err(err)) => {
+            let response_chars = result.chars().count();
+            let preview = preview_text(result, 1_024);
+            warn!(
+                "failed parsing continuation bridge response: {err}; response_chars={response_chars}; response_preview={preview:?}"
+            );
+            return Err(err.into());
+        }
+        None => return Ok(ContinuationBridge::default()),
+    };
+
+    let trailing = result[stream.byte_offset()..].trim();
+    if !trailing.is_empty() {
+        let trailing_chars = trailing.chars().count();
+        let trailing_preview = preview_text(trailing, 512);
+        warn!(
+            "ignoring trailing content after continuation bridge JSON: trailing_chars={trailing_chars}; trailing_preview={trailing_preview:?}"
+        );
+    }
+
+    Ok(bridge)
 }
 
 pub(crate) fn output_schema() -> Value {
@@ -220,16 +360,18 @@ pub(crate) async fn generate_continuation_bridge_item(
         return Ok(None);
     }
 
-    let bridge: ContinuationBridge = serde_json::from_str(result)?;
+    let bridge = parse_continuation_bridge_response(result)?;
     Ok(Some(bridge.into_response_item()?))
 }
 
 #[cfg(test)]
 mod tests {
+    use super::CONTINUATION_BRIDGE_LEGACY_SCHEMA;
     use super::CONTINUATION_BRIDGE_OUTPUT_SCHEMA;
     use super::CONTINUATION_BRIDGE_SCHEMA;
     use super::ContinuationBridge;
     use super::output_schema;
+    use super::parse_continuation_bridge_response;
     use codex_protocol::models::ContentItem;
     use codex_protocol::models::ResponseItem;
     use pretty_assertions::assert_eq;
@@ -267,5 +409,82 @@ mod tests {
             schema["properties"]["schema"]["enum"][0].as_str(),
             Some(CONTINUATION_BRIDGE_SCHEMA)
         );
+    }
+
+    #[test]
+    fn output_schema_requires_all_evidence_fields() {
+        let schema = output_schema();
+        let required = schema["properties"]["key_claims_with_evidence"]["items"]["properties"]
+            ["evidence"]["items"]["required"]
+            .as_array()
+            .expect("evidence.required should be an array")
+            .iter()
+            .map(|value| value.as_str().expect("required values should be strings"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            required,
+            vec!["path", "line", "kind", "why_it_supports_claim"]
+        );
+    }
+
+    #[test]
+    fn continuation_bridge_accepts_legacy_v1_payloads() {
+        let legacy_json = serde_json::json!({
+            "schema": CONTINUATION_BRIDGE_LEGACY_SCHEMA,
+            "task": {
+                "objective": "obj",
+                "current_phase": "phase",
+                "success_condition": "done"
+            },
+            "state": {
+                "completed": ["a"],
+                "in_progress": ["b"],
+                "not_started": ["c"]
+            },
+            "artifacts": {
+                "files_touched": ["/tmp/file"],
+                "authoritative_files": [],
+                "partial_implementations": []
+            },
+            "invariants": {
+                "must_preserve": [],
+                "must_not_do": [],
+                "assumptions_in_force": []
+            },
+            "epistemics": {
+                "known_uncertainties": [],
+                "questions_already_resolved": [],
+                "questions_still_open": []
+            },
+            "provenance": {
+                "why_current_code_looks_like_this": [],
+                "rejected_paths": [],
+                "pending_decisions": []
+            },
+            "next": {
+                "immediate_next_action": "next",
+                "fallback_if_blocked": "fallback",
+                "validation_step": "validate"
+            }
+        });
+
+        let bridge: ContinuationBridge =
+            serde_json::from_value(legacy_json).expect("legacy bridge should parse");
+
+        assert_eq!(bridge.normalize().schema, CONTINUATION_BRIDGE_LEGACY_SCHEMA);
+    }
+
+    #[test]
+    fn continuation_bridge_ignores_trailing_text_after_valid_json() {
+        let expected_bridge = ContinuationBridge::default().normalize();
+        let raw = format!(
+            "{}\n\nTrailing commentary that should not break parsing.",
+            serde_json::to_string(&expected_bridge).expect("bridge json"),
+        );
+
+        let parsed = parse_continuation_bridge_response(&raw).expect("bridge should parse");
+
+        assert_eq!(parsed.normalize(), expected_bridge);
     }
 }

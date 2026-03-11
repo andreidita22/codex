@@ -1167,22 +1167,36 @@ pub async fn mount_models_once_with_etag(
 
 fn default_continuation_bridge_output() -> Value {
     serde_json::json!({
-        "schema": "continuation_bridge_v1",
+        "schema": "continuation_bridge_v2",
         "task": {
             "objective": "",
             "current_phase": "",
             "success_condition": ""
+        },
+        "repo_identity": {
+            "repo_root": "",
+            "branch": "",
+            "head_commit": "",
+            "worktree_dirty": false,
+            "dirty_files": []
         },
         "state": {
             "completed": [],
             "in_progress": [],
             "not_started": []
         },
+        "blocking_state": {
+            "blocking": [],
+            "non_blocking": [],
+            "optional_followups": []
+        },
         "artifacts": {
             "files_touched": [],
             "authoritative_files": [],
             "partial_implementations": []
         },
+        "active_subagents": [],
+        "key_claims_with_evidence": [],
         "invariants": {
             "must_preserve": [],
             "must_not_do": [],
@@ -1198,6 +1212,12 @@ fn default_continuation_bridge_output() -> Value {
             "rejected_paths": [],
             "pending_decisions": []
         },
+        "working_thesis": {
+            "current_best_answer": "",
+            "main_caveats": [],
+            "likely_conclusion": ""
+        },
+        "recommended_output_shape": [],
         "next": {
             "immediate_next_action": "",
             "fallback_if_blocked": "",
@@ -1227,15 +1247,34 @@ impl Match for ContinuationBridgeRequestMatcher {
         body_json
             .pointer("/text/format/schema/properties/schema/enum/0")
             .and_then(Value::as_str)
-            == Some("continuation_bridge_v1")
+            == Some("continuation_bridge_v2")
     }
 }
 
 pub async fn mount_default_continuation_bridge_responder(server: &MockServer) -> ResponseMock {
     let bridge_body = serde_json::to_string(&default_continuation_bridge_output())
         .expect("serialize continuation bridge output");
+    mount_continuation_bridge_responder(server, &bridge_body).await
+}
+
+pub async fn mount_default_continuation_bridge_responder_with_suffix(
+    server: &MockServer,
+    suffix: &str,
+) -> ResponseMock {
+    let bridge_body = format!(
+        "{}{suffix}",
+        serde_json::to_string(&default_continuation_bridge_output())
+            .expect("serialize continuation bridge output"),
+    );
+    mount_continuation_bridge_responder(server, &bridge_body).await
+}
+
+pub async fn mount_continuation_bridge_responder(
+    server: &MockServer,
+    bridge_body: &str,
+) -> ResponseMock {
     let bridge_response = sse(vec![
-        ev_assistant_message("bridge-message", &bridge_body),
+        ev_assistant_message("bridge-message", bridge_body),
         ev_completed("bridge-response"),
     ]);
 
