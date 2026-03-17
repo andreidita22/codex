@@ -14,7 +14,5 @@ Scenario: After a prior manual /compact produced an older remote compaction item
 01:message/developer:<continuation_bridge schema="continuation_bridge_v2">\n{\n  "sch...
 02:compaction:encrypted=true
 03:message/developer:<PERMISSIONS_INSTRUCTIONS>
-04:message/user[2]:
-    [01] <AGENTS_MD>
-    [02] <ENVIRONMENT_CONTEXT:cwd=<CWD>>
+04:message/user:<ENVIRONMENT_CONTEXT:cwd=<CWD>>
 05:message/user:USER_TWO

@@ -18,7 +18,5 @@ Scenario: Remote pre-turn auto-compaction with a context override emits the cont
 02:message/developer:<continuation_bridge schema="continuation_bridge_v2">\n{\n  "sch...
 03:compaction:encrypted=true
 04:message/developer:<PERMISSIONS_INSTRUCTIONS>
-05:message/user[2]:
-    [01] <AGENTS_MD>
-    [02] <ENVIRONMENT_CONTEXT:cwd=PRETURN_CONTEXT_DIFF_CWD>
+05:message/user:<ENVIRONMENT_CONTEXT:cwd=PRETURN_CONTEXT_DIFF_CWD>
 06:message/user:USER_THREE

@@ -23,7 +23,5 @@ Scenario: Pre-sampling compaction on model switch to a smaller context window: c
 03:message/developer[2]:
     [01] <model_switch>\nThe user was previously using a different model....
     [02] <PERMISSIONS_INSTRUCTIONS>
-04:message/user[2]:
-    [01] <AGENTS_MD>
-    [02] <ENVIRONMENT_CONTEXT:cwd=<CWD>>
+04:message/user:<ENVIRONMENT_CONTEXT:cwd=<CWD>>
 05:message/user:after switch
