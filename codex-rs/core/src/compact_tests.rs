@@ -604,8 +604,10 @@ fn insert_items_before_last_summary_or_compaction_keeps_summary_last() {
         phase: None,
     }];
 
-    let refreshed =
-        insert_items_before_last_summary_or_compaction(compacted_history, continuation_bridge_items);
+    let refreshed = insert_items_before_last_summary_or_compaction(
+        compacted_history,
+        continuation_bridge_items,
+    );
     let expected = vec![
         ResponseItem::Message {
             id: None,
@@ -654,8 +656,10 @@ fn insert_items_before_last_summary_or_compaction_keeps_compaction_last() {
         phase: None,
     }];
 
-    let refreshed =
-        insert_items_before_last_summary_or_compaction(compacted_history, continuation_bridge_items);
+    let refreshed = insert_items_before_last_summary_or_compaction(
+        compacted_history,
+        continuation_bridge_items,
+    );
     let expected = vec![
         ResponseItem::Message {
             id: None,
