@@ -603,6 +603,13 @@
       },
       "type": "object"
     },
+    "ContinuationBridgeVariant": {
+      "enum": [
+        "baton",
+        "rich_review"
+      ],
+      "type": "string"
+    },
     "FeedbackConfigToml": {
       "additionalProperties": false,
       "properties": {
@@ -1979,12 +1986,32 @@
       "description": "Compact prompt used for history compaction.",
       "type": "string"
     },
+    "continuation_bridge_model": {
+      "description": "Optional model override used only for continuation-bridge generation.",
+      "type": "string"
+    },
     "continuation_bridge_prompt": {
       "description": "Continuation-bridge prompt used before context compaction.",
       "type": "string"
     },
     "continuation_bridge_prompt_file": {
       "$ref": "#/definitions/AbsolutePathBuf"
+    },
+    "continuation_bridge_reasoning_effort": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ReasoningEffort"
+        }
+      ],
+      "description": "Optional reasoning effort override used only for continuation-bridge generation."
+    },
+    "continuation_bridge_variant": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ContinuationBridgeVariant"
+        }
+      ],
+      "description": "Selected built-in continuation-bridge variant."
     },
     "default_permissions": {
       "description": "Default named permissions profile to apply from the `[permissions]` table.",

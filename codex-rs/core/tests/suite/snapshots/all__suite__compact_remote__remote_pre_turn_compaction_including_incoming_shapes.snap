@@ -15,7 +15,7 @@ Scenario: Remote pre-turn auto-compaction with a context override emits the cont
 ## Remote Post-Compaction History Layout
 00:message/user:USER_ONE
 01:message/user:USER_TWO
-02:message/developer:<continuation_bridge schema="continuation_bridge_v2">\n{\n  "sch...
+02:message/developer:<continuation_bridge schema="continuation_bridge_baton_v1">\n{\n...
 03:compaction:encrypted=true
 04:message/developer:<PERMISSIONS_INSTRUCTIONS>
 05:message/user:<ENVIRONMENT_CONTEXT:cwd=PRETURN_CONTEXT_DIFF_CWD>

@@ -13,7 +13,7 @@ Scenario: rollback past compaction replay after rollback
 
 ## before rollback
 00:message/user:hello world
-01:message/developer:<continuation_bridge schema="continuation_bridge_v2">\n{\n  "sch...
+01:message/developer:<continuation_bridge schema="continuation_bridge_baton_v1">\n{\n...
 02:message/user:<COMPACTION_SUMMARY>\nSUMMARY_ONLY_CONTEXT
 03:message/developer:<PERMISSIONS_INSTRUCTIONS>
 04:message/user:<ENVIRONMENT_CONTEXT:cwd=<CWD>>
@@ -21,7 +21,7 @@ Scenario: rollback past compaction replay after rollback
 
 ## after rollback
 00:message/user:hello world
-01:message/developer:<continuation_bridge schema="continuation_bridge_v2">\n{\n  "sch...
+01:message/developer:<continuation_bridge schema="continuation_bridge_baton_v1">\n{\n...
 02:message/user:<COMPACTION_SUMMARY>\nSUMMARY_ONLY_CONTEXT
 03:message/developer:<PERMISSIONS_INSTRUCTIONS>
 04:message/user:<ENVIRONMENT_CONTEXT:cwd=<CWD>>

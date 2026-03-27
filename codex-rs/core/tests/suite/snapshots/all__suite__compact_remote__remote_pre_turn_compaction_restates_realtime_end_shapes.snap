@@ -13,7 +13,7 @@ Scenario: Remote pre-turn auto-compaction after realtime was closed between turn
 03:message/assistant:REMOTE_FIRST_REPLY
 
 ## Remote Post-Compaction History Layout
-00:message/developer:<continuation_bridge schema="continuation_bridge_v2">\n{\n  "sch...
+00:message/developer:<continuation_bridge schema="continuation_bridge_baton_v1">\n{\n...
 01:compaction:encrypted=true
 02:message/developer[2]:
     [01] <PERMISSIONS_INSTRUCTIONS>

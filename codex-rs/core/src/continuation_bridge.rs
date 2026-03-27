@@ -1,234 +1,106 @@
+mod baton;
+mod rich_review;
+mod subagent_context;
+
 use crate::Prompt;
 use crate::codex::Session;
 use crate::codex::TurnContext;
+use crate::config::ContinuationBridgeVariant;
 use crate::error::Result;
+use crate::models_manager::manager::RefreshStrategy;
+use baton::BatonBridge;
 use codex_api::ResponseEvent;
+use codex_otel::SessionTelemetry;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::openai_models::ModelInfo;
+use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use futures::StreamExt;
-use serde::Deserialize;
-use serde::Serialize;
+use rich_review::RichReviewBridge;
 use serde_json::Value;
 use tracing::warn;
 
-pub(crate) const CONTINUATION_BRIDGE_PROMPT: &str =
-    include_str!("../templates/continuation_bridge/prompt.md");
-pub(crate) const CONTINUATION_BRIDGE_OUTPUT_SCHEMA: &str =
-    include_str!("../templates/continuation_bridge/schema.json");
-pub(crate) const CONTINUATION_BRIDGE_SCHEMA: &str = "continuation_bridge_v2";
-#[cfg(test)]
-const CONTINUATION_BRIDGE_LEGACY_SCHEMA: &str = "continuation_bridge_v1";
+const DEFAULT_CONTINUATION_BRIDGE_MODEL: &str = "gpt-5-codex-mini";
+const DEFAULT_CONTINUATION_BRIDGE_REASONING_EFFORT: ReasoningEffortConfig =
+    ReasoningEffortConfig::High;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ContinuationBridge {
-    #[serde(default = "default_continuation_bridge_schema")]
-    schema: String,
-    #[serde(default)]
-    task: ContinuationBridgeTask,
-    #[serde(default)]
-    repo_identity: ContinuationBridgeRepoIdentity,
-    #[serde(default)]
-    state: ContinuationBridgeListSection,
-    #[serde(default)]
-    blocking_state: ContinuationBridgeBlockingState,
-    #[serde(default)]
-    artifacts: ContinuationBridgeArtifacts,
-    #[serde(default)]
-    active_subagents: Vec<ContinuationBridgeSubagent>,
-    #[serde(default)]
-    key_claims_with_evidence: Vec<ContinuationBridgeClaim>,
-    #[serde(default)]
-    invariants: ContinuationBridgeInvariants,
-    #[serde(default)]
-    epistemics: ContinuationBridgeEpistemics,
-    #[serde(default)]
-    provenance: ContinuationBridgeProvenance,
-    #[serde(default)]
-    working_thesis: ContinuationBridgeWorkingThesis,
-    #[serde(default)]
-    recommended_output_shape: Vec<String>,
-    #[serde(default)]
-    next: ContinuationBridgeNext,
+pub(crate) fn default_prompt(variant: ContinuationBridgeVariant) -> &'static str {
+    match variant {
+        ContinuationBridgeVariant::Baton => baton::PROMPT,
+        ContinuationBridgeVariant::RichReview => rich_review::PROMPT,
+    }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ContinuationBridgeTask {
-    #[serde(default)]
-    objective: String,
-    #[serde(default)]
-    current_phase: String,
-    #[serde(default)]
-    success_condition: String,
+fn schema_name(variant: ContinuationBridgeVariant) -> &'static str {
+    match variant {
+        ContinuationBridgeVariant::Baton => baton::SCHEMA,
+        ContinuationBridgeVariant::RichReview => rich_review::SCHEMA,
+    }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ContinuationBridgeRepoIdentity {
-    #[serde(default)]
-    repo_root: String,
-    #[serde(default)]
-    branch: String,
-    #[serde(default)]
-    head_commit: String,
-    #[serde(default)]
-    worktree_dirty: bool,
-    #[serde(default)]
-    dirty_files: Vec<String>,
+fn output_schema_artifact(variant: ContinuationBridgeVariant) -> &'static str {
+    match variant {
+        ContinuationBridgeVariant::Baton => baton::OUTPUT_SCHEMA,
+        ContinuationBridgeVariant::RichReview => rich_review::OUTPUT_SCHEMA,
+    }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ContinuationBridgeListSection {
-    #[serde(default)]
-    completed: Vec<String>,
-    #[serde(default)]
-    in_progress: Vec<String>,
-    #[serde(default)]
-    not_started: Vec<String>,
+fn variant_from_schema(schema: &str) -> Option<ContinuationBridgeVariant> {
+    match schema {
+        baton::SCHEMA => Some(ContinuationBridgeVariant::Baton),
+        rich_review::SCHEMA | rich_review::LEGACY_SCHEMA => {
+            Some(ContinuationBridgeVariant::RichReview)
+        }
+        _ => None,
+    }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ContinuationBridgeBlockingState {
-    #[serde(default)]
-    blocking: Vec<ContinuationBridgeBlocker>,
-    #[serde(default)]
-    non_blocking: Vec<String>,
-    #[serde(default)]
-    optional_followups: Vec<String>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ContinuationBridgePayload {
+    Baton(Box<BatonBridge>),
+    RichReview(Box<RichReviewBridge>),
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ContinuationBridgeBlocker {
-    #[serde(default)]
-    kind: String,
-    #[serde(default)]
-    reason: String,
-    #[serde(default)]
-    owner: String,
-    #[serde(default)]
-    unblocks: String,
-}
+impl ContinuationBridgePayload {
+    fn default_for_variant(variant: ContinuationBridgeVariant) -> Self {
+        match variant {
+            ContinuationBridgeVariant::Baton => Self::Baton(Box::default()),
+            ContinuationBridgeVariant::RichReview => Self::RichReview(Box::default()),
+        }
+    }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ContinuationBridgeArtifacts {
-    #[serde(default)]
-    files_touched: Vec<String>,
-    #[serde(default)]
-    authoritative_files: Vec<String>,
-    #[serde(default)]
-    partial_implementations: Vec<String>,
-}
+    fn normalize(self) -> Self {
+        match self {
+            Self::Baton(mut bridge) => {
+                bridge.schema = normalize_schema(&bridge.schema, baton::SCHEMA);
+                Self::Baton(bridge)
+            }
+            Self::RichReview(mut bridge) => {
+                bridge.schema = normalize_schema(&bridge.schema, rich_review::SCHEMA);
+                Self::RichReview(bridge)
+            }
+        }
+    }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ContinuationBridgeSubagent {
-    #[serde(default)]
-    agent_id: String,
-    #[serde(default)]
-    thread_id: String,
-    #[serde(default)]
-    role: String,
-    #[serde(default)]
-    task: String,
-    #[serde(default)]
-    status: String,
-    #[serde(default)]
-    blocking: bool,
-    #[serde(default)]
-    last_result_summary: String,
-}
+    fn schema(&self) -> &str {
+        match self {
+            Self::Baton(bridge) => bridge.schema.as_str(),
+            Self::RichReview(bridge) => bridge.schema.as_str(),
+        }
+    }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ContinuationBridgeClaim {
-    #[serde(default)]
-    claim: String,
-    #[serde(default)]
-    confidence: String,
-    #[serde(default)]
-    ready_for_output: bool,
-    #[serde(default)]
-    evidence: Vec<ContinuationBridgeEvidence>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ContinuationBridgeEvidence {
-    #[serde(default)]
-    path: String,
-    #[serde(default)]
-    line: u32,
-    #[serde(default)]
-    kind: String,
-    #[serde(default)]
-    why_it_supports_claim: String,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ContinuationBridgeInvariants {
-    #[serde(default)]
-    must_preserve: Vec<String>,
-    #[serde(default)]
-    must_not_do: Vec<String>,
-    #[serde(default)]
-    assumptions_in_force: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ContinuationBridgeEpistemics {
-    #[serde(default)]
-    known_uncertainties: Vec<String>,
-    #[serde(default)]
-    questions_already_resolved: Vec<String>,
-    #[serde(default)]
-    questions_still_open: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ContinuationBridgeProvenance {
-    #[serde(default)]
-    why_current_code_looks_like_this: Vec<String>,
-    #[serde(default)]
-    rejected_paths: Vec<String>,
-    #[serde(default)]
-    pending_decisions: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ContinuationBridgeWorkingThesis {
-    #[serde(default)]
-    current_best_answer: String,
-    #[serde(default)]
-    main_caveats: Vec<String>,
-    #[serde(default)]
-    likely_conclusion: String,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ContinuationBridgeNext {
-    #[serde(default)]
-    immediate_next_action: String,
-    #[serde(default)]
-    fallback_if_blocked: String,
-    #[serde(default)]
-    validation_step: String,
-}
-
-fn default_continuation_bridge_schema() -> String {
-    CONTINUATION_BRIDGE_SCHEMA.to_string()
-}
-
-impl ContinuationBridge {
-    fn normalize(mut self) -> Self {
-        let schema = self.schema.trim();
-        self.schema = if schema.is_empty() {
-            CONTINUATION_BRIDGE_SCHEMA.to_string()
-        } else {
-            schema.to_string()
-        };
-        self
+    fn pretty_json(&self) -> Result<String> {
+        match self {
+            Self::Baton(bridge) => Ok(serde_json::to_string_pretty(bridge)?),
+            Self::RichReview(bridge) => Ok(serde_json::to_string_pretty(bridge)?),
+        }
     }
 
     fn into_response_item(self) -> Result<ResponseItem> {
         let bridge = self.normalize();
-        let bridge_json = serde_json::to_string_pretty(&bridge)?;
-        let schema = bridge.schema;
+        let bridge_json = bridge.pretty_json()?;
+        let schema = bridge.schema();
         Ok(ResponseItem::Message {
             id: None,
             role: "developer".to_string(),
@@ -243,6 +115,22 @@ impl ContinuationBridge {
     }
 }
 
+struct ContinuationBridgeRequestContext {
+    variant: ContinuationBridgeVariant,
+    model_info: ModelInfo,
+    session_telemetry: SessionTelemetry,
+    reasoning_effort: Option<ReasoningEffortConfig>,
+}
+
+fn normalize_schema(schema: &str, default_schema: &str) -> String {
+    let schema = schema.trim();
+    if schema.is_empty() {
+        default_schema.to_string()
+    } else {
+        schema.to_string()
+    }
+}
+
 fn preview_text(text: &str, max_chars: usize) -> String {
     let mut chars = text.chars();
     let preview: String = chars.by_ref().take(max_chars).collect();
@@ -253,10 +141,13 @@ fn preview_text(text: &str, max_chars: usize) -> String {
     }
 }
 
-fn parse_continuation_bridge_response(result: &str) -> Result<ContinuationBridge> {
-    let mut stream = serde_json::Deserializer::from_str(result).into_iter::<ContinuationBridge>();
-    let bridge = match stream.next() {
-        Some(Ok(bridge)) => bridge,
+fn parse_continuation_bridge_response(
+    result: &str,
+    fallback_variant: ContinuationBridgeVariant,
+) -> Result<ContinuationBridgePayload> {
+    let mut stream = serde_json::Deserializer::from_str(result).into_iter::<Value>();
+    let value = match stream.next() {
+        Some(Ok(value)) => value,
         Some(Err(err)) => {
             let response_chars = result.chars().count();
             let preview = preview_text(result, 1_024);
@@ -265,7 +156,11 @@ fn parse_continuation_bridge_response(result: &str) -> Result<ContinuationBridge
             );
             return Err(err.into());
         }
-        None => return Ok(ContinuationBridge::default()),
+        None => {
+            return Ok(ContinuationBridgePayload::default_for_variant(
+                fallback_variant,
+            ));
+        }
     };
 
     let trailing = result[stream.byte_offset()..].trim();
@@ -277,13 +172,100 @@ fn parse_continuation_bridge_response(result: &str) -> Result<ContinuationBridge
         );
     }
 
-    Ok(bridge)
+    let schema = value
+        .get("schema")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|schema| !schema.is_empty());
+    let variant = match schema.and_then(variant_from_schema) {
+        Some(variant) => variant,
+        None => {
+            if let Some(schema) = schema {
+                warn!(
+                    "unknown continuation bridge schema `{schema}`; falling back to {}",
+                    schema_name(fallback_variant)
+                );
+            }
+            fallback_variant
+        }
+    };
+
+    match variant {
+        ContinuationBridgeVariant::Baton => Ok(ContinuationBridgePayload::Baton(Box::new(
+            serde_json::from_value(value)?,
+        ))),
+        ContinuationBridgeVariant::RichReview => Ok(ContinuationBridgePayload::RichReview(
+            Box::new(serde_json::from_value(value)?),
+        )),
+    }
 }
 
-pub(crate) fn output_schema() -> Value {
-    match serde_json::from_str(CONTINUATION_BRIDGE_OUTPUT_SCHEMA) {
+pub(crate) fn output_schema(variant: ContinuationBridgeVariant) -> Value {
+    match serde_json::from_str(output_schema_artifact(variant)) {
         Ok(value) => value,
         Err(err) => panic!("invalid continuation bridge schema artifact: {err}"),
+    }
+}
+
+async fn resolve_request_context(
+    sess: &Session,
+    turn_context: &TurnContext,
+) -> ContinuationBridgeRequestContext {
+    let variant = turn_context.continuation_bridge_variant();
+    let requested_model = turn_context
+        .config
+        .continuation_bridge_model
+        .as_deref()
+        .unwrap_or(DEFAULT_CONTINUATION_BRIDGE_MODEL);
+    let requested_reasoning_effort = turn_context
+        .config
+        .continuation_bridge_reasoning_effort
+        .unwrap_or(DEFAULT_CONTINUATION_BRIDGE_REASONING_EFFORT);
+
+    let resident_context = || ContinuationBridgeRequestContext {
+        variant,
+        model_info: turn_context.model_info.clone(),
+        session_telemetry: turn_context.session_telemetry.clone(),
+        reasoning_effort: turn_context.reasoning_effort,
+    };
+
+    let available_models = sess
+        .services
+        .models_manager
+        .list_models(RefreshStrategy::Offline)
+        .await;
+    if !available_models
+        .iter()
+        .any(|model| model.model == requested_model)
+    {
+        warn!(
+            "continuation bridge model `{requested_model}` unavailable; falling back to resident model `{}`",
+            turn_context.model_info.slug
+        );
+        return resident_context();
+    }
+
+    let bridge_turn = turn_context
+        .with_model(requested_model.to_string(), &sess.services.models_manager)
+        .await;
+    if !bridge_turn
+        .model_info
+        .supported_reasoning_levels
+        .iter()
+        .any(|preset| preset.effort == requested_reasoning_effort)
+    {
+        warn!(
+            "continuation bridge reasoning effort `{requested_reasoning_effort}` is unsupported for model `{requested_model}`; falling back to resident model `{}`",
+            turn_context.model_info.slug
+        );
+        return resident_context();
+    }
+
+    ContinuationBridgeRequestContext {
+        variant,
+        model_info: bridge_turn.model_info,
+        session_telemetry: bridge_turn.session_telemetry,
+        reasoning_effort: Some(requested_reasoning_effort),
     }
 }
 
@@ -296,6 +278,11 @@ pub(crate) async fn generate_continuation_bridge_item(
         return Ok(None);
     }
 
+    let request_context = resolve_request_context(sess, turn_context).await;
+    if let Some(subagent_context_item) = subagent_context::build_subagent_context_item(sess).await?
+    {
+        input.push(subagent_context_item);
+    }
     input.push(ResponseItem::Message {
         id: None,
         role: "user".to_string(),
@@ -314,16 +301,16 @@ pub(crate) async fn generate_continuation_bridge_item(
             text: sess.get_base_instructions().await.text,
         },
         personality: turn_context.personality,
-        output_schema: Some(output_schema()),
+        output_schema: Some(output_schema(request_context.variant)),
     };
     let turn_metadata_header = turn_context.turn_metadata_state.current_header_value();
     let mut client_session = sess.services.model_client.new_session();
     let mut stream = client_session
         .stream(
             &prompt,
-            &turn_context.model_info,
-            &turn_context.session_telemetry,
-            turn_context.reasoning_effort,
+            &request_context.model_info,
+            &request_context.session_telemetry,
+            request_context.reasoning_effort,
             turn_context.reasoning_summary,
             turn_context.config.service_tier,
             turn_metadata_header.as_deref(),
@@ -360,78 +347,61 @@ pub(crate) async fn generate_continuation_bridge_item(
         return Ok(None);
     }
 
-    let bridge = parse_continuation_bridge_response(result)?;
+    let bridge = parse_continuation_bridge_response(result, request_context.variant)?;
     Ok(Some(bridge.into_response_item()?))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::CONTINUATION_BRIDGE_LEGACY_SCHEMA;
-    use super::CONTINUATION_BRIDGE_OUTPUT_SCHEMA;
-    use super::CONTINUATION_BRIDGE_SCHEMA;
-    use super::ContinuationBridge;
+    use super::ContinuationBridgePayload;
+    use super::baton;
+    use super::default_prompt;
     use super::output_schema;
     use super::parse_continuation_bridge_response;
+    use super::rich_review;
+    use crate::config::ContinuationBridgeVariant;
     use codex_protocol::models::ContentItem;
     use codex_protocol::models::ResponseItem;
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn continuation_bridge_defaults_schema_when_missing() {
-        let bridge = ContinuationBridge::default()
-            .into_response_item()
-            .expect("bridge response item");
-        let expected_bridge = ContinuationBridge::default().normalize();
-        let expected = ResponseItem::Message {
-            id: None,
-            role: "developer".to_string(),
-            content: vec![ContentItem::InputText {
-                text: format!(
-                    "<continuation_bridge schema=\"{CONTINUATION_BRIDGE_SCHEMA}\">\n{}\n</continuation_bridge>",
-                    serde_json::to_string_pretty(&expected_bridge).expect("bridge json"),
-                ),
-            }],
-            end_turn: None,
-            phase: None,
-        };
-
-        assert_eq!(bridge, expected);
+    fn continuation_bridge_defaults_to_baton_prompt() {
+        assert_eq!(
+            default_prompt(ContinuationBridgeVariant::Baton),
+            baton::PROMPT
+        );
     }
 
     #[test]
-    fn output_schema_uses_standalone_schema_artifact() {
-        let schema = output_schema();
-        let artifact: serde_json::Value = serde_json::from_str(CONTINUATION_BRIDGE_OUTPUT_SCHEMA)
+    fn output_schema_uses_baton_artifact() {
+        let schema = output_schema(ContinuationBridgeVariant::Baton);
+        let artifact: serde_json::Value = serde_json::from_str(baton::OUTPUT_SCHEMA)
             .unwrap_or_else(|err| panic!("schema artifact should parse: {err}"));
 
         assert_eq!(schema, artifact);
         assert_eq!(
             schema["properties"]["schema"]["enum"][0].as_str(),
-            Some(CONTINUATION_BRIDGE_SCHEMA)
+            Some(baton::SCHEMA)
         );
     }
 
     #[test]
-    fn output_schema_requires_all_evidence_fields() {
-        let schema = output_schema();
-        let required = schema["properties"]["key_claims_with_evidence"]["items"]["properties"]
-            ["evidence"]["items"]["required"]
-            .as_array()
-            .expect("evidence.required should be an array")
-            .iter()
-            .map(|value| value.as_str().expect("required values should be strings"))
-            .collect::<Vec<_>>();
+    fn output_schema_uses_rich_review_artifact() {
+        let schema = output_schema(ContinuationBridgeVariant::RichReview);
+        let artifact: serde_json::Value = serde_json::from_str(rich_review::OUTPUT_SCHEMA)
+            .unwrap_or_else(|err| panic!("schema artifact should parse: {err}"));
 
+        assert_eq!(schema, artifact);
         assert_eq!(
-            required,
-            vec!["path", "line", "kind", "why_it_supports_claim"]
+            schema["properties"]["schema"]["enum"][0].as_str(),
+            Some(rich_review::SCHEMA)
         );
     }
 
     #[test]
-    fn continuation_bridge_accepts_legacy_v1_payloads() {
+    fn rich_review_accepts_legacy_v1_payloads() {
         let legacy_json = serde_json::json!({
-            "schema": CONTINUATION_BRIDGE_LEGACY_SCHEMA,
+            "schema": rich_review::LEGACY_SCHEMA,
             "task": {
                 "objective": "obj",
                 "current_phase": "phase",
@@ -469,22 +439,59 @@ mod tests {
             }
         });
 
-        let bridge: ContinuationBridge =
-            serde_json::from_value(legacy_json).expect("legacy bridge should parse");
+        let parsed = parse_continuation_bridge_response(
+            &legacy_json.to_string(),
+            ContinuationBridgeVariant::RichReview,
+        )
+        .expect("legacy bridge should parse");
 
-        assert_eq!(bridge.normalize().schema, CONTINUATION_BRIDGE_LEGACY_SCHEMA);
+        match parsed {
+            ContinuationBridgePayload::RichReview(bridge) => {
+                assert_eq!(bridge.schema, rich_review::LEGACY_SCHEMA);
+            }
+            ContinuationBridgePayload::Baton(_) => panic!("expected rich review bridge"),
+        }
+    }
+
+    #[test]
+    fn baton_response_item_defaults_schema_when_missing() {
+        let payload =
+            ContinuationBridgePayload::default_for_variant(ContinuationBridgeVariant::Baton)
+                .into_response_item()
+                .expect("bridge response item");
+        let expected = ResponseItem::Message {
+            id: None,
+            role: "developer".to_string(),
+            content: vec![ContentItem::InputText {
+                text: format!(
+                    "<continuation_bridge schema=\"{}\">\n{}\n</continuation_bridge>",
+                    baton::SCHEMA,
+                    serde_json::to_string_pretty(&baton::BatonBridge::default())
+                        .expect("bridge json"),
+                ),
+            }],
+            end_turn: None,
+            phase: None,
+        };
+
+        assert_eq!(payload, expected);
     }
 
     #[test]
     fn continuation_bridge_ignores_trailing_text_after_valid_json() {
-        let expected_bridge = ContinuationBridge::default().normalize();
         let raw = format!(
             "{}\n\nTrailing commentary that should not break parsing.",
-            serde_json::to_string(&expected_bridge).expect("bridge json"),
+            serde_json::to_string(&baton::BatonBridge::default()).expect("bridge json"),
         );
 
-        let parsed = parse_continuation_bridge_response(&raw).expect("bridge should parse");
+        let parsed = parse_continuation_bridge_response(&raw, ContinuationBridgeVariant::Baton)
+            .expect("bridge should parse");
 
-        assert_eq!(parsed.normalize(), expected_bridge);
+        match parsed {
+            ContinuationBridgePayload::Baton(bridge) => {
+                assert_eq!(bridge.schema, baton::SCHEMA);
+            }
+            ContinuationBridgePayload::RichReview(_) => panic!("expected baton bridge"),
+        }
     }
 }

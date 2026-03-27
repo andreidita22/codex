@@ -60,6 +60,13 @@ pub(crate) struct ListedAgent {
     pub(crate) last_task_message: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SubagentSnapshot {
+    pub(crate) thread_id: ThreadId,
+    pub(crate) nickname: Option<String>,
+    pub(crate) role: Option<String>,
+    pub(crate) status: AgentStatus,
+}
 fn default_agent_nickname_list() -> Vec<&'static str> {
     AGENT_NAMES
         .lines()
@@ -678,22 +685,55 @@ impl AgentControl {
         &self,
         parent_thread_id: ThreadId,
     ) -> String {
-        let Ok(agents) = self.open_thread_spawn_children(parent_thread_id).await else {
-            return String::new();
-        };
-
-        agents
+        self.list_subagents(parent_thread_id)
+            .await
             .into_iter()
-            .map(|(thread_id, metadata)| {
-                let reference = metadata
-                    .agent_path
-                    .as_ref()
-                    .map(|agent_path| agent_path.name().to_string())
-                    .unwrap_or_else(|| thread_id.to_string());
-                format_subagent_context_line(reference.as_str(), metadata.agent_nickname.as_deref())
+            .map(|agent| {
+                format_subagent_context_line(
+                    &agent.thread_id.to_string(),
+                    agent.nickname.as_deref(),
+                )
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    pub(crate) async fn list_subagents(&self, parent_thread_id: ThreadId) -> Vec<SubagentSnapshot> {
+        let Ok(state) = self.upgrade() else {
+            return Vec::new();
+        };
+        let mut agents = Vec::new();
+        for metadata in self.state.live_agents() {
+            let Some(thread_id) = metadata.agent_id else {
+                continue;
+            };
+
+            let Ok(thread) = state.get_thread(thread_id).await else {
+                continue;
+            };
+            let config_snapshot = thread.config_snapshot().await;
+            let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: agent_parent_thread_id,
+                agent_nickname,
+                agent_role,
+                ..
+            }) = config_snapshot.session_source
+            else {
+                continue;
+            };
+            if agent_parent_thread_id != parent_thread_id {
+                continue;
+            }
+
+            agents.push(SubagentSnapshot {
+                thread_id,
+                nickname: agent_nickname,
+                role: agent_role,
+                status: thread.agent_status().await,
+            });
+        }
+        agents.sort_by_key(|agent| agent.thread_id.to_string());
+        agents
     }
 
     pub(crate) async fn list_agents(
