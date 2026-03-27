@@ -40,12 +40,20 @@ When Codex knows which client started the turn, the legacy notify JSON payload a
 
 This fork adds a pre-compaction continuation bridge that is generated with a normal structured `/responses` call before compaction runs. You can override the prompt used for that bridge in `~/.codex/config.toml` with either:
 
+- `continuation_bridge_variant = "baton"` or `"rich_review"` to pick the built-in bridge schema/prompt pair
+- `continuation_bridge_model = "gpt-5-codex-mini"` to override only the bridge-generation model
+- `continuation_bridge_reasoning_effort = "high"` to override only the bridge-generation reasoning effort
 - `continuation_bridge_prompt = "..."` for an inline prompt override
 - `continuation_bridge_prompt_file = "/absolute/path/to/prompt.md"` for a file-backed prompt override
 
 Inline text wins over the file setting when both are present.
 
-The default bridge schema now lives as a standalone artifact at `codex-rs/core/templates/continuation_bridge/schema.json`, so schema experiments do not require editing the main Rust module.
+The built-in bridge artifacts now live under:
+
+- `codex-rs/core/templates/continuation_bridge/variants/baton/`
+- `codex-rs/core/templates/continuation_bridge/variants/rich_review/`
+
+The default runtime variant is `baton`, and bridge generation defaults to `gpt-5-codex-mini` with `high` reasoning unless you override those settings.
 
 ## JSON Schema
 

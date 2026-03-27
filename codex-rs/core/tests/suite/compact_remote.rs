@@ -9,6 +9,7 @@ use codex_login::CodexAuth;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::ConversationStartParams;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::EventMsg;
@@ -426,9 +427,7 @@ async fn remote_compact_keeps_continuation_bridge_when_bridge_response_has_trail
             content
                 .get("text")
                 .and_then(serde_json::Value::as_str)
-                .is_some_and(|text| {
-                    text.contains("<continuation_bridge schema=\"continuation_bridge_v2\">")
-                })
+                .is_some_and(|text| text.contains("<continuation_bridge schema=\""))
         });
     assert!(
         has_bridge,
@@ -439,6 +438,77 @@ async fn remote_compact_keeps_continuation_bridge_when_bridge_response_has_trail
             .to_string()
             .contains("Trailing commentary that should be ignored."),
         "expected trailing bridge output to be excluded from follow-up history"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_compact_uses_bridge_model_override_only_for_bridge_request() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = wiremock::MockServer::start().await;
+    let bridge_mock = responses::mount_default_continuation_bridge_responder(&server).await;
+
+    let mut builder = test_codex().with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    builder = builder.with_config(|config| {
+        config.continuation_bridge_model = Some("gpt-5-codex-mini".to_string());
+        config.continuation_bridge_reasoning_effort = Some(ReasoningEffort::High);
+    });
+    let test = builder.build(&server).await?;
+
+    let _responses_mock = responses::mount_sse_sequence(
+        &server,
+        vec![responses::sse(vec![
+            responses::ev_assistant_message("m1", "BASELINE_REPLY"),
+            responses::ev_completed("resp-1"),
+        ])],
+    )
+    .await;
+
+    let compact_mock = responses::mount_compact_json_once(
+        &server,
+        serde_json::json!({
+            "output": compacted_summary_only_output("REMOTE_COMPACTED_SUMMARY")
+        }),
+    )
+    .await;
+
+    test.codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "start remote compact flow".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+        })
+        .await?;
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    test.codex.submit(Op::Compact).await?;
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let bridge_requests = bridge_mock.requests();
+    assert!(
+        !bridge_requests.is_empty(),
+        "expected at least one continuation bridge request"
+    );
+    let bridge_request = bridge_requests
+        .last()
+        .expect("bridge requests should contain a final request");
+    assert_eq!(
+        bridge_request.body_json()["model"].as_str(),
+        Some("gpt-5-codex-mini")
+    );
+    assert_eq!(
+        bridge_request.body_json()["reasoning"]["effort"].as_str(),
+        Some("high")
+    );
+
+    let compact_request = compact_mock.single_request();
+    assert_eq!(
+        compact_request.body_json()["model"].as_str(),
+        Some(test.session_configured.model.as_str())
     );
 
     Ok(())

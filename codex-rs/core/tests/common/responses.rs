@@ -1169,7 +1169,7 @@ pub async fn mount_models_once_with_etag(
 
 fn default_continuation_bridge_output() -> Value {
     serde_json::json!({
-        "schema": "continuation_bridge_v2",
+        "schema": "continuation_bridge_baton_v1",
         "task": {
             "objective": "",
             "current_phase": "",
@@ -1185,41 +1185,21 @@ fn default_continuation_bridge_output() -> Value {
         "state": {
             "completed": [],
             "in_progress": [],
-            "not_started": []
+            "remaining": []
         },
         "blocking_state": {
             "blocking": [],
-            "non_blocking": [],
-            "optional_followups": []
+            "human_actions_pending": []
         },
         "artifacts": {
-            "files_touched": [],
             "authoritative_files": [],
             "partial_implementations": []
         },
         "active_subagents": [],
-        "key_claims_with_evidence": [],
-        "invariants": {
-            "must_preserve": [],
-            "must_not_do": [],
-            "assumptions_in_force": []
-        },
-        "epistemics": {
-            "known_uncertainties": [],
-            "questions_already_resolved": [],
-            "questions_still_open": []
-        },
-        "provenance": {
-            "why_current_code_looks_like_this": [],
-            "rejected_paths": [],
-            "pending_decisions": []
-        },
         "working_thesis": {
             "current_best_answer": "",
-            "main_caveats": [],
-            "likely_conclusion": ""
+            "main_caveats": []
         },
-        "recommended_output_shape": [],
         "next": {
             "immediate_next_action": "",
             "fallback_if_blocked": "",
@@ -1249,7 +1229,12 @@ impl Match for ContinuationBridgeRequestMatcher {
         body_json
             .pointer("/text/format/schema/properties/schema/enum/0")
             .and_then(Value::as_str)
-            == Some("continuation_bridge_v2")
+            .is_some_and(|schema| {
+                matches!(
+                    schema,
+                    "continuation_bridge_baton_v1" | "continuation_bridge_v2"
+                )
+            })
     }
 }
 

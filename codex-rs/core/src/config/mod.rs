@@ -111,6 +111,24 @@ pub use codex_sandboxing::system_bwrap_warning;
 pub use managed_features::ManagedFeatures;
 pub use network_proxy_spec::NetworkProxySpec;
 pub use network_proxy_spec::StartedNetworkProxy;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ContinuationBridgeVariant {
+    #[default]
+    Baton,
+    RichReview,
+}
+pub use permissions::FilesystemPermissionToml;
+pub use permissions::FilesystemPermissionsToml;
+pub use permissions::NetworkDomainPermissionToml;
+pub use permissions::NetworkDomainPermissionsToml;
+pub use permissions::NetworkToml;
+pub use permissions::NetworkUnixSocketPermissionToml;
+pub use permissions::NetworkUnixSocketPermissionsToml;
+pub use permissions::PermissionProfileToml;
+pub use permissions::PermissionsToml;
+pub(crate) use permissions::overlay_network_domain_permissions;
 pub(crate) use permissions::resolve_permission_profile;
 pub use service::ConfigService;
 pub use service::ConfigServiceError;
@@ -273,6 +291,15 @@ pub struct Config {
 
     /// Continuation-bridge prompt override used before context compaction.
     pub continuation_bridge_prompt: Option<String>,
+
+    /// Selected built-in continuation-bridge variant.
+    pub continuation_bridge_variant: Option<ContinuationBridgeVariant>,
+
+    /// Optional model override used only for continuation-bridge generation.
+    pub continuation_bridge_model: Option<String>,
+
+    /// Optional reasoning effort override used only for continuation-bridge generation.
+    pub continuation_bridge_reasoning_effort: Option<ReasoningEffort>,
 
     /// Optional commit attribution text for commit message co-author trailers.
     ///
@@ -1823,6 +1850,16 @@ impl Config {
                 Some(trimmed.to_string())
             }
         });
+        let continuation_bridge_model = cfg.continuation_bridge_model.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+        let continuation_bridge_variant = cfg.continuation_bridge_variant;
+        let continuation_bridge_reasoning_effort = cfg.continuation_bridge_reasoning_effort;
 
         let commit_attribution = cfg.commit_attribution;
 
@@ -2027,6 +2064,9 @@ impl Config {
             developer_instructions,
             compact_prompt,
             continuation_bridge_prompt,
+            continuation_bridge_variant,
+            continuation_bridge_model,
+            continuation_bridge_reasoning_effort,
             commit_attribution,
             include_permissions_instructions,
             include_apps_instructions,

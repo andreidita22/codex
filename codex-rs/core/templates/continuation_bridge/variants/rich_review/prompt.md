@@ -8,6 +8,7 @@ Summarize only durable, task-relevant state from the current thread:
 - record work already completed, partial work in flight, and work not started
 - separate true blockers from non-blocking issues and optional follow-ups
 - if sub-agents exist, record each one as structured state with role, thread id, status, and whether it blocks the main flow
+- if a `<continuation_bridge_subagents>` block is present, treat it as authoritative system context for active sub-agent ids, roles, nicknames, thread ids, and statuses
 - prefer exact file paths, symbols, commands, and decisions over vague prose
 - for analytical tasks, include 3-7 key claims with exact file/line evidence when available
 - every `key_claims_with_evidence.evidence` entry must include `path`, `line`, `kind`, and `why_it_supports_claim`

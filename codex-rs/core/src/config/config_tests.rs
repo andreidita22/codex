@@ -3382,6 +3382,38 @@ fn continuation_bridge_prompt_prefers_inline_over_file() -> std::io::Result<()> 
 }
 
 #[test]
+fn loads_continuation_bridge_variant_model_and_reasoning() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cfg = ConfigToml {
+        continuation_bridge_variant: Some(ContinuationBridgeVariant::RichReview),
+        continuation_bridge_model: Some("  gpt-5-codex-mini  ".to_string()),
+        continuation_bridge_reasoning_effort: Some(ReasoningEffort::High),
+        ..Default::default()
+    };
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(
+        config.continuation_bridge_variant,
+        Some(ContinuationBridgeVariant::RichReview)
+    );
+    assert_eq!(
+        config.continuation_bridge_model.as_deref(),
+        Some("gpt-5-codex-mini")
+    );
+    assert_eq!(
+        config.continuation_bridge_reasoning_effort,
+        Some(ReasoningEffort::High)
+    );
+
+    Ok(())
+}
+
+#[test]
 fn load_config_rejects_missing_agent_role_config_file() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let missing_path = codex_home.path().join("agents").join("researcher.toml");
@@ -4654,6 +4686,9 @@ fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             include_environment_context: true,
             compact_prompt: None,
             continuation_bridge_prompt: None,
+            continuation_bridge_variant: None,
+            continuation_bridge_model: None,
+            continuation_bridge_reasoning_effort: None,
             commit_attribution: None,
             forced_chatgpt_workspace_id: None,
             forced_login_method: None,
@@ -4801,6 +4836,9 @@ fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         include_environment_context: true,
         compact_prompt: None,
         continuation_bridge_prompt: None,
+        continuation_bridge_variant: None,
+        continuation_bridge_model: None,
+        continuation_bridge_reasoning_effort: None,
         commit_attribution: None,
         forced_chatgpt_workspace_id: None,
         forced_login_method: None,
@@ -4946,6 +4984,9 @@ fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         include_environment_context: true,
         compact_prompt: None,
         continuation_bridge_prompt: None,
+        continuation_bridge_variant: None,
+        continuation_bridge_model: None,
+        continuation_bridge_reasoning_effort: None,
         commit_attribution: None,
         forced_chatgpt_workspace_id: None,
         forced_login_method: None,
@@ -5077,6 +5118,9 @@ fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         include_environment_context: true,
         compact_prompt: None,
         continuation_bridge_prompt: None,
+        continuation_bridge_variant: None,
+        continuation_bridge_model: None,
+        continuation_bridge_reasoning_effort: None,
         commit_attribution: None,
         forced_chatgpt_workspace_id: None,
         forced_login_method: None,

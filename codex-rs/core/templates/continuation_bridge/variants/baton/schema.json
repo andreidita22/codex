@@ -1,0 +1,134 @@
+{
+  "type": "object",
+  "properties": {
+    "schema": {
+      "type": "string",
+      "enum": ["continuation_bridge_baton_v1"]
+    },
+    "task": {
+      "type": "object",
+      "properties": {
+        "objective": { "type": "string" },
+        "current_phase": { "type": "string" },
+        "success_condition": { "type": "string" }
+      },
+      "required": ["objective", "current_phase", "success_condition"],
+      "additionalProperties": false
+    },
+    "repo_identity": {
+      "type": "object",
+      "properties": {
+        "repo_root": { "type": "string" },
+        "branch": { "type": "string" },
+        "head_commit": { "type": "string" },
+        "worktree_dirty": { "type": "boolean" },
+        "dirty_files": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["repo_root", "branch", "head_commit", "worktree_dirty", "dirty_files"],
+      "additionalProperties": false
+    },
+    "state": {
+      "type": "object",
+      "properties": {
+        "completed": { "type": "array", "items": { "type": "string" } },
+        "in_progress": { "type": "array", "items": { "type": "string" } },
+        "remaining": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["completed", "in_progress", "remaining"],
+      "additionalProperties": false
+    },
+    "blocking_state": {
+      "type": "object",
+      "properties": {
+        "blocking": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": { "type": "string" },
+              "reason": { "type": "string" },
+              "owner": { "type": "string" },
+              "unblocks": { "type": "string" }
+            },
+            "required": ["kind", "reason", "owner", "unblocks"],
+            "additionalProperties": false
+          }
+        },
+        "human_actions_pending": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "action": { "type": "string" },
+              "context": { "type": "string" },
+              "blocking": { "type": "boolean" }
+            },
+            "required": ["action", "context", "blocking"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["blocking", "human_actions_pending"],
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "authoritative_files": { "type": "array", "items": { "type": "string" } },
+        "partial_implementations": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["authoritative_files", "partial_implementations"],
+      "additionalProperties": false
+    },
+    "active_subagents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "agent_id": { "type": "string" },
+          "thread_id": { "type": "string" },
+          "nickname": { "type": "string" },
+          "role": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "running", "completed", "failed"]
+          },
+          "blocking": { "type": "boolean" }
+        },
+        "required": ["agent_id", "thread_id", "nickname", "role", "status", "blocking"],
+        "additionalProperties": false
+      }
+    },
+    "working_thesis": {
+      "type": "object",
+      "properties": {
+        "current_best_answer": { "type": "string" },
+        "main_caveats": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["current_best_answer", "main_caveats"],
+      "additionalProperties": false
+    },
+    "next": {
+      "type": "object",
+      "properties": {
+        "immediate_next_action": { "type": "string" },
+        "fallback_if_blocked": { "type": "string" },
+        "validation_step": { "type": "string" }
+      },
+      "required": ["immediate_next_action", "fallback_if_blocked", "validation_step"],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema",
+    "task",
+    "repo_identity",
+    "state",
+    "blocking_state",
+    "artifacts",
+    "active_subagents",
+    "working_thesis",
+    "next"
+  ],
+  "additionalProperties": false
+}
