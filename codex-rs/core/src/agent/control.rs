@@ -804,14 +804,19 @@ impl AgentControl {
         &self,
         parent_thread_id: ThreadId,
     ) -> String {
-        self.list_subagents(parent_thread_id)
-            .await
+        let Ok(agents) = self.open_thread_spawn_children(parent_thread_id).await else {
+            return String::new();
+        };
+
+        agents
             .into_iter()
-            .map(|agent| {
-                format_subagent_context_line(
-                    &agent.thread_id.to_string(),
-                    agent.nickname.as_deref(),
-                )
+            .map(|(thread_id, metadata)| {
+                let reference = metadata
+                    .agent_path
+                    .as_ref()
+                    .map(|agent_path| agent_path.name().to_string())
+                    .unwrap_or_else(|| thread_id.to_string());
+                format_subagent_context_line(reference.as_str(), metadata.agent_nickname.as_deref())
             })
             .collect::<Vec<_>>()
             .join("\n")
