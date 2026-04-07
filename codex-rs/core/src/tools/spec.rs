@@ -51,6 +51,7 @@ use codex_tools::create_close_agent_tool_v1;
 use codex_tools::create_close_agent_tool_v2;
 use codex_tools::create_code_mode_tool;
 use codex_tools::create_exec_command_tool;
+use codex_tools::create_inspect_agent_progress_tool;
 use codex_tools::create_js_repl_reset_tool;
 use codex_tools::create_js_repl_tool;
 use codex_tools::create_list_agents_tool;
@@ -75,6 +76,7 @@ use codex_tools::create_tool_suggest_tool;
 use codex_tools::create_view_image_tool;
 use codex_tools::create_wait_agent_tool_v1;
 use codex_tools::create_wait_agent_tool_v2;
+use codex_tools::create_wait_for_agent_progress_tool;
 use codex_tools::create_wait_tool;
 use codex_tools::create_write_stdin_tool;
 use codex_tools::dynamic_tool_to_responses_api_tool;
@@ -410,6 +412,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
     use crate::tools::handlers::CodeModeExecuteHandler;
     use crate::tools::handlers::CodeModeWaitHandler;
     use crate::tools::handlers::DynamicToolHandler;
+    use crate::tools::handlers::InspectAgentProgressHandler;
     use crate::tools::handlers::JsReplHandler;
     use crate::tools::handlers::JsReplResetHandler;
     use crate::tools::handlers::ListDirHandler;
@@ -425,6 +428,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
     use crate::tools::handlers::ToolSuggestHandler;
     use crate::tools::handlers::UnifiedExecHandler;
     use crate::tools::handlers::ViewImageHandler;
+    use crate::tools::handlers::WaitForAgentProgressHandler;
     use crate::tools::handlers::multi_agents::CloseAgentHandler;
     use crate::tools::handlers::multi_agents::ResumeAgentHandler;
     use crate::tools::handlers::multi_agents::SendInputHandler;
@@ -774,6 +778,26 @@ pub(crate) fn build_specs_with_discoverable_tools(
     builder.register_handler("view_image", view_image_handler);
 
     if config.collab_tools {
+        push_tool_spec(
+            &mut builder,
+            create_inspect_agent_progress_tool(),
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+        builder.register_handler(
+            "inspect_agent_progress",
+            Arc::new(InspectAgentProgressHandler),
+        );
+        push_tool_spec(
+            &mut builder,
+            create_wait_for_agent_progress_tool(),
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+        builder.register_handler(
+            "wait_for_agent_progress",
+            Arc::new(WaitForAgentProgressHandler),
+        );
         if config.multi_agent_v2 {
             push_tool_spec(
                 &mut builder,

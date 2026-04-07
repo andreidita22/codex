@@ -22,9 +22,12 @@ use codex_tools::ResponsesApiWebSearchUserLocation;
 use codex_tools::SpawnAgentToolOptions;
 use codex_tools::ViewImageToolOptions;
 use codex_tools::WaitAgentTimeoutOptions;
+use codex_tools::create_assign_task_tool;
 use codex_tools::create_close_agent_tool_v1;
 use codex_tools::create_close_agent_tool_v2;
 use codex_tools::create_exec_command_tool;
+use codex_tools::create_inspect_agent_progress_tool;
+use codex_tools::create_list_agents_tool;
 use codex_tools::create_request_permissions_tool;
 use codex_tools::create_request_user_input_tool;
 use codex_tools::create_resume_agent_tool;
@@ -35,6 +38,7 @@ use codex_tools::create_spawn_agent_tool_v2;
 use codex_tools::create_view_image_tool;
 use codex_tools::create_wait_agent_tool_v1;
 use codex_tools::create_wait_agent_tool_v2;
+use codex_tools::create_wait_for_agent_progress_tool;
 use codex_tools::create_write_stdin_tool;
 use codex_tools::mcp_tool_to_deferred_responses_api_tool;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -361,13 +365,19 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
     }
     let collab_specs = if config.multi_agent_v2 {
         vec![
+            create_inspect_agent_progress_tool(),
+            create_wait_for_agent_progress_tool(),
             create_spawn_agent_tool_v2(spawn_agent_tool_options(&config)),
             create_send_message_tool(),
+            create_assign_task_tool(),
             create_wait_agent_tool_v2(wait_agent_timeout_options()),
             create_close_agent_tool_v2(),
+            create_list_agents_tool(),
         ]
     } else {
         vec![
+            create_inspect_agent_progress_tool(),
+            create_wait_for_agent_progress_tool(),
             create_spawn_agent_tool_v1(spawn_agent_tool_options(&config)),
             create_send_input_tool_v1(),
             create_wait_agent_tool_v1(wait_agent_timeout_options()),
@@ -427,7 +437,14 @@ fn test_build_specs_collab_tools_enabled() {
     .build();
     assert_contains_tool_names(
         &tools,
-        &["spawn_agent", "send_input", "wait_agent", "close_agent"],
+        &[
+            "inspect_agent_progress",
+            "wait_for_agent_progress",
+            "spawn_agent",
+            "send_input",
+            "wait_agent",
+            "close_agent",
+        ],
     );
     assert_lacks_tool_name(&tools, "spawn_agents_on_csv");
     assert_lacks_tool_name(&tools, "list_agents");
@@ -460,6 +477,8 @@ fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
     assert_contains_tool_names(
         &tools,
         &[
+            "inspect_agent_progress",
+            "wait_for_agent_progress",
             "spawn_agent",
             "send_message",
             "assign_task",
@@ -467,6 +486,74 @@ fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
             "close_agent",
             "list_agents",
         ],
+    );
+
+    let inspect_agent_progress = find_tool(&tools, "inspect_agent_progress");
+    let ToolSpec::Function(ResponsesApiTool {
+        parameters,
+        output_schema,
+        ..
+    }) = &inspect_agent_progress.spec
+    else {
+        panic!("inspect_agent_progress should be a function tool");
+    };
+    let JsonSchema::Object {
+        properties,
+        required,
+        ..
+    } = parameters
+    else {
+        panic!("inspect_agent_progress should use object params");
+    };
+    assert!(properties.contains_key("target"));
+    assert!(properties.contains_key("stalled_after_ms"));
+    assert_eq!(required.as_ref(), Some(&vec!["target".to_string()]));
+    let output_schema = output_schema
+        .as_ref()
+        .expect("inspect_agent_progress should define output schema");
+    assert_eq!(
+        output_schema["properties"]["canonical_target"]["required"],
+        json!(["thread_id", "task_name", "nickname"])
+    );
+    assert_eq!(
+        output_schema["properties"]["ever_reported_progress"]["type"],
+        json!("boolean")
+    );
+
+    let wait_for_agent_progress = find_tool(&tools, "wait_for_agent_progress");
+    let ToolSpec::Function(ResponsesApiTool {
+        parameters,
+        output_schema,
+        ..
+    }) = &wait_for_agent_progress.spec
+    else {
+        panic!("wait_for_agent_progress should be a function tool");
+    };
+    let JsonSchema::Object {
+        properties,
+        required,
+        ..
+    } = parameters
+    else {
+        panic!("wait_for_agent_progress should use object params");
+    };
+    assert!(properties.contains_key("target"));
+    assert!(properties.contains_key("since_seq"));
+    assert!(properties.contains_key("until_phases"));
+    assert!(properties.contains_key("timeout_ms"));
+    assert!(properties.contains_key("stalled_after_ms"));
+    assert_eq!(required.as_ref(), Some(&vec!["target".to_string()]));
+    let output_schema = output_schema
+        .as_ref()
+        .expect("wait_for_agent_progress should define output schema");
+    assert_eq!(
+        output_schema["properties"]["match_reason"]["enum"],
+        json!([
+            "already_satisfied",
+            "seq_advanced",
+            "phase_matched",
+            "timed_out"
+        ])
     );
 
     let spawn_agent = find_tool(&tools, "spawn_agent");
@@ -618,6 +705,8 @@ fn test_build_specs_enable_fanout_enables_agent_jobs_and_collab_tools() {
     assert_contains_tool_names(
         &tools,
         &[
+            "inspect_agent_progress",
+            "wait_for_agent_progress",
             "spawn_agent",
             "send_input",
             "wait_agent",
@@ -734,6 +823,8 @@ fn test_build_specs_agent_job_worker_tools_enabled() {
     assert_contains_tool_names(
         &tools,
         &[
+            "inspect_agent_progress",
+            "wait_for_agent_progress",
             "spawn_agent",
             "send_input",
             "resume_agent",
@@ -1355,6 +1446,8 @@ fn test_build_specs_gpt5_codex_default() {
             "apply_patch",
             "web_search",
             "view_image",
+            "inspect_agent_progress",
+            "wait_for_agent_progress",
             "spawn_agent",
             "send_input",
             "resume_agent",
@@ -1378,6 +1471,8 @@ fn test_build_specs_gpt51_codex_default() {
             "apply_patch",
             "web_search",
             "view_image",
+            "inspect_agent_progress",
+            "wait_for_agent_progress",
             "spawn_agent",
             "send_input",
             "resume_agent",
@@ -1403,6 +1498,8 @@ fn test_build_specs_gpt5_codex_unified_exec_web_search() {
             "apply_patch",
             "web_search",
             "view_image",
+            "inspect_agent_progress",
+            "wait_for_agent_progress",
             "spawn_agent",
             "send_input",
             "resume_agent",
@@ -1428,6 +1525,8 @@ fn test_build_specs_gpt51_codex_unified_exec_web_search() {
             "apply_patch",
             "web_search",
             "view_image",
+            "inspect_agent_progress",
+            "wait_for_agent_progress",
             "spawn_agent",
             "send_input",
             "resume_agent",
@@ -1451,6 +1550,8 @@ fn test_gpt_5_1_codex_max_defaults() {
             "apply_patch",
             "web_search",
             "view_image",
+            "inspect_agent_progress",
+            "wait_for_agent_progress",
             "spawn_agent",
             "send_input",
             "resume_agent",
@@ -1474,6 +1575,8 @@ fn test_codex_5_1_mini_defaults() {
             "apply_patch",
             "web_search",
             "view_image",
+            "inspect_agent_progress",
+            "wait_for_agent_progress",
             "spawn_agent",
             "send_input",
             "resume_agent",
@@ -1496,6 +1599,8 @@ fn test_gpt_5_defaults() {
             "request_user_input",
             "web_search",
             "view_image",
+            "inspect_agent_progress",
+            "wait_for_agent_progress",
             "spawn_agent",
             "send_input",
             "resume_agent",
@@ -1519,6 +1624,8 @@ fn test_gpt_5_1_defaults() {
             "apply_patch",
             "web_search",
             "view_image",
+            "inspect_agent_progress",
+            "wait_for_agent_progress",
             "spawn_agent",
             "send_input",
             "resume_agent",
@@ -1544,6 +1651,8 @@ fn test_gpt_5_1_codex_max_unified_exec_web_search() {
             "apply_patch",
             "web_search",
             "view_image",
+            "inspect_agent_progress",
+            "wait_for_agent_progress",
             "spawn_agent",
             "send_input",
             "resume_agent",

@@ -2,6 +2,7 @@
 //! outside `codex-core`.
 
 mod agent_job_tool;
+mod agent_progress_tool;
 mod agent_tool;
 mod code_mode;
 mod dynamic_tool;
@@ -20,6 +21,8 @@ mod view_image;
 
 pub use agent_job_tool::create_report_agent_job_result_tool;
 pub use agent_job_tool::create_spawn_agents_on_csv_tool;
+pub use agent_progress_tool::create_inspect_agent_progress_tool;
+pub use agent_progress_tool::create_wait_for_agent_progress_tool;
 pub use agent_tool::SpawnAgentToolOptions;
 pub use agent_tool::WaitAgentTimeoutOptions;
 pub use agent_tool::create_assign_task_tool;
