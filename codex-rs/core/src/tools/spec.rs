@@ -16,6 +16,47 @@ use codex_tools::ToolUserShellType;
 use codex_tools::ToolsConfig;
 use codex_tools::WaitAgentTimeoutOptions;
 use codex_tools::build_tool_registry_plan;
+use codex_tools::augment_tool_spec_for_code_mode;
+use codex_tools::create_assign_task_tool;
+use codex_tools::create_close_agent_tool_v1;
+use codex_tools::create_close_agent_tool_v2;
+use codex_tools::create_code_mode_tool;
+use codex_tools::create_exec_command_tool;
+use codex_tools::create_inspect_agent_progress_tool;
+use codex_tools::create_js_repl_reset_tool;
+use codex_tools::create_js_repl_tool;
+use codex_tools::create_list_agents_tool;
+use codex_tools::create_list_dir_tool;
+use codex_tools::create_list_mcp_resource_templates_tool;
+use codex_tools::create_list_mcp_resources_tool;
+use codex_tools::create_read_mcp_resource_tool;
+use codex_tools::create_report_agent_job_result_tool;
+use codex_tools::create_request_permissions_tool;
+use codex_tools::create_request_user_input_tool;
+use codex_tools::create_resume_agent_tool;
+use codex_tools::create_send_input_tool_v1;
+use codex_tools::create_send_message_tool;
+use codex_tools::create_shell_command_tool;
+use codex_tools::create_shell_tool;
+use codex_tools::create_spawn_agent_tool_v1;
+use codex_tools::create_spawn_agent_tool_v2;
+use codex_tools::create_spawn_agents_on_csv_tool;
+use codex_tools::create_test_sync_tool;
+use codex_tools::create_tool_search_tool;
+use codex_tools::create_tool_suggest_tool;
+use codex_tools::create_view_image_tool;
+use codex_tools::create_wait_agent_tool_v1;
+use codex_tools::create_wait_agent_tool_v2;
+use codex_tools::create_wait_for_agent_progress_tool;
+use codex_tools::create_wait_tool;
+use codex_tools::create_write_stdin_tool;
+use codex_tools::dynamic_tool_to_responses_api_tool;
+use codex_tools::mcp_tool_to_responses_api_tool;
+use codex_tools::tool_spec_to_code_mode_tool_definition;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use serde::Deserialize;
+use serde::Serialize;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -66,6 +107,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
     use crate::tools::handlers::CodeModeExecuteHandler;
     use crate::tools::handlers::CodeModeWaitHandler;
     use crate::tools::handlers::DynamicToolHandler;
+    use crate::tools::handlers::InspectAgentProgressHandler;
     use crate::tools::handlers::JsReplHandler;
     use crate::tools::handlers::JsReplResetHandler;
     use crate::tools::handlers::ListDirHandler;
@@ -81,6 +123,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
     use crate::tools::handlers::ToolSuggestHandler;
     use crate::tools::handlers::UnifiedExecHandler;
     use crate::tools::handlers::ViewImageHandler;
+    use crate::tools::handlers::WaitForAgentProgressHandler;
     use crate::tools::handlers::multi_agents::CloseAgentHandler;
     use crate::tools::handlers::multi_agents::ResumeAgentHandler;
     use crate::tools::handlers::multi_agents::SendInputHandler;
@@ -148,14 +191,443 @@ pub(crate) fn build_specs_with_discoverable_tools(
     let code_mode_wait_handler = Arc::new(CodeModeWaitHandler);
     let js_repl_handler = Arc::new(JsReplHandler);
     let js_repl_reset_handler = Arc::new(JsReplResetHandler);
+    let exec_permission_approvals_enabled = config.exec_permission_approvals_enabled;
 
-    for spec in plan.specs {
-        if spec.supports_parallel_tool_calls {
-            builder.push_spec_with_parallel_support(
-                spec.spec, /*supports_parallel_tool_calls*/ true,
+    if config.code_mode_enabled {
+        let nested_config = config.for_code_mode_nested_tools();
+        let (nested_specs, _) = build_specs_with_discoverable_tools(
+            &nested_config,
+            mcp_tools.clone(),
+            app_tools.clone(),
+            /*discoverable_tools*/ None,
+            dynamic_tools,
+        )
+        .build();
+        let mut enabled_tools = nested_specs
+            .into_iter()
+            .filter_map(|spec| tool_spec_to_code_mode_tool_definition(&spec.spec))
+            .map(|tool| (tool.name, tool.description))
+            .collect::<Vec<_>>();
+        enabled_tools.sort_by(|left, right| left.0.cmp(&right.0));
+        enabled_tools.dedup_by(|left, right| left.0 == right.0);
+        push_tool_spec(
+            &mut builder,
+            create_code_mode_tool(&enabled_tools, config.code_mode_only_enabled),
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+        builder.register_handler(PUBLIC_TOOL_NAME, code_mode_handler);
+        push_tool_spec(
+            &mut builder,
+            create_wait_tool(),
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+        builder.register_handler(WAIT_TOOL_NAME, code_mode_wait_handler);
+    }
+
+    match &config.shell_type {
+        ConfigShellToolType::Default => {
+            push_tool_spec(
+                &mut builder,
+                create_shell_tool(ShellToolOptions {
+                    exec_permission_approvals_enabled,
+                }),
+                /*supports_parallel_tool_calls*/ true,
+                config.code_mode_enabled,
             );
+        }
+        ConfigShellToolType::Local => {
+            push_tool_spec(
+                &mut builder,
+                ToolSpec::LocalShell {},
+                /*supports_parallel_tool_calls*/ true,
+                config.code_mode_enabled,
+            );
+        }
+        ConfigShellToolType::UnifiedExec => {
+            push_tool_spec(
+                &mut builder,
+                create_exec_command_tool(CommandToolOptions {
+                    allow_login_shell: config.allow_login_shell,
+                    exec_permission_approvals_enabled,
+                }),
+                /*supports_parallel_tool_calls*/ true,
+                config.code_mode_enabled,
+            );
+            push_tool_spec(
+                &mut builder,
+                create_write_stdin_tool(),
+                /*supports_parallel_tool_calls*/ false,
+                config.code_mode_enabled,
+            );
+            builder.register_handler("exec_command", unified_exec_handler.clone());
+            builder.register_handler("write_stdin", unified_exec_handler);
+        }
+        ConfigShellToolType::Disabled => {}
+        ConfigShellToolType::ShellCommand => {
+            push_tool_spec(
+                &mut builder,
+                create_shell_command_tool(CommandToolOptions {
+                    allow_login_shell: config.allow_login_shell,
+                    exec_permission_approvals_enabled,
+                }),
+                /*supports_parallel_tool_calls*/ true,
+                config.code_mode_enabled,
+            );
+        }
+    }
+
+    if config.shell_type != ConfigShellToolType::Disabled {
+        builder.register_handler("shell", shell_handler.clone());
+        builder.register_handler("container.exec", shell_handler.clone());
+        builder.register_handler("local_shell", shell_handler);
+        builder.register_handler("shell_command", shell_command_handler);
+    }
+
+    if mcp_tools.is_some() {
+        push_tool_spec(
+            &mut builder,
+            create_list_mcp_resources_tool(),
+            /*supports_parallel_tool_calls*/ true,
+            config.code_mode_enabled,
+        );
+        push_tool_spec(
+            &mut builder,
+            create_list_mcp_resource_templates_tool(),
+            /*supports_parallel_tool_calls*/ true,
+            config.code_mode_enabled,
+        );
+        push_tool_spec(
+            &mut builder,
+            create_read_mcp_resource_tool(),
+            /*supports_parallel_tool_calls*/ true,
+            config.code_mode_enabled,
+        );
+        builder.register_handler("list_mcp_resources", mcp_resource_handler.clone());
+        builder.register_handler("list_mcp_resource_templates", mcp_resource_handler.clone());
+        builder.register_handler("read_mcp_resource", mcp_resource_handler);
+    }
+
+    push_tool_spec(
+        &mut builder,
+        PLAN_TOOL.clone(),
+        /*supports_parallel_tool_calls*/ false,
+        config.code_mode_enabled,
+    );
+    builder.register_handler("update_plan", plan_handler);
+
+    if config.js_repl_enabled {
+        push_tool_spec(
+            &mut builder,
+            create_js_repl_tool(),
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+        push_tool_spec(
+            &mut builder,
+            create_js_repl_reset_tool(),
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+        builder.register_handler("js_repl", js_repl_handler);
+        builder.register_handler("js_repl_reset", js_repl_reset_handler);
+    }
+
+    if config.request_user_input {
+        push_tool_spec(
+            &mut builder,
+            create_request_user_input_tool(request_user_input_tool_description(
+                config.default_mode_request_user_input,
+            )),
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+        builder.register_handler("request_user_input", request_user_input_handler);
+    }
+
+    if config.request_permissions_tool_enabled {
+        push_tool_spec(
+            &mut builder,
+            create_request_permissions_tool(request_permissions_tool_description()),
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+        builder.register_handler("request_permissions", request_permissions_handler);
+    }
+
+    if config.search_tool
+        && let Some(app_tools) = app_tools
+    {
+        let search_tool_handler = Arc::new(ToolSearchHandler::new(app_tools.clone()));
+        push_tool_spec(
+            &mut builder,
+            create_tool_search_tool(
+                &tool_search_app_infos(&app_tools),
+                TOOL_SEARCH_DEFAULT_LIMIT,
+            ),
+            /*supports_parallel_tool_calls*/ true,
+            config.code_mode_enabled,
+        );
+        builder.register_handler(TOOL_SEARCH_TOOL_NAME, search_tool_handler);
+
+        for tool in app_tools.values() {
+            let alias_name =
+                tool_handler_key(tool.tool_name.as_str(), Some(tool.tool_namespace.as_str()));
+            builder.register_handler(alias_name, mcp_handler.clone());
+        }
+    }
+
+    if config.tool_suggest
+        && let Some(discoverable_tools) = discoverable_tools
+            .as_ref()
+            .filter(|tools| !tools.is_empty())
+    {
+        builder.push_spec_with_parallel_support(
+            create_tool_suggest_tool(&tool_suggest_entries(discoverable_tools)),
+            /*supports_parallel_tool_calls*/ true,
+        );
+        builder.register_handler(TOOL_SUGGEST_TOOL_NAME, tool_suggest_handler);
+    }
+
+    if let Some(apply_patch_tool_type) = &config.apply_patch_tool_type {
+        match apply_patch_tool_type {
+            ApplyPatchToolType::Freeform => {
+                push_tool_spec(
+                    &mut builder,
+                    create_apply_patch_freeform_tool(),
+                    /*supports_parallel_tool_calls*/ false,
+                    config.code_mode_enabled,
+                );
+            }
+            ApplyPatchToolType::Function => {
+                push_tool_spec(
+                    &mut builder,
+                    create_apply_patch_json_tool(),
+                    /*supports_parallel_tool_calls*/ false,
+                    config.code_mode_enabled,
+                );
+            }
+        }
+        builder.register_handler("apply_patch", apply_patch_handler);
+    }
+
+    if config
+        .experimental_supported_tools
+        .iter()
+        .any(|tool| tool == "list_dir")
+    {
+        let list_dir_handler = Arc::new(ListDirHandler);
+        push_tool_spec(
+            &mut builder,
+            create_list_dir_tool(),
+            /*supports_parallel_tool_calls*/ true,
+            config.code_mode_enabled,
+        );
+        builder.register_handler("list_dir", list_dir_handler);
+    }
+
+    if config
+        .experimental_supported_tools
+        .contains(&"test_sync_tool".to_string())
+    {
+        let test_sync_handler = Arc::new(TestSyncHandler);
+        push_tool_spec(
+            &mut builder,
+            create_test_sync_tool(),
+            /*supports_parallel_tool_calls*/ true,
+            config.code_mode_enabled,
+        );
+        builder.register_handler("test_sync_tool", test_sync_handler);
+    }
+
+    let external_web_access = match config.web_search_mode {
+        Some(WebSearchMode::Cached) => Some(false),
+        Some(WebSearchMode::Live) => Some(true),
+        Some(WebSearchMode::Disabled) | None => None,
+    };
+
+    if let Some(external_web_access) = external_web_access {
+        let search_content_types = match config.web_search_tool_type {
+            WebSearchToolType::Text => None,
+            WebSearchToolType::TextAndImage => Some(
+                WEB_SEARCH_CONTENT_TYPES
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+            ),
+        };
+
+        push_tool_spec(
+            &mut builder,
+            ToolSpec::WebSearch {
+                external_web_access: Some(external_web_access),
+                filters: config
+                    .web_search_config
+                    .as_ref()
+                    .and_then(|cfg| cfg.filters.clone().map(Into::into)),
+                user_location: config
+                    .web_search_config
+                    .as_ref()
+                    .and_then(|cfg| cfg.user_location.clone().map(Into::into)),
+                search_context_size: config
+                    .web_search_config
+                    .as_ref()
+                    .and_then(|cfg| cfg.search_context_size),
+                search_content_types,
+            },
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+    }
+
+    if config.image_gen_tool {
+        push_tool_spec(
+            &mut builder,
+            ToolSpec::ImageGeneration {
+                output_format: "png".to_string(),
+            },
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+    }
+
+    push_tool_spec(
+        &mut builder,
+        create_view_image_tool(ViewImageToolOptions {
+            can_request_original_image_detail: config.can_request_original_image_detail,
+        }),
+        /*supports_parallel_tool_calls*/ true,
+        config.code_mode_enabled,
+    );
+    builder.register_handler("view_image", view_image_handler);
+
+    if config.collab_tools {
+        push_tool_spec(
+            &mut builder,
+            create_inspect_agent_progress_tool(),
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+        builder.register_handler(
+            "inspect_agent_progress",
+            Arc::new(InspectAgentProgressHandler),
+        );
+        push_tool_spec(
+            &mut builder,
+            create_wait_for_agent_progress_tool(),
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+        builder.register_handler(
+            "wait_for_agent_progress",
+            Arc::new(WaitForAgentProgressHandler),
+        );
+        if config.multi_agent_v2 {
+            if config.spawn_agent_tool {
+                push_tool_spec(
+                    &mut builder,
+                    create_spawn_agent_tool_v2(SpawnAgentToolOptions {
+                        available_models: &config.available_models,
+                        agent_type_description: crate::agent::role::spawn_tool_spec::build(
+                            &config.agent_roles,
+                        ),
+                    }),
+                    /*supports_parallel_tool_calls*/ false,
+                    config.code_mode_enabled,
+                );
+            }
+            push_tool_spec(
+                &mut builder,
+                create_send_message_tool(),
+                /*supports_parallel_tool_calls*/ false,
+                config.code_mode_enabled,
+            );
+            push_tool_spec(
+                &mut builder,
+                create_assign_task_tool(),
+                /*supports_parallel_tool_calls*/ false,
+                config.code_mode_enabled,
+            );
+            push_tool_spec(
+                &mut builder,
+                create_wait_agent_tool_v2(WaitAgentTimeoutOptions {
+                    default_timeout_ms: DEFAULT_WAIT_TIMEOUT_MS,
+                    min_timeout_ms: MIN_WAIT_TIMEOUT_MS,
+                    max_timeout_ms: MAX_WAIT_TIMEOUT_MS,
+                }),
+                /*supports_parallel_tool_calls*/ false,
+                config.code_mode_enabled,
+            );
+            push_tool_spec(
+                &mut builder,
+                create_close_agent_tool_v2(),
+                /*supports_parallel_tool_calls*/ false,
+                config.code_mode_enabled,
+            );
+            push_tool_spec(
+                &mut builder,
+                create_list_agents_tool(),
+                /*supports_parallel_tool_calls*/ false,
+                config.code_mode_enabled,
+            );
+            if config.spawn_agent_tool {
+                builder.register_handler("spawn_agent", Arc::new(SpawnAgentHandlerV2));
+            }
+            builder.register_handler("send_message", Arc::new(SendMessageHandlerV2));
+            builder.register_handler("assign_task", Arc::new(AssignTaskHandlerV2));
+            builder.register_handler("wait_agent", Arc::new(WaitAgentHandlerV2));
+            builder.register_handler("close_agent", Arc::new(CloseAgentHandlerV2));
+            builder.register_handler("list_agents", Arc::new(ListAgentsHandlerV2));
         } else {
-            builder.push_spec(spec.spec);
+            if config.spawn_agent_tool {
+                push_tool_spec(
+                    &mut builder,
+                    create_spawn_agent_tool_v1(SpawnAgentToolOptions {
+                        available_models: &config.available_models,
+                        agent_type_description: crate::agent::role::spawn_tool_spec::build(
+                            &config.agent_roles,
+                        ),
+                    }),
+                    /*supports_parallel_tool_calls*/ false,
+                    config.code_mode_enabled,
+                );
+            }
+            push_tool_spec(
+                &mut builder,
+                create_send_input_tool_v1(),
+                /*supports_parallel_tool_calls*/ false,
+                config.code_mode_enabled,
+            );
+            push_tool_spec(
+                &mut builder,
+                create_resume_agent_tool(),
+                /*supports_parallel_tool_calls*/ false,
+                config.code_mode_enabled,
+            );
+            builder.register_handler("resume_agent", Arc::new(ResumeAgentHandler));
+            push_tool_spec(
+                &mut builder,
+                create_wait_agent_tool_v1(WaitAgentTimeoutOptions {
+                    default_timeout_ms: DEFAULT_WAIT_TIMEOUT_MS,
+                    min_timeout_ms: MIN_WAIT_TIMEOUT_MS,
+                    max_timeout_ms: MAX_WAIT_TIMEOUT_MS,
+                }),
+                /*supports_parallel_tool_calls*/ false,
+                config.code_mode_enabled,
+            );
+            push_tool_spec(
+                &mut builder,
+                create_close_agent_tool_v1(),
+                /*supports_parallel_tool_calls*/ false,
+                config.code_mode_enabled,
+            );
+            if config.spawn_agent_tool {
+                builder.register_handler("spawn_agent", Arc::new(SpawnAgentHandler));
+            }
+            builder.register_handler("send_input", Arc::new(SendInputHandler));
+            builder.register_handler("wait_agent", Arc::new(WaitAgentHandler));
+            builder.register_handler("close_agent", Arc::new(CloseAgentHandler));
         }
     }
 

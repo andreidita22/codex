@@ -5,10 +5,24 @@ use crate::codex::make_session_and_context;
 use crate::config::DEFAULT_AGENT_MAX_DEPTH;
 use crate::function_tool::FunctionCallError;
 use crate::session_prefix::format_subagent_notification_message;
+use crate::protocol::AgentReasoningEvent;
+use crate::protocol::AgentStatus;
+use crate::protocol::AskForApproval;
+use crate::protocol::EventMsg;
+use crate::protocol::FileSystemSandboxPolicy;
+use crate::protocol::NetworkSandboxPolicy;
+use crate::protocol::Op;
+use crate::protocol::SandboxPolicy;
+use crate::protocol::SessionSource;
+use crate::protocol::SubAgentSource;
+use crate::protocol::TurnCompleteEvent;
 use crate::state::TaskKind;
 use crate::tasks::SessionTask;
 use crate::tasks::SessionTaskContext;
 use crate::tools::context::ToolOutput;
+use crate::tools::handlers::InspectAgentProgressHandler;
+use crate::tools::handlers::WaitForAgentProgressHandler;
+use crate::tools::handlers::multi_agents_v2::AssignTaskHandler as AssignTaskHandlerV2;
 use crate::tools::handlers::multi_agents_v2::CloseAgentHandler as CloseAgentHandlerV2;
 use crate::tools::handlers::multi_agents_v2::FollowupTaskHandler as FollowupTaskHandlerV2;
 use crate::tools::handlers::multi_agents_v2::ListAgentsHandler as ListAgentsHandlerV2;
@@ -53,6 +67,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
+use tokio::time::sleep;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
@@ -1037,6 +1052,205 @@ async fn multi_agent_v2_list_agents_filters_by_relative_path_prefix() {
     assert_eq!(result.agents.len(), 1);
     assert_eq!(result.agents[0].agent_name, worker_path.as_str());
     assert_eq!(result.agents[0].last_task_message.as_deref(), Some("build"));
+}
+
+#[tokio::test]
+async fn inspect_agent_progress_reports_reasoning_phase_for_live_subagent() {
+    let (mut session, mut turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.conversation_id = root.thread_id;
+    let mut config = (*turn.config).clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    turn.config = Arc::new(config);
+
+    let session = Arc::new(session);
+    let turn = Arc::new(turn);
+    let spawn_output = SpawnAgentHandlerV2
+        .handle(invocation(
+            session.clone(),
+            turn.clone(),
+            "spawn_agent",
+            function_payload(json!({
+                "message": "inspect this repo",
+                "task_name": "worker"
+            })),
+        ))
+        .await
+        .expect("spawn_agent should succeed");
+    let _ = expect_text_output(spawn_output);
+
+    let agent_id = session
+        .services
+        .agent_control
+        .resolve_agent_reference(session.conversation_id, &turn.session_source, "worker")
+        .await
+        .expect("worker path should resolve");
+    let child_thread = manager
+        .get_thread(agent_id)
+        .await
+        .expect("child thread should exist");
+    let child_turn = child_thread.codex.session.new_default_turn().await;
+    child_thread
+        .codex
+        .session
+        .send_event(
+            child_turn.as_ref(),
+            EventMsg::TurnStarted(crate::protocol::TurnStartedEvent {
+                turn_id: child_turn.sub_id.clone(),
+                model_context_window: Some(256_000),
+                collaboration_mode_kind: Default::default(),
+            }),
+        )
+        .await;
+    child_thread
+        .codex
+        .session
+        .send_event(
+            child_turn.as_ref(),
+            EventMsg::AgentReasoning(AgentReasoningEvent {
+                text: "scanning repo structure".to_string(),
+            }),
+        )
+        .await;
+
+    let output = InspectAgentProgressHandler
+        .handle(invocation(
+            session,
+            turn,
+            "inspect_agent_progress",
+            function_payload(json!({
+                "target": "worker",
+                "stalled_after_ms": 60_000
+            })),
+        ))
+        .await
+        .expect("inspect_agent_progress should succeed");
+    let (content, success) = expect_text_output(output);
+    let result: serde_json::Value =
+        serde_json::from_str(&content).expect("inspect_agent_progress result should be json");
+
+    assert_eq!(result["canonical_target"]["task_name"], "/root/worker");
+    assert!(result["canonical_target"]["nickname"].is_string());
+    assert_eq!(result["lifecycle_status"], json!("running"));
+    assert_eq!(result["phase"], json!("reasoning"));
+    assert_eq!(
+        result["active_work"],
+        json!({
+            "kind": "reasoning",
+            "label": "scanning repo structure"
+        })
+    );
+    assert_eq!(
+        result["recent_updates"],
+        json!(["turn started", "reasoning: scanning repo structure"])
+    );
+    assert_eq!(result["ever_entered_turn"], json!(true));
+    assert_eq!(result["ever_reported_progress"], json!(true));
+    assert_eq!(result["seq"], json!(1));
+    assert_eq!(result["stalled"], json!(false));
+    assert_eq!(success, Some(true));
+}
+
+#[tokio::test]
+async fn wait_for_agent_progress_returns_on_material_progress() {
+    let (mut session, mut turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.conversation_id = root.thread_id;
+    let mut config = (*turn.config).clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    turn.config = Arc::new(config);
+
+    let session = Arc::new(session);
+    let turn = Arc::new(turn);
+    let spawn_output = SpawnAgentHandlerV2
+        .handle(invocation(
+            session.clone(),
+            turn.clone(),
+            "spawn_agent",
+            function_payload(json!({
+                "message": "inspect this repo",
+                "task_name": "worker"
+            })),
+        ))
+        .await
+        .expect("spawn_agent should succeed");
+    let _ = expect_text_output(spawn_output);
+
+    let agent_id = session
+        .services
+        .agent_control
+        .resolve_agent_reference(session.conversation_id, &turn.session_source, "worker")
+        .await
+        .expect("worker path should resolve");
+    let child_thread = manager
+        .get_thread(agent_id)
+        .await
+        .expect("child thread should exist");
+    let child_turn = child_thread.codex.session.new_default_turn().await;
+    child_thread
+        .codex
+        .session
+        .send_event(
+            child_turn.as_ref(),
+            EventMsg::TurnStarted(crate::protocol::TurnStartedEvent {
+                turn_id: child_turn.sub_id.clone(),
+                model_context_window: Some(256_000),
+                collaboration_mode_kind: Default::default(),
+            }),
+        )
+        .await;
+
+    let worker = Arc::clone(&child_thread);
+    let worker_turn = Arc::clone(&child_turn);
+    tokio::spawn(async move {
+        sleep(Duration::from_millis(20)).await;
+        worker
+            .codex
+            .session
+            .send_event(
+                worker_turn.as_ref(),
+                EventMsg::AgentReasoning(AgentReasoningEvent {
+                    text: "scanning repo structure".to_string(),
+                }),
+            )
+            .await;
+    });
+
+    let output = WaitForAgentProgressHandler
+        .handle(invocation(
+            session,
+            turn,
+            "wait_for_agent_progress",
+            function_payload(json!({
+                "target": "worker",
+                "timeout_ms": 10_000,
+                "until_phases": ["waiting_approval", "waiting_user_input", "completed", "errored"]
+            })),
+        ))
+        .await
+        .expect("wait_for_agent_progress should succeed");
+    let (content, success) = expect_text_output(output);
+    let result: serde_json::Value =
+        serde_json::from_str(&content).expect("wait_for_agent_progress result should be json");
+
+    assert_eq!(result["canonical_target"]["task_name"], "/root/worker");
+    assert_eq!(result["timed_out"], json!(false));
+    assert_eq!(result["match_reason"], json!("seq_advanced"));
+    assert_eq!(result["phase"], json!("reasoning"));
+    assert_eq!(result["ever_entered_turn"], json!(true));
+    assert_eq!(result["ever_reported_progress"], json!(true));
+    assert_eq!(result["seq"], json!(1));
+    assert_eq!(success, Some(true));
 }
 
 #[tokio::test]

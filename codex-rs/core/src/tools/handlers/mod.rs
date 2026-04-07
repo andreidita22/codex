@@ -1,5 +1,6 @@
 pub(crate) mod agent_jobs;
-pub(crate) mod apply_patch;
+mod agent_progress;
+pub mod apply_patch;
 mod dynamic;
 mod js_repl;
 mod list_dir;
@@ -32,6 +33,8 @@ use crate::function_tool::FunctionCallError;
 use crate::sandboxing::SandboxPermissions;
 pub(crate) use crate::tools::code_mode::CodeModeExecuteHandler;
 pub(crate) use crate::tools::code_mode::CodeModeWaitHandler;
+pub(crate) use agent_progress::InspectAgentProgressHandler;
+pub(crate) use agent_progress::WaitForAgentProgressHandler;
 pub use apply_patch::ApplyPatchHandler;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;

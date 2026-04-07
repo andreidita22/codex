@@ -1,4 +1,6 @@
 use crate::agent::AgentStatus;
+use crate::agent::progress::AgentProgressPhase;
+use crate::agent::progress::AgentProgressSnapshot;
 use crate::agent::registry::AgentMetadata;
 use crate::agent::registry::AgentRegistry;
 use crate::agent::role::DEFAULT_ROLE_NAME;
@@ -21,6 +23,7 @@ use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::Op;
@@ -36,6 +39,7 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Weak;
+use std::time::Duration;
 use tokio::sync::watch;
 use tracing::warn;
 
@@ -252,6 +256,7 @@ impl AgentControl {
         };
         agent_metadata.agent_id = Some(new_thread.thread_id);
         reservation.commit(agent_metadata.clone());
+        self.seed_agent_progress(new_thread.thread_id);
 
         if let Some(SessionSource::SubAgent(
             subagent_source @ SubAgentSource::ThreadSpawn {
@@ -557,6 +562,7 @@ impl AgentControl {
         let mut agent_metadata = agent_metadata;
         agent_metadata.agent_id = Some(resumed_thread.thread_id);
         reservation.commit(agent_metadata.clone());
+        self.seed_agent_progress(resumed_thread.thread_id);
         // Resumed threads are re-registered in-memory and need the same listener
         // attachment path as freshly spawned threads.
         state.notify_thread_created(resumed_thread.thread_id);
@@ -790,6 +796,15 @@ impl AgentControl {
         Ok(thread.subscribe_status())
     }
 
+    pub(crate) async fn subscribe_progress_seq(
+        &self,
+        agent_id: ThreadId,
+    ) -> CodexResult<watch::Receiver<u64>> {
+        let state = self.upgrade()?;
+        let _thread = state.get_thread(agent_id).await?;
+        Ok(state.progress_registry.subscribe_seq(agent_id))
+    }
+
     pub(crate) async fn get_total_token_usage(&self, agent_id: ThreadId) -> Option<TokenUsage> {
         let Ok(state) = self.upgrade() else {
             return None;
@@ -798,6 +813,51 @@ impl AgentControl {
             return None;
         };
         thread.total_token_usage().await
+    }
+
+    pub(crate) fn record_progress_event(&self, agent_id: ThreadId, event: &EventMsg) {
+        let Ok(state) = self.upgrade() else {
+            return;
+        };
+        state.progress_registry.record_event(agent_id, event);
+    }
+
+    pub(crate) fn seed_agent_progress(&self, agent_id: ThreadId) {
+        let Ok(state) = self.upgrade() else {
+            return;
+        };
+        state.progress_registry.seed(agent_id);
+    }
+
+    pub(crate) async fn inspect_agent_progress(
+        &self,
+        agent_id: ThreadId,
+        stalled_after: Duration,
+    ) -> AgentProgressSnapshot {
+        let Ok(state) = self.upgrade() else {
+            return AgentProgressSnapshot {
+                lifecycle_status: AgentStatus::NotFound,
+                phase: AgentProgressPhase::Pending,
+                blocked_on: None,
+                active_work: None,
+                recent_updates: Vec::new(),
+                latest_visible_message: None,
+                final_message: None,
+                error_message: None,
+                ever_entered_turn: false,
+                ever_reported_progress: false,
+                last_progress_age_ms: None,
+                seq: 0,
+                stalled: false,
+            };
+        };
+        let lifecycle_status = match state.get_thread(agent_id).await {
+            Ok(thread) => thread.agent_status().await,
+            Err(_) => AgentStatus::NotFound,
+        };
+        state
+            .progress_registry
+            .inspect(agent_id, lifecycle_status, stalled_after)
     }
 
     pub(crate) async fn format_environment_context_subagents(
