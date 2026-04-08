@@ -124,7 +124,12 @@ fn split_previous_memory_and_source_items(
         if let Some(payload) = extract_thread_memory_payload(item) {
             match serde_json::from_str::<Value>(&payload) {
                 Ok(memory) => {
-                    let source_items = input.iter().skip(index + 1).cloned().collect();
+                    let source_items = input
+                        .iter()
+                        .skip(index + 1)
+                        .filter(|item| should_include_delta_source_item(item))
+                        .cloned()
+                        .collect();
                     return (Some(memory), source_items);
                 }
                 Err(err) => {
@@ -135,6 +140,29 @@ fn split_previous_memory_and_source_items(
     }
 
     (None, input.to_vec())
+}
+
+fn should_include_delta_source_item(item: &ResponseItem) -> bool {
+    match item {
+        ResponseItem::Compaction { .. } | ResponseItem::GhostSnapshot { .. } => false,
+        ResponseItem::Message { role, content, .. } if role == "developer" => {
+            let Some(text) = crate::compact::content_items_to_text(content) else {
+                return true;
+            };
+
+            extract_tagged_payload(&text, THREAD_MEMORY_TAG).is_none()
+                && extract_tagged_payload(&text, "continuation_bridge").is_none()
+        }
+        ResponseItem::Message { role, content, .. } if role == "user" => {
+            let Some(text) = crate::compact::content_items_to_text(content) else {
+                return true;
+            };
+            !text
+                .trim_start()
+                .starts_with(crate::compact::SUMMARY_PREFIX.trim_end())
+        }
+        _ => true,
+    }
 }
 
 fn limit_source_items(source_items: Vec<ResponseItem>) -> (Vec<ResponseItem>, usize) {
@@ -276,6 +304,7 @@ mod tests {
     use super::extract_tagged_payload;
     use super::output_schema;
     use super::parse_thread_memory_response;
+    use super::should_include_delta_source_item;
     use super::split_previous_memory_and_source_items;
     use super::thread_memory_response_item;
     use codex_protocol::models::ContentItem;
@@ -302,6 +331,30 @@ mod tests {
                 text: format!(
                     "<{THREAD_MEMORY_TAG} schema=\"{SCHEMA}\">\n{memory_json}\n</{THREAD_MEMORY_TAG}>"
                 ),
+            }],
+            end_turn: None,
+            phase: None,
+        }
+    }
+
+    fn continuation_bridge_item() -> ResponseItem {
+        ResponseItem::Message {
+            id: None,
+            role: "developer".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "<continuation_bridge schema=\"continuation_bridge_baton_v1\">\n{}\n</continuation_bridge>".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        }
+    }
+
+    fn compaction_summary_item() -> ResponseItem {
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: format!("{}\nsummary", crate::compact::SUMMARY_PREFIX.trim_end()),
             }],
             end_turn: None,
             phase: None,
@@ -362,6 +415,102 @@ mod tests {
             }))
         );
         assert_eq!(source_items, vec![user_message("delta two")]);
+    }
+
+    #[test]
+    fn split_previous_memory_ignores_prior_compaction_artifacts_after_marker() {
+        let prior_memory = serde_json::json!({
+            "schema": SCHEMA,
+            "thread": { "compaction_epoch": 2 }
+        })
+        .to_string();
+        let input = vec![
+            thread_memory_item(&prior_memory),
+            continuation_bridge_item(),
+            compaction_summary_item(),
+            ResponseItem::Compaction {
+                encrypted_content: "encrypted".to_string(),
+            },
+        ];
+
+        let (previous, source_items) = split_previous_memory_and_source_items(&input);
+
+        assert_eq!(
+            previous,
+            Some(serde_json::json!({
+                "schema": SCHEMA,
+                "thread": { "compaction_epoch": 2 }
+            }))
+        );
+        assert_eq!(source_items, Vec::<ResponseItem>::new());
+    }
+
+    #[test]
+    fn split_previous_memory_keeps_real_delta_after_compaction_artifacts() {
+        let prior_memory = serde_json::json!({
+            "schema": SCHEMA,
+            "thread": { "compaction_epoch": 3 }
+        })
+        .to_string();
+        let input = vec![
+            thread_memory_item(&prior_memory),
+            continuation_bridge_item(),
+            compaction_summary_item(),
+            ResponseItem::Compaction {
+                encrypted_content: "encrypted".to_string(),
+            },
+            user_message("new user request"),
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "new assistant reply".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+        ];
+
+        let (previous, source_items) = split_previous_memory_and_source_items(&input);
+
+        assert_eq!(
+            previous,
+            Some(serde_json::json!({
+                "schema": SCHEMA,
+                "thread": { "compaction_epoch": 3 }
+            }))
+        );
+        assert_eq!(
+            source_items,
+            vec![
+                user_message("new user request"),
+                ResponseItem::Message {
+                    id: None,
+                    role: "assistant".to_string(),
+                    content: vec![ContentItem::OutputText {
+                        text: "new assistant reply".to_string(),
+                    }],
+                    end_turn: None,
+                    phase: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn delta_source_filter_drops_compaction_summary_and_bridge_artifacts() {
+        assert!(!should_include_delta_source_item(
+            &continuation_bridge_item()
+        ));
+        assert!(!should_include_delta_source_item(&compaction_summary_item()));
+        assert!(!should_include_delta_source_item(
+            &ResponseItem::Compaction {
+                encrypted_content: "encrypted".to_string(),
+            }
+        ));
+        assert!(should_include_delta_source_item(&user_message(
+            "actual delta"
+        )));
     }
 
     #[test]
