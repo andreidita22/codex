@@ -1014,6 +1014,10 @@ impl TurnContext {
         )
     }
 
+    pub(crate) fn governance_path_variant(&self) -> crate::config::GovernancePathVariant {
+        self.config.governance_path_variant.unwrap_or_default()
+    }
+
     pub(crate) fn to_turn_context_item(&self) -> TurnContextItem {
         TurnContextItem {
             turn_id: Some(self.sub_id.clone()),

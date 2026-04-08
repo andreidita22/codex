@@ -63,8 +63,9 @@ This fork now includes strict-governance packet scaffolding behind a config gate
 - `governance_path_variant = "strict_v1_shadow"`
 - `governance_path_variant = "strict_v1_enforce"`
 
-`strict_v1_shadow` and `strict_v1_enforce` currently only configure packet/compiler scaffolding.
-They do not switch core runtime behavior yet.
+`strict_v1_shadow` and `strict_v1_enforce` now also enable a pre-compaction ODEU thread-memory
+artifact that is generated as a structured `developer` message and inserted into replacement
+history alongside the continuation bridge.
 
 ## JSON Schema
 

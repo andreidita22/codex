@@ -8,6 +8,7 @@ use crate::codex::built_tools;
 use crate::compact::InitialContextInjection;
 use crate::compact::insert_initial_context_before_last_real_user_or_summary;
 use crate::compact::insert_items_before_last_summary_or_compaction;
+use crate::config::GovernancePathVariant;
 use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
 use crate::context_manager::estimate_response_item_model_visible_bytes;
@@ -15,6 +16,7 @@ use crate::context_manager::is_codex_generated_item;
 use crate::continuation_bridge::generate_continuation_bridge_item;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
+use crate::governance::thread_memory::generate_thread_memory_item;
 use crate::protocol::CompactedItem;
 use crate::protocol::EventMsg;
 use crate::protocol::TurnStartedEvent;
@@ -116,6 +118,24 @@ async fn run_remote_compact_task_inner_impl(
         personality: turn_context.personality,
         output_schema: None,
     };
+    let thread_memory_item = if turn_context.governance_path_variant() == GovernancePathVariant::Off
+    {
+        None
+    } else {
+        match generate_thread_memory_item(
+            sess.as_ref(),
+            turn_context.as_ref(),
+            prompt.input.clone(),
+        )
+        .await
+        {
+            Ok(item) => item,
+            Err(err) => {
+                warn!("failed generating thread memory before remote compaction: {err}");
+                None
+            }
+        }
+    };
     let continuation_bridge_item = match generate_continuation_bridge_item(
         sess.as_ref(),
         turn_context.as_ref(),
@@ -160,11 +180,13 @@ async fn run_remote_compact_task_inner_impl(
         initial_context_injection,
     )
     .await;
-    if let Some(continuation_bridge_item) = continuation_bridge_item {
-        new_history = insert_items_before_last_summary_or_compaction(
-            new_history,
-            vec![continuation_bridge_item],
-        );
+    let authoritative_items: Vec<_> = thread_memory_item
+        .into_iter()
+        .chain(continuation_bridge_item)
+        .collect();
+    if !authoritative_items.is_empty() {
+        new_history =
+            insert_items_before_last_summary_or_compaction(new_history, authoritative_items);
     }
 
     if !ghost_snapshots.is_empty() {

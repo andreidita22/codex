@@ -1,0 +1,417 @@
+{
+  "type": "object",
+  "properties": {
+    "schema": {
+      "type": "string",
+      "enum": ["odeu_thread_memory_v1"]
+    },
+    "thread": {
+      "type": "object",
+      "properties": {
+        "thread_id": { "type": "string" },
+        "title": { "type": "string" },
+        "status": { "type": "string" },
+        "compaction_epoch": { "type": "integer", "minimum": 0 },
+        "source_turn_range": {
+          "type": "object",
+          "properties": {
+            "from": { "type": "integer", "minimum": 0 },
+            "to": { "type": "integer", "minimum": 0 }
+          },
+          "required": ["from", "to"],
+          "additionalProperties": false
+        },
+        "previous_memory_hash": { "type": ["string", "null"] }
+      },
+      "required": [
+        "thread_id",
+        "title",
+        "status",
+        "compaction_epoch",
+        "source_turn_range",
+        "previous_memory_hash"
+      ],
+      "additionalProperties": false
+    },
+    "thread_odeu": {
+      "type": "object",
+      "properties": {
+        "o": {
+          "type": "object",
+          "properties": {
+            "project": { "type": "string" },
+            "domain": { "type": "string" },
+            "active_contexts": { "type": "array", "items": { "type": "string" } }
+          },
+          "required": ["project", "domain", "active_contexts"],
+          "additionalProperties": false
+        },
+        "e": {
+          "type": "object",
+          "properties": {
+            "source_priority": { "type": "array", "items": { "type": "string" } },
+            "standing_uncertainties": { "type": "array", "items": { "type": "string" } }
+          },
+          "required": ["source_priority", "standing_uncertainties"],
+          "additionalProperties": false
+        },
+        "d": {
+          "type": "object",
+          "properties": {
+            "global_constraints": { "type": "array", "items": { "type": "string" } },
+            "global_non_goals": { "type": "array", "items": { "type": "string" } }
+          },
+          "required": ["global_constraints", "global_non_goals"],
+          "additionalProperties": false
+        },
+        "u": {
+          "type": "object",
+          "properties": {
+            "global_objectives": { "type": "array", "items": { "type": "string" } },
+            "global_pain_points": { "type": "array", "items": { "type": "string" } }
+          },
+          "required": ["global_objectives", "global_pain_points"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["o", "e", "d", "u"],
+      "additionalProperties": false
+    },
+    "routing": {
+      "type": "object",
+      "properties": {
+        "active_subject_ids": { "type": "array", "items": { "type": "string" } },
+        "recent_subject_ids": { "type": "array", "items": { "type": "string" } },
+        "continuation_mode": { "type": "string" },
+        "subject_switches": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": [
+        "active_subject_ids",
+        "recent_subject_ids",
+        "continuation_mode",
+        "subject_switches"
+      ],
+      "additionalProperties": false
+    },
+    "subjects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "subject_id": { "type": "string" },
+          "label": { "type": "string" },
+          "kind": { "type": "string" },
+          "status": { "type": "string" },
+          "introduced_at_turn": { "type": "integer", "minimum": 0 },
+          "last_touched_turn": { "type": "integer", "minimum": 0 },
+          "routing_cues": { "type": "array", "items": { "type": "string" } },
+          "anchor_summary": { "type": "string" },
+          "o": {
+            "type": "object",
+            "properties": {
+              "entities": { "type": "array", "items": { "type": "string" } },
+              "artifacts": { "type": "array", "items": { "type": "string" } },
+              "states": { "type": "array", "items": { "type": "string" } },
+              "boundaries": { "type": "array", "items": { "type": "string" } },
+              "subsubjects": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["entities", "artifacts", "states", "boundaries", "subsubjects"],
+            "additionalProperties": false
+          },
+          "e": {
+            "type": "object",
+            "properties": {
+              "established": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "claim": { "type": "string" },
+                    "strength": { "type": "string" },
+                    "source_turns": { "type": "array", "items": { "type": "integer" } },
+                    "witness_refs": { "type": "array", "items": { "type": "string" } }
+                  },
+                  "required": ["id", "claim", "strength", "source_turns", "witness_refs"],
+                  "additionalProperties": false
+                }
+              },
+              "uncertainties": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "kind": { "type": "string" },
+                    "description": { "type": "string" },
+                    "blocking": { "type": "boolean" },
+                    "source_turns": { "type": "array", "items": { "type": "integer" } }
+                  },
+                  "required": ["id", "kind", "description", "blocking", "source_turns"],
+                  "additionalProperties": false
+                }
+              },
+              "witnesses": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "type": { "type": "string" },
+                    "description": { "type": "string" },
+                    "freshness": { "type": "string" },
+                    "source_turns": { "type": "array", "items": { "type": "integer" } }
+                  },
+                  "required": ["id", "type", "description", "freshness", "source_turns"],
+                  "additionalProperties": false
+                }
+              },
+              "decision_rules": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["established", "uncertainties", "witnesses", "decision_rules"],
+            "additionalProperties": false
+          },
+          "d": {
+            "type": "object",
+            "properties": {
+              "active_constraints": { "type": "array", "items": { "type": "string" } },
+              "forbidden_moves": { "type": "array", "items": { "type": "string" } },
+              "required_sequence": { "type": "array", "items": { "type": "string" } },
+              "accepted_protocols": { "type": "array", "items": { "type": "string" } },
+              "completion_conditions": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": [
+              "active_constraints",
+              "forbidden_moves",
+              "required_sequence",
+              "accepted_protocols",
+              "completion_conditions"
+            ],
+            "additionalProperties": false
+          },
+          "u": {
+            "type": "object",
+            "properties": {
+              "user_goals": { "type": "array", "items": { "type": "string" } },
+              "success_criteria": { "type": "array", "items": { "type": "string" } },
+              "pain_points": { "type": "array", "items": { "type": "string" } },
+              "optimization_targets": { "type": "array", "items": { "type": "string" } },
+              "non_goals": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": [
+              "user_goals",
+              "success_criteria",
+              "pain_points",
+              "optimization_targets",
+              "non_goals"
+            ],
+            "additionalProperties": false
+          },
+          "inferential_state": {
+            "type": "object",
+            "properties": {
+              "accepted_claims": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "text": { "type": "string" },
+                    "source_turns": { "type": "array", "items": { "type": "integer" } },
+                    "depends_on": { "type": "array", "items": { "type": "string" } }
+                  },
+                  "required": ["id", "text", "source_turns", "depends_on"],
+                  "additionalProperties": false
+                }
+              },
+              "open_questions": { "type": "array", "items": { "type": "string" } },
+              "rejected_paths": { "type": "array", "items": { "type": "string" } },
+              "next_decisions": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": [
+              "accepted_claims",
+              "open_questions",
+              "rejected_paths",
+              "next_decisions"
+            ],
+            "additionalProperties": false
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "kind": { "type": "string" },
+                "status": { "type": "string" },
+                "source_turns": { "type": "array", "items": { "type": "integer" } }
+              },
+              "required": ["name", "kind", "status", "source_turns"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "subject_id",
+          "label",
+          "kind",
+          "status",
+          "introduced_at_turn",
+          "last_touched_turn",
+          "routing_cues",
+          "anchor_summary",
+          "o",
+          "e",
+          "d",
+          "u",
+          "inferential_state",
+          "artifacts"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "continuity": {
+      "type": "object",
+      "properties": {
+        "open_loops": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "subject_id": { "type": "string" },
+              "description": { "type": "string" },
+              "status": { "type": "string" },
+              "needed_for_continuation": { "type": "boolean" }
+            },
+            "required": ["id", "subject_id", "description", "status", "needed_for_continuation"],
+            "additionalProperties": false
+          }
+        },
+        "latest_decisions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "subject_id": { "type": "string" },
+              "decision": { "type": "string" },
+              "status": { "type": "string" },
+              "source_turns": { "type": "array", "items": { "type": "integer" } }
+            },
+            "required": ["id", "subject_id", "decision", "status", "source_turns"],
+            "additionalProperties": false
+          }
+        },
+        "active_blockers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "subject_id": { "type": "string" },
+              "kind": { "type": "string" },
+              "description": { "type": "string" }
+            },
+            "required": ["subject_id", "kind", "description"],
+            "additionalProperties": false
+          }
+        },
+        "next_expected_moves": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["open_loops", "latest_decisions", "active_blockers", "next_expected_moves"],
+      "additionalProperties": false
+    },
+    "recent_delta": {
+      "type": "object",
+      "properties": {
+        "since_turn": { "type": "integer", "minimum": 0 },
+        "new_subject_ids": { "type": "array", "items": { "type": "string" } },
+        "updated_subject_ids": { "type": "array", "items": { "type": "string" } },
+        "closed_subject_ids": { "type": "array", "items": { "type": "string" } },
+        "new_artifacts": { "type": "array", "items": { "type": "string" } },
+        "new_decisions": { "type": "array", "items": { "type": "string" } },
+        "resolved_uncertainties": { "type": "array", "items": { "type": "string" } },
+        "new_uncertainties": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": [
+        "since_turn",
+        "new_subject_ids",
+        "updated_subject_ids",
+        "closed_subject_ids",
+        "new_artifacts",
+        "new_decisions",
+        "resolved_uncertainties",
+        "new_uncertainties"
+      ],
+      "additionalProperties": false
+    },
+    "turn_projection": {
+      "type": "object",
+      "properties": {
+        "clusters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "cluster_id": { "type": "string" },
+              "turn_range": {
+                "type": "object",
+                "properties": {
+                  "from": { "type": "integer", "minimum": 0 },
+                  "to": { "type": "integer", "minimum": 0 }
+                },
+                "required": ["from", "to"],
+                "additionalProperties": false
+              },
+              "primary_subject_ids": { "type": "array", "items": { "type": "string" } },
+              "event_types": { "type": "array", "items": { "type": "string" } },
+              "odeu_delta": {
+                "type": "object",
+                "properties": {
+                  "o": { "type": "array", "items": { "type": "string" } },
+                  "e": { "type": "array", "items": { "type": "string" } },
+                  "d": { "type": "array", "items": { "type": "string" } },
+                  "u": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["o", "e", "d", "u"],
+                "additionalProperties": false
+              },
+              "result_summary": { "type": "string" }
+            },
+            "required": [
+              "cluster_id",
+              "turn_range",
+              "primary_subject_ids",
+              "event_types",
+              "odeu_delta",
+              "result_summary"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "raw_retention_window": {
+          "type": "object",
+          "properties": {
+            "last_user_turns": { "type": "integer", "minimum": 0 },
+            "last_assistant_turns": { "type": "integer", "minimum": 0 }
+          },
+          "required": ["last_user_turns", "last_assistant_turns"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["clusters", "raw_retention_window"],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema",
+    "thread",
+    "thread_odeu",
+    "routing",
+    "subjects",
+    "continuity",
+    "recent_delta",
+    "turn_projection"
+  ],
+  "additionalProperties": false
+}
