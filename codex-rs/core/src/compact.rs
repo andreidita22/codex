@@ -8,7 +8,9 @@ use crate::codex::PreviousTurnSettings;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::codex::get_last_assistant_message_from_turn;
+use crate::config::GovernancePathVariant;
 use crate::continuation_bridge::generate_continuation_bridge_item;
+use crate::governance::thread_memory::generate_thread_memory_item;
 use crate::util::backoff;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_protocol::error::CodexErr;
@@ -102,12 +104,31 @@ async fn run_compact_task_inner(
     let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
 
     let mut history = sess.clone_history().await;
+    let history_for_artifacts = history
+        .clone()
+        .for_prompt(&turn_context.model_info.input_modalities);
+    let thread_memory_item = if turn_context.governance_path_variant() == GovernancePathVariant::Off
+    {
+        None
+    } else {
+        match generate_thread_memory_item(
+            &sess,
+            turn_context.as_ref(),
+            history_for_artifacts.clone(),
+        )
+        .await
+        {
+            Ok(item) => item,
+            Err(err) => {
+                warn!("failed generating thread memory before local compaction: {err}");
+                None
+            }
+        }
+    };
     let continuation_bridge_item = match generate_continuation_bridge_item(
         &sess,
         turn_context.as_ref(),
-        history
-            .clone()
-            .for_prompt(&turn_context.model_info.input_modalities),
+        history_for_artifacts,
     )
     .await
     {
@@ -222,11 +243,16 @@ async fn run_compact_task_inner(
         new_history =
             insert_initial_context_before_last_real_user_or_summary(new_history, initial_context);
     }
+    let mut authoritative_items = Vec::new();
+    if let Some(thread_memory_item) = thread_memory_item {
+        authoritative_items.push(thread_memory_item);
+    }
     if let Some(continuation_bridge_item) = continuation_bridge_item {
-        new_history = insert_items_before_last_summary_or_compaction(
-            new_history,
-            vec![continuation_bridge_item],
-        );
+        authoritative_items.push(continuation_bridge_item);
+    }
+    if !authoritative_items.is_empty() {
+        new_history =
+            insert_items_before_last_summary_or_compaction(new_history, authoritative_items);
     }
     let ghost_snapshots: Vec<ResponseItem> = history_items
         .iter()
