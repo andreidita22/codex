@@ -126,21 +126,21 @@ pub fn compile_packets(
                 };
                 if packet_id.trim().is_empty() {
                     return Err(GovernanceCompileError::InvalidPacketIdentity {
-                        packet_id: packet_id.clone(),
+                        packet_id,
                         source_id,
                         reason: "packet_id must be non-empty".to_string(),
                     });
                 }
                 if content_hash.trim().is_empty() {
                     return Err(GovernanceCompileError::InvalidPacketIdentity {
-                        packet_id: packet_id.clone(),
+                        packet_id,
                         source_id,
                         reason: "content_hash must be non-empty".to_string(),
                     });
                 }
                 if schema.trim().is_empty() {
                     return Err(GovernanceCompileError::InvalidPacketIdentity {
-                        packet_id: packet_id.clone(),
+                        packet_id,
                         source_id,
                         reason: "schema must be non-empty".to_string(),
                     });
