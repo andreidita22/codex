@@ -3324,6 +3324,28 @@ fn loads_continuation_bridge_variant_model_and_reasoning() -> std::io::Result<()
 }
 
 #[test]
+fn loads_governance_path_variant() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cfg = ConfigToml {
+        governance_path_variant: Some(GovernancePathVariant::StrictV1Shadow),
+        ..Default::default()
+    };
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(
+        config.governance_path_variant,
+        Some(GovernancePathVariant::StrictV1Shadow)
+    );
+
+    Ok(())
+}
+
+#[test]
 fn load_config_rejects_missing_agent_role_config_file() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let missing_path = codex_home.path().join("agents").join("researcher.toml");
@@ -4595,6 +4617,7 @@ fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             continuation_bridge_variant: None,
             continuation_bridge_model: None,
             continuation_bridge_reasoning_effort: None,
+            governance_path_variant: None,
             commit_attribution: None,
             forced_chatgpt_workspace_id: None,
             forced_login_method: None,
@@ -4741,6 +4764,7 @@ fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         continuation_bridge_variant: None,
         continuation_bridge_model: None,
         continuation_bridge_reasoning_effort: None,
+        governance_path_variant: None,
         commit_attribution: None,
         forced_chatgpt_workspace_id: None,
         forced_login_method: None,
@@ -4885,6 +4909,7 @@ fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         continuation_bridge_variant: None,
         continuation_bridge_model: None,
         continuation_bridge_reasoning_effort: None,
+        governance_path_variant: None,
         commit_attribution: None,
         forced_chatgpt_workspace_id: None,
         forced_login_method: None,
@@ -5015,6 +5040,7 @@ fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         continuation_bridge_variant: None,
         continuation_bridge_model: None,
         continuation_bridge_reasoning_effort: None,
+        governance_path_variant: None,
         commit_attribution: None,
         forced_chatgpt_workspace_id: None,
         forced_login_method: None,

@@ -150,7 +150,7 @@ fn parse_continuation_bridge_response(
         Some(Ok(value)) => value,
         Some(Err(err)) => {
             let response_chars = result.chars().count();
-            let preview = preview_text(result, 1_024);
+            let preview = preview_text(result, /*max_chars*/ 1_024);
             warn!(
                 "failed parsing continuation bridge response: {err}; response_chars={response_chars}; response_preview={preview:?}"
             );
@@ -166,7 +166,7 @@ fn parse_continuation_bridge_response(
     let trailing = result[stream.byte_offset()..].trim();
     if !trailing.is_empty() {
         let trailing_chars = trailing.chars().count();
-        let trailing_preview = preview_text(trailing, 512);
+        let trailing_preview = preview_text(trailing, /*max_chars*/ 512);
         warn!(
             "ignoring trailing content after continuation bridge JSON: trailing_chars={trailing_chars}; trailing_preview={trailing_preview:?}"
         );
