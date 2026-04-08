@@ -697,6 +697,14 @@
       },
       "type": "object"
     },
+    "GovernancePathVariant": {
+      "enum": [
+        "off",
+        "strict_v1_shadow",
+        "strict_v1_enforce"
+      ],
+      "type": "string"
+    },
     "GranularApprovalConfig": {
       "properties": {
         "mcp_elicitations": {
@@ -2395,6 +2403,14 @@
       ],
       "default": null,
       "description": "Settings for ghost snapshots (used for undo)."
+    },
+    "governance_path_variant": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/GovernancePathVariant"
+        }
+      ],
+      "description": "Optional strict-governance variant used by typed packet scaffolding."
     },
     "hide_agent_reasoning": {
       "description": "When set to `true`, `AgentReasoning` events will be hidden from the UI/output. Defaults to `false`.",

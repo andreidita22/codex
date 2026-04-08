@@ -39,6 +39,7 @@ pub mod file_watcher;
 mod flags;
 #[cfg(test)]
 mod git_info_tests;
+pub mod governance;
 mod guardian;
 mod hook_runtime;
 mod installation_id;

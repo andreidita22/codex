@@ -119,6 +119,15 @@ pub enum ContinuationBridgeVariant {
     Baton,
     RichReview,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GovernancePathVariant {
+    #[default]
+    Off,
+    StrictV1Shadow,
+    StrictV1Enforce,
+}
 pub use permissions::FilesystemPermissionToml;
 pub use permissions::FilesystemPermissionsToml;
 pub use permissions::NetworkDomainPermissionToml;
@@ -300,6 +309,9 @@ pub struct Config {
 
     /// Optional reasoning effort override used only for continuation-bridge generation.
     pub continuation_bridge_reasoning_effort: Option<ReasoningEffort>,
+
+    /// Optional strict-governance variant used by typed packet scaffolding.
+    pub governance_path_variant: Option<GovernancePathVariant>,
 
     /// Optional commit attribution text for commit message co-author trailers.
     ///
@@ -1860,6 +1872,7 @@ impl Config {
         });
         let continuation_bridge_variant = cfg.continuation_bridge_variant;
         let continuation_bridge_reasoning_effort = cfg.continuation_bridge_reasoning_effort;
+        let governance_path_variant = cfg.governance_path_variant;
 
         let commit_attribution = cfg.commit_attribution;
 
@@ -2067,6 +2080,7 @@ impl Config {
             continuation_bridge_variant,
             continuation_bridge_model,
             continuation_bridge_reasoning_effort,
+            governance_path_variant,
             commit_attribution,
             include_permissions_instructions,
             include_apps_instructions,
