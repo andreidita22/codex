@@ -3198,7 +3198,7 @@ fn load_config_ignores_empty_requirements_guardian_developer_instructions() -> s
     )?;
 
     assert_eq!(config.guardian_developer_instructions, None);
-    
+
     Ok(())
 }
 

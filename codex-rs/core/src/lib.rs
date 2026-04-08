@@ -31,7 +31,6 @@ pub mod connectors;
 mod context_manager;
 mod contextual_user_message;
 mod continuation_bridge;
-pub mod custom_prompts;
 pub use codex_utils_path::env;
 mod environment_context;
 pub mod error;
