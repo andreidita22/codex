@@ -2628,9 +2628,12 @@ impl Session {
         // state so replay/backtracking is deterministic. Runtime inputs that affect model-visible
         // context (shell, exec policy, feature gates, previous-turn bridge) should be persisted
         // state or explicit non-state replay events.
-        let previous_turn_settings = {
+        let (previous_turn_settings, base_instructions) = {
             let state = self.state.lock().await;
-            state.previous_turn_settings()
+            (
+                state.previous_turn_settings(),
+                state.session_configuration.base_instructions.clone(),
+            )
         };
         let shell = self.user_shell();
         let exec_policy = self.services.exec_policy.current();
@@ -2640,7 +2643,11 @@ impl Session {
             current_context,
             shell.as_ref(),
             exec_policy.as_ref(),
-            self.features.enabled(Feature::Personality),
+            crate::context_manager::updates::SettingsUpdateBuildOptions {
+                personality_feature_enabled: self.features.enabled(Feature::Personality),
+                governance_path_variant: current_context.governance_path_variant(),
+                base_instructions: &base_instructions,
+            },
         )
     }
 
@@ -3486,6 +3493,10 @@ impl Session {
         turn_context: &TurnContext,
     ) -> Vec<ResponseItem> {
         let mut developer_sections = Vec::<String>::with_capacity(8);
+        let mut constitutional_sections = Vec::<String>::with_capacity(1);
+        let mut role_sections = Vec::<String>::with_capacity(3);
+        let mut task_sections = Vec::<String>::with_capacity(2);
+        let mut runtime_sections = Vec::<String>::with_capacity(8);
         let mut contextual_user_sections = Vec::<String>::with_capacity(2);
         let shell = self.user_shell();
         let (
@@ -3510,24 +3521,26 @@ impl Session {
                 turn_context,
             )
         {
-            developer_sections.push(model_switch_message.into_text());
+            let model_switch_text = model_switch_message.into_text();
+            constitutional_sections.push(model_switch_text.clone());
+            developer_sections.push(model_switch_text);
         }
-        developer_sections.push(
-            DeveloperInstructions::from_policy(
-                turn_context.sandbox_policy.get(),
-                turn_context.approval_policy.value(),
-                turn_context.config.approvals_reviewer,
-                self.services.exec_policy.current().as_ref(),
-                &turn_context.cwd,
-                turn_context
-                    .features
-                    .enabled(Feature::ExecPermissionApprovals),
-                turn_context
-                    .features
-                    .enabled(Feature::RequestPermissionsTool),
-            )
-            .into_text(),
-        );
+        let permissions_text = DeveloperInstructions::from_policy(
+            turn_context.sandbox_policy.get(),
+            turn_context.approval_policy.value(),
+            turn_context.config.approvals_reviewer,
+            self.services.exec_policy.current().as_ref(),
+            &turn_context.cwd,
+            turn_context
+                .features
+                .enabled(Feature::ExecPermissionApprovals),
+            turn_context
+                .features
+                .enabled(Feature::RequestPermissionsTool),
+        )
+        .into_text();
+        runtime_sections.push(permissions_text.clone());
+        developer_sections.push(permissions_text);
         let separate_guardian_developer_message =
             crate::guardian::is_guardian_reviewer_source(&session_source);
         // Keep the guardian policy prompt out of the aggregated developer bundle so it
@@ -3535,7 +3548,9 @@ impl Session {
         if !separate_guardian_developer_message
             && let Some(developer_instructions) = turn_context.developer_instructions.as_deref()
         {
-            developer_sections.push(developer_instructions.to_string());
+            let developer_instructions_text = developer_instructions.to_string();
+            role_sections.push(developer_instructions_text.clone());
+            developer_sections.push(developer_instructions_text);
         }
         // Add developer instructions for memories.
         if turn_context.features.enabled(Feature::MemoryTool)
@@ -3543,20 +3558,25 @@ impl Session {
             && let Some(memory_prompt) =
                 build_memory_tool_developer_instructions(&turn_context.config.codex_home).await
         {
+            runtime_sections.push(memory_prompt.clone());
             developer_sections.push(memory_prompt);
         }
         // Add developer instructions from collaboration_mode if they exist and are non-empty
         if let Some(collab_instructions) =
             DeveloperInstructions::from_collaboration_mode(&collaboration_mode)
         {
-            developer_sections.push(collab_instructions.into_text());
+            let collab_text = collab_instructions.into_text();
+            role_sections.push(collab_text.clone());
+            developer_sections.push(collab_text);
         }
         if let Some(realtime_update) = crate::context_manager::updates::build_initial_realtime_item(
             reference_context_item.as_ref(),
             previous_turn_settings.as_ref(),
             turn_context,
         ) {
-            developer_sections.push(realtime_update.into_text());
+            let realtime_text = realtime_update.into_text();
+            runtime_sections.push(realtime_text.clone());
+            developer_sections.push(realtime_text);
         }
         if self.features.enabled(Feature::Personality)
             && let Some(personality) = turn_context.personality
@@ -3571,10 +3591,11 @@ impl Session {
                         personality,
                     )
             {
-                developer_sections.push(
+                let personality_text =
                     DeveloperInstructions::personality_spec_message(personality_message)
-                        .into_text(),
-                );
+                        .into_text();
+                role_sections.push(personality_text.clone());
+                developer_sections.push(personality_text);
             }
         }
         if turn_context.apps_enabled() {
@@ -3586,6 +3607,7 @@ impl Session {
                 )
                 .await;
             if let Some(apps_section) = render_apps_section(&accessible_and_enabled_connectors) {
+                runtime_sections.push(apps_section.clone());
                 developer_sections.push(apps_section);
             }
         }
@@ -3594,6 +3616,7 @@ impl Session {
             .outcome
             .allowed_skills_for_implicit_invocation();
         if let Some(skills_section) = render_skills_section(&implicit_skills) {
+            runtime_sections.push(skills_section.clone());
             developer_sections.push(skills_section);
         }
         let loaded_plugins = self
@@ -3602,6 +3625,7 @@ impl Session {
             .plugins_for_config(&turn_context.config);
         if let Some(plugin_section) = render_plugins_section(loaded_plugins.capability_summaries())
         {
+            runtime_sections.push(plugin_section.clone());
             developer_sections.push(plugin_section);
         }
         if turn_context.features.enabled(Feature::CodexGitCommit)
@@ -3609,12 +3633,22 @@ impl Session {
                 turn_context.config.commit_attribution.as_deref(),
             )
         {
+            task_sections.push(commit_message_instruction.clone());
             developer_sections.push(commit_message_instruction);
         }
+        if let Some(final_output_json_schema) = turn_context.final_output_json_schema.as_ref()
+            && let Ok(final_output_json_schema) = serde_json::to_string(final_output_json_schema)
+        {
+            task_sections.push(format!(
+                "final_output_json_schema: {final_output_json_schema}"
+            ));
+        }
         if let Some(user_instructions) = turn_context.user_instructions.as_deref() {
+            let user_instructions_text = user_instructions.to_string();
+            task_sections.push(user_instructions_text.clone());
             contextual_user_sections.push(
                 UserInstructions {
-                    text: user_instructions.to_string(),
+                    text: user_instructions_text,
                     directory: turn_context.cwd.to_string_lossy().into_owned(),
                 }
                 .serialize_to_text(),
@@ -3630,6 +3664,23 @@ impl Session {
                 .with_subagents(subagents)
                 .serialize_to_xml(),
         );
+        if let Some(prompt_layering_section) =
+            crate::governance::prompt_layers::build_prompt_layering_section(
+                crate::governance::prompt_layers::PromptLayeringInput {
+                    path_variant: turn_context.governance_path_variant(),
+                    phase: crate::governance::prompt_layers::PromptLayeringPhase::InitialContext,
+                    model: &turn_context.model_info.slug,
+                    session_source: &turn_context.session_source,
+                    base_instructions: &base_instructions,
+                    constitutional_sections: &constitutional_sections,
+                    role_sections: &role_sections,
+                    task_sections: &task_sections,
+                    runtime_sections: &runtime_sections,
+                },
+            )
+        {
+            developer_sections.insert(0, prompt_layering_section);
+        }
 
         let mut items = Vec::with_capacity(3);
         if let Some(developer_message) =

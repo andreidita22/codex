@@ -1,6 +1,7 @@
 use super::*;
 use crate::CodexAuth;
 use crate::config::ConfigBuilder;
+use crate::config::GovernancePathVariant;
 use crate::config::test_config;
 use crate::config_loader::ConfigLayerStack;
 use crate::config_loader::ConfigLayerStackOrdering;
@@ -4262,6 +4263,65 @@ async fn build_initial_context_prepends_model_switch_message() {
         panic!("expected developer text");
     };
     assert!(text.contains("<model_switch>"));
+}
+
+#[tokio::test]
+async fn build_initial_context_includes_governance_layering_in_strict_mode() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    let mut config = (*turn_context.config).clone();
+    config.governance_path_variant = Some(GovernancePathVariant::StrictV1Shadow);
+    turn_context.config = Arc::new(config);
+
+    let initial_context = session.build_initial_context(&turn_context).await;
+    let developer_texts = developer_input_texts(&initial_context);
+    assert!(
+        developer_texts
+            .iter()
+            .any(|text| text.contains("<governance_prompt_layers")),
+        "expected strict mode prompt layering in initial context, got {developer_texts:?}"
+    );
+    assert!(
+        developer_texts
+            .iter()
+            .any(|text| text.contains("\"path_variant\": \"strict_v1_shadow\"")),
+        "expected strict mode variant in prompt layering payload, got {developer_texts:?}"
+    );
+}
+
+#[tokio::test]
+async fn build_settings_update_items_includes_governance_layering_in_strict_mode() {
+    let (session, previous_context) = make_session_and_context().await;
+    let mut current_context = previous_context
+        .with_model(
+            previous_context.model_info.slug.clone(),
+            &session.services.models_manager,
+        )
+        .await;
+    current_context.realtime_active = true;
+
+    let mut config = (*current_context.config).clone();
+    config.governance_path_variant = Some(GovernancePathVariant::StrictV1Shadow);
+    current_context.config = Arc::new(config);
+
+    let update_items = session
+        .build_settings_update_items(
+            Some(&previous_context.to_turn_context_item()),
+            &current_context,
+        )
+        .await;
+    let developer_texts = developer_input_texts(&update_items);
+    assert!(
+        developer_texts
+            .iter()
+            .any(|text| text.contains("<governance_prompt_layers")),
+        "expected strict mode prompt layering in settings update, got {developer_texts:?}"
+    );
+    assert!(
+        developer_texts
+            .iter()
+            .any(|text| text.contains("\"phase\": \"settings_update\"")),
+        "expected settings update phase in prompt layering payload, got {developer_texts:?}"
+    );
 }
 
 #[tokio::test]

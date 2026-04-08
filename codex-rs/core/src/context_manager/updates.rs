@@ -1,5 +1,6 @@
 use crate::codex::PreviousTurnSettings;
 use crate::codex::TurnContext;
+use crate::config::GovernancePathVariant;
 use crate::environment_context::EnvironmentContext;
 use crate::shell::Shell;
 use codex_execpolicy::Policy;
@@ -185,32 +186,86 @@ fn build_text_message(role: &str, text_sections: Vec<String>) -> Option<Response
     })
 }
 
+pub(crate) struct SettingsUpdateBuildOptions<'a> {
+    pub(crate) personality_feature_enabled: bool,
+    pub(crate) governance_path_variant: GovernancePathVariant,
+    pub(crate) base_instructions: &'a str,
+}
+
 pub(crate) fn build_settings_update_items(
     previous: Option<&TurnContextItem>,
     previous_turn_settings: Option<&PreviousTurnSettings>,
     next: &TurnContext,
     shell: &Shell,
     exec_policy: &Policy,
-    personality_feature_enabled: bool,
+    options: SettingsUpdateBuildOptions<'_>,
 ) -> Vec<ResponseItem> {
     // TODO(ccunningham): build_settings_update_items still does not cover every
     // model-visible item emitted by build_initial_context. Persist the remaining
     // inputs or add explicit replay events so fork/resume can diff everything
     // deterministically.
     let contextual_user_message = build_environment_update_item(previous, next, shell);
-    let developer_update_sections = [
-        // Keep model-switch instructions first so model-specific guidance is read before
-        // any other context diffs on this turn.
-        build_model_instructions_update_item(previous_turn_settings, next),
-        build_permissions_update_item(previous, next, exec_policy),
-        build_collaboration_mode_update_item(previous, next),
-        build_realtime_update_item(previous, previous_turn_settings, next),
-        build_personality_update_item(previous, next, personality_feature_enabled),
-    ]
-    .into_iter()
-    .flatten()
-    .map(DeveloperInstructions::into_text)
-    .collect();
+    let model_switch_item = build_model_instructions_update_item(previous_turn_settings, next);
+    let permissions_item = build_permissions_update_item(previous, next, exec_policy);
+    let collaboration_mode_item = build_collaboration_mode_update_item(previous, next);
+    let realtime_item = build_realtime_update_item(previous, previous_turn_settings, next);
+    let personality_item =
+        build_personality_update_item(previous, next, options.personality_feature_enabled);
+
+    let mut constitutional_sections = Vec::with_capacity(1);
+    let mut role_sections = Vec::with_capacity(2);
+    let task_sections = Vec::new();
+    let mut runtime_sections = Vec::with_capacity(2);
+    let mut developer_update_sections = Vec::with_capacity(6);
+
+    if let Some(model_switch_item) = model_switch_item {
+        let model_switch_text = model_switch_item.into_text();
+        constitutional_sections.push(model_switch_text.clone());
+        developer_update_sections.push(model_switch_text);
+    }
+
+    if let Some(permissions_item) = permissions_item {
+        let permissions_text = permissions_item.into_text();
+        runtime_sections.push(permissions_text.clone());
+        developer_update_sections.push(permissions_text);
+    }
+
+    if let Some(collaboration_mode_item) = collaboration_mode_item {
+        let collaboration_mode_text = collaboration_mode_item.into_text();
+        role_sections.push(collaboration_mode_text.clone());
+        developer_update_sections.push(collaboration_mode_text);
+    }
+
+    if let Some(realtime_item) = realtime_item {
+        let realtime_text = realtime_item.into_text();
+        runtime_sections.push(realtime_text.clone());
+        developer_update_sections.push(realtime_text);
+    }
+
+    if let Some(personality_item) = personality_item {
+        let personality_text = personality_item.into_text();
+        role_sections.push(personality_text.clone());
+        developer_update_sections.push(personality_text);
+    }
+
+    if !developer_update_sections.is_empty()
+        && let Some(prompt_layering_section) =
+            crate::governance::prompt_layers::build_prompt_layering_section(
+                crate::governance::prompt_layers::PromptLayeringInput {
+                    path_variant: options.governance_path_variant,
+                    phase: crate::governance::prompt_layers::PromptLayeringPhase::SettingsUpdate,
+                    model: &next.model_info.slug,
+                    session_source: &next.session_source,
+                    base_instructions: options.base_instructions,
+                    constitutional_sections: &constitutional_sections,
+                    role_sections: &role_sections,
+                    task_sections: &task_sections,
+                    runtime_sections: &runtime_sections,
+                },
+            )
+    {
+        developer_update_sections.insert(0, prompt_layering_section);
+    }
 
     let mut items = Vec::with_capacity(2);
     if let Some(developer_message) = build_developer_update_item(developer_update_sections) {
