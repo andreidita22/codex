@@ -55,6 +55,17 @@ The built-in bridge artifacts now live under:
 
 The default runtime variant is `baton`, and bridge generation defaults to `gpt-5-codex-mini` with `high` reasoning unless you override those settings.
 
+## Governance path
+
+This fork now includes strict-governance packet scaffolding behind a config gate:
+
+- `governance_path_variant = "off"` (default)
+- `governance_path_variant = "strict_v1_shadow"`
+- `governance_path_variant = "strict_v1_enforce"`
+
+`strict_v1_shadow` and `strict_v1_enforce` currently only configure packet/compiler scaffolding.
+They do not switch core runtime behavior yet.
+
 ## JSON Schema
 
 The generated JSON Schema for `config.toml` lives at `codex-rs/core/config.schema.json`.
