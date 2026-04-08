@@ -77,7 +77,7 @@ pub fn check_transition_legality(
                 input.previous,
                 input.next,
                 &transition,
-                GovernanceDiagnosticSeverity::Warning,
+                ContinuitySeverityPolicy::compact(),
                 &mut diagnostics,
             );
         }
@@ -86,7 +86,7 @@ pub fn check_transition_legality(
                 input.previous,
                 input.next,
                 &transition,
-                GovernanceDiagnosticSeverity::Error,
+                ContinuitySeverityPolicy::strict(),
                 &mut diagnostics,
             );
         }
@@ -138,7 +138,7 @@ fn check_constitution_legality(
     }
 
     if let (Some(previous), Some(next)) = (&previous.constitution, &next.constitution)
-        && !identities_match(&previous.identity, &next.identity)
+        && !strict_identities_match(&previous.identity, &next.identity)
     {
         diagnostics.push(GovernanceDiagnostic::error(
             GovernanceDiagnosticCode::ConstitutionIdentityChanged,
@@ -185,6 +185,7 @@ fn check_spawn_legality(
                 },
                 transition,
                 diagnostics,
+                strict_identities_match,
             );
         }
         SpawnRolePolicy::Replace => {
@@ -207,7 +208,7 @@ fn check_spawn_legality(
     }
 
     if let (Some(previous), Some(next)) = (&previous.runtime_fact_store, &next.runtime_fact_store)
-        && identities_match(&previous.identity, &next.identity)
+        && previous.identity.packet_id == next.identity.packet_id
     {
         diagnostics.push(GovernanceDiagnostic::error(
             GovernanceDiagnosticCode::SpawnRuntimeFactStoreReused,
@@ -248,14 +249,40 @@ fn check_spawn_legality(
         },
         transition,
         diagnostics,
+        strict_identities_match,
     );
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ContinuitySeverityPolicy {
+    task_residual: GovernanceDiagnosticSeverity,
+    runtime_fact_store: GovernanceDiagnosticSeverity,
+    adapter_overlay: GovernanceDiagnosticSeverity,
+}
+
+impl ContinuitySeverityPolicy {
+    fn compact() -> Self {
+        Self {
+            task_residual: GovernanceDiagnosticSeverity::Warning,
+            runtime_fact_store: GovernanceDiagnosticSeverity::Warning,
+            adapter_overlay: GovernanceDiagnosticSeverity::Warning,
+        }
+    }
+
+    fn strict() -> Self {
+        Self {
+            task_residual: GovernanceDiagnosticSeverity::Error,
+            runtime_fact_store: GovernanceDiagnosticSeverity::Error,
+            adapter_overlay: GovernanceDiagnosticSeverity::Error,
+        }
+    }
 }
 
 fn check_continuity_legality(
     previous: &CompiledGovernancePackets,
     next: &CompiledGovernancePackets,
     transition: &GovernanceTransition,
-    task_residual_missing_severity: GovernanceDiagnosticSeverity,
+    severity_policy: ContinuitySeverityPolicy,
     diagnostics: &mut Vec<GovernanceDiagnostic>,
 ) {
     push_missing_if_dropped(
@@ -281,6 +308,7 @@ fn check_continuity_legality(
         },
         transition,
         diagnostics,
+        strict_identities_match,
     );
 
     push_missing_if_dropped(
@@ -312,6 +340,7 @@ fn check_continuity_legality(
         },
         transition,
         diagnostics,
+        strict_identities_match,
     );
 
     push_missing_if_dropped(
@@ -323,7 +352,7 @@ fn check_continuity_legality(
         ContinuityDiagnosticSpec {
             code: GovernanceDiagnosticCode::MissingTaskResidualPacket,
             kind: GovernanceViolationKind::InheritanceBug,
-            severity: task_residual_missing_severity,
+            severity: severity_policy.task_residual,
             label: "task residual packet",
         },
         transition,
@@ -338,11 +367,48 @@ fn check_continuity_legality(
         ContinuityDiagnosticSpec {
             code: GovernanceDiagnosticCode::TaskResidualIdentityChanged,
             kind: GovernanceViolationKind::InheritanceBug,
-            severity: GovernanceDiagnosticSeverity::Error,
+            severity: severity_policy.task_residual,
             label: "task residual packet",
         },
         transition,
         diagnostics,
+        continuity_identities_match,
+    );
+
+    push_missing_if_dropped(
+        previous
+            .runtime_fact_store
+            .as_ref()
+            .map(|packet| &packet.identity),
+        next.runtime_fact_store
+            .as_ref()
+            .map(|packet| &packet.identity),
+        ContinuityDiagnosticSpec {
+            code: GovernanceDiagnosticCode::MissingRuntimeFactStorePacket,
+            kind: GovernanceViolationKind::RuntimeContaminationBug,
+            severity: severity_policy.runtime_fact_store,
+            label: "runtime fact store packet",
+        },
+        transition,
+        diagnostics,
+    );
+    push_identity_change_if_changed(
+        previous
+            .runtime_fact_store
+            .as_ref()
+            .map(|packet| &packet.identity),
+        next.runtime_fact_store
+            .as_ref()
+            .map(|packet| &packet.identity),
+        ContinuityDiagnosticSpec {
+            code: GovernanceDiagnosticCode::RuntimeFactStoreIdentityChanged,
+            kind: GovernanceViolationKind::RuntimeContaminationBug,
+            severity: severity_policy.runtime_fact_store,
+            label: "runtime fact store packet",
+        },
+        transition,
+        diagnostics,
+        continuity_identities_match,
     );
 
     push_missing_if_dropped(
@@ -354,7 +420,7 @@ fn check_continuity_legality(
         ContinuityDiagnosticSpec {
             code: GovernanceDiagnosticCode::MissingAdapterOverlayPacket,
             kind: GovernanceViolationKind::AdapterOverlayBug,
-            severity: GovernanceDiagnosticSeverity::Error,
+            severity: severity_policy.adapter_overlay,
             label: "adapter overlay packet",
         },
         transition,
@@ -369,11 +435,12 @@ fn check_continuity_legality(
         ContinuityDiagnosticSpec {
             code: GovernanceDiagnosticCode::AdapterOverlayIdentityChanged,
             kind: GovernanceViolationKind::AdapterOverlayBug,
-            severity: GovernanceDiagnosticSeverity::Error,
+            severity: severity_policy.adapter_overlay,
             label: "adapter overlay packet",
         },
         transition,
         diagnostics,
+        strict_identities_match,
     );
 }
 
@@ -411,9 +478,10 @@ fn push_identity_change_if_changed(
     spec: ContinuityDiagnosticSpec<'_>,
     transition: &GovernanceTransition,
     diagnostics: &mut Vec<GovernanceDiagnostic>,
+    matcher: fn(&PacketIdentity, &PacketIdentity) -> bool,
 ) {
     if let (Some(previous), Some(next)) = (previous, next)
-        && !identities_match(previous, next)
+        && !matcher(previous, next)
     {
         diagnostics.push(build_diagnostic(
             spec.code,
@@ -448,10 +516,14 @@ fn build_diagnostic(
     }
 }
 
-fn identities_match(previous: &PacketIdentity, next: &PacketIdentity) -> bool {
+fn strict_identities_match(previous: &PacketIdentity, next: &PacketIdentity) -> bool {
     previous.packet_id == next.packet_id
         && previous.content_hash == next.content_hash
         && previous.schema == next.schema
+}
+
+fn continuity_identities_match(previous: &PacketIdentity, next: &PacketIdentity) -> bool {
+    previous.packet_id == next.packet_id && previous.schema == next.schema
 }
 
 fn transition_name(transition: &GovernanceTransition) -> &'static str {
@@ -464,216 +536,5 @@ fn transition_name(transition: &GovernanceTransition) -> &'static str {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::GovernanceTransition;
-    use super::GovernanceTransitionCheckInput;
-    use super::GovernanceTransitionDecision;
-    use super::SpawnRolePolicy;
-    use super::check_transition_legality;
-    use crate::config::GovernancePathVariant;
-    use crate::governance::compiler::CompiledGovernancePackets;
-    use crate::governance::diagnostics::GovernanceDiagnosticCode;
-    use crate::governance::diagnostics::GovernanceDiagnosticSeverity;
-    use crate::governance::packets::AdapterOverlayPacket;
-    use crate::governance::packets::ConstitutionPacket;
-    use crate::governance::packets::GovernanceClause;
-    use crate::governance::packets::NormativeForce;
-    use crate::governance::packets::PacketIdentity;
-    use crate::governance::packets::RolePacket;
-    use crate::governance::packets::RuntimeFact;
-    use crate::governance::packets::RuntimeFactStore;
-    use crate::governance::packets::TaskCharterPacket;
-    use crate::governance::packets::TaskResidualPacket;
-    use pretty_assertions::assert_eq;
-
-    fn packet_identity(id: &str) -> PacketIdentity {
-        PacketIdentity {
-            packet_id: id.to_string(),
-            content_hash: format!("hash:{id}"),
-            schema: "governance@1".to_string(),
-        }
-    }
-
-    fn clause() -> GovernanceClause {
-        GovernanceClause {
-            force: NormativeForce::Hard,
-            subject: "safety".to_string(),
-            instruction: "preserve invariants".to_string(),
-        }
-    }
-
-    fn base_packets() -> CompiledGovernancePackets {
-        CompiledGovernancePackets {
-            constitution: Some(ConstitutionPacket {
-                identity: packet_identity("constitution:base"),
-                clauses: vec![clause()],
-            }),
-            role: Some(RolePacket {
-                identity: packet_identity("role:base"),
-                role_name: "worker".to_string(),
-                posture: vec![clause()],
-            }),
-            task_charter: Some(TaskCharterPacket {
-                identity: packet_identity("task:base"),
-                assignment_id: "assignment:base".to_string(),
-                ordered_obligations: vec![clause()],
-            }),
-            task_residual: Some(TaskResidualPacket {
-                identity: packet_identity("residual:base"),
-                open_obligations: vec![clause()],
-                blockers: Vec::new(),
-                accepted_decisions: vec!["d1".to_string()],
-            }),
-            runtime_fact_store: Some(RuntimeFactStore {
-                identity: packet_identity("runtime:base"),
-                facts: vec![RuntimeFact {
-                    key: "phase".to_string(),
-                    value: "implementation".to_string(),
-                    source: "runtime".to_string(),
-                }],
-            }),
-            adapter_overlay: Some(AdapterOverlayPacket {
-                identity: packet_identity("adapter:base"),
-                adapter_id: "default".to_string(),
-                clauses: vec![clause()],
-            }),
-            projection_witness: Default::default(),
-        }
-    }
-
-    #[test]
-    fn off_mode_skips_legality_checks() {
-        let mut next = base_packets();
-        next.constitution = None;
-
-        let report = check_transition_legality(GovernanceTransitionCheckInput {
-            path_variant: GovernancePathVariant::Off,
-            transition: GovernanceTransition::Resume,
-            previous: &base_packets(),
-            next: &next,
-        });
-
-        assert_eq!(report.decision, GovernanceTransitionDecision::Allow);
-        assert_eq!(report.diagnostics, Vec::new());
-    }
-
-    #[test]
-    fn spawn_inherit_role_policy_requires_role_continuity() {
-        let previous = base_packets();
-        let mut next = base_packets();
-        next.role = Some(RolePacket {
-            identity: packet_identity("role:changed"),
-            role_name: "worker".to_string(),
-            posture: vec![clause()],
-        });
-        next.runtime_fact_store = Some(RuntimeFactStore {
-            identity: packet_identity("runtime:fresh"),
-            facts: Vec::new(),
-        });
-
-        let report = check_transition_legality(GovernanceTransitionCheckInput {
-            path_variant: GovernancePathVariant::StrictV1Enforce,
-            transition: GovernanceTransition::Spawn {
-                role_policy: SpawnRolePolicy::Inherit,
-            },
-            previous: &previous,
-            next: &next,
-        });
-
-        assert_eq!(report.decision, GovernanceTransitionDecision::Block);
-        assert!(
-            report
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == GovernanceDiagnosticCode::RoleIdentityChanged)
-        );
-    }
-
-    #[test]
-    fn spawn_detects_runtime_fact_store_reuse() {
-        let previous = base_packets();
-        let next = base_packets();
-
-        let report = check_transition_legality(GovernanceTransitionCheckInput {
-            path_variant: GovernancePathVariant::StrictV1Enforce,
-            transition: GovernanceTransition::Spawn {
-                role_policy: SpawnRolePolicy::Replace,
-            },
-            previous: &previous,
-            next: &next,
-        });
-
-        assert_eq!(report.decision, GovernanceTransitionDecision::Block);
-        assert!(report.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == GovernanceDiagnosticCode::SpawnRuntimeFactStoreReused
-        }));
-    }
-
-    #[test]
-    fn compact_flags_missing_task_residual_as_warning() {
-        let previous = base_packets();
-        let mut next = base_packets();
-        next.task_residual = None;
-
-        let report = check_transition_legality(GovernanceTransitionCheckInput {
-            path_variant: GovernancePathVariant::StrictV1Shadow,
-            transition: GovernanceTransition::Compact,
-            previous: &previous,
-            next: &next,
-        });
-
-        assert_eq!(
-            report.decision,
-            GovernanceTransitionDecision::AllowWithDiagnostics
-        );
-        assert!(report.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == GovernanceDiagnosticCode::MissingTaskResidualPacket
-                && diagnostic.severity == GovernanceDiagnosticSeverity::Warning
-        }));
-    }
-
-    #[test]
-    fn resume_blocks_when_constitution_identity_changes() {
-        let previous = base_packets();
-        let mut next = base_packets();
-        next.constitution = Some(ConstitutionPacket {
-            identity: packet_identity("constitution:changed"),
-            clauses: vec![clause()],
-        });
-
-        let report = check_transition_legality(GovernanceTransitionCheckInput {
-            path_variant: GovernancePathVariant::StrictV1Enforce,
-            transition: GovernanceTransition::Resume,
-            previous: &previous,
-            next: &next,
-        });
-
-        assert_eq!(report.decision, GovernanceTransitionDecision::Block);
-        assert!(report.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == GovernanceDiagnosticCode::ConstitutionIdentityChanged
-        }));
-    }
-
-    #[test]
-    fn swap_blocks_when_task_charter_identity_changes() {
-        let previous = base_packets();
-        let mut next = base_packets();
-        next.task_charter = Some(TaskCharterPacket {
-            identity: packet_identity("task:changed"),
-            assignment_id: "assignment:base".to_string(),
-            ordered_obligations: vec![clause()],
-        });
-
-        let report = check_transition_legality(GovernanceTransitionCheckInput {
-            path_variant: GovernancePathVariant::StrictV1Enforce,
-            transition: GovernanceTransition::Swap,
-            previous: &previous,
-            next: &next,
-        });
-
-        assert_eq!(report.decision, GovernanceTransitionDecision::Block);
-        assert!(report.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == GovernanceDiagnosticCode::TaskCharterIdentityChanged
-        }));
-    }
-}
+#[path = "transitions_tests.rs"]
+mod tests;
