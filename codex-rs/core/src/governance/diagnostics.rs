@@ -34,6 +34,8 @@ pub enum GovernanceDiagnosticCode {
     TaskCharterIdentityChanged,
     MissingTaskResidualPacket,
     TaskResidualIdentityChanged,
+    MissingRuntimeFactStorePacket,
+    RuntimeFactStoreIdentityChanged,
     MissingAdapterOverlayPacket,
     AdapterOverlayIdentityChanged,
     SpawnRuntimeFactStoreReused,
