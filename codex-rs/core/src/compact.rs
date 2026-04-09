@@ -35,6 +35,7 @@ use tracing::warn;
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
 const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = 20_000;
+pub(crate) const COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES: usize = 5;
 
 /// Controls whether compaction replacement history must include initial context.
 ///
@@ -53,6 +54,10 @@ pub(crate) enum InitialContextInjection {
 
 pub(crate) fn should_use_remote_compact_task(provider: &ModelProviderInfo) -> bool {
     provider.is_openai()
+}
+
+pub(crate) fn is_thread_memory_required(path_variant: GovernancePathVariant) -> bool {
+    path_variant != GovernancePathVariant::Off
 }
 
 pub(crate) async fn run_inline_auto_compact_task(
@@ -106,10 +111,8 @@ async fn run_compact_task_inner(
     let history_for_artifacts = history
         .clone()
         .for_prompt(&turn_context.model_info.input_modalities);
-    let thread_memory_item = if turn_context.governance_path_variant() == GovernancePathVariant::Off
-    {
-        None
-    } else {
+    let governance_path_variant = turn_context.governance_path_variant();
+    let thread_memory_item = if is_thread_memory_required(governance_path_variant) {
         match generate_thread_memory_item(
             &sess,
             turn_context.as_ref(),
@@ -117,13 +120,22 @@ async fn run_compact_task_inner(
         )
         .await
         {
-            Ok(item) => item,
+            Ok(Some(item)) => Some(item),
+            Ok(None) => {
+                return Err(CodexErr::Fatal(format!(
+                    "required thread memory generation returned empty output before local compaction (path_variant={governance_path_variant:?})"
+                )));
+            }
             Err(err) => {
-                warn!("failed generating thread memory before local compaction: {err}");
-                None
+                return Err(CodexErr::Fatal(format!(
+                    "failed generating required thread memory before local compaction (path_variant={governance_path_variant:?}): {err}"
+                )));
             }
         }
+    } else {
+        None
     };
+    let thread_memory_present = thread_memory_item.is_some();
     let continuation_bridge_item = match generate_continuation_bridge_item(
         &sess,
         turn_context.as_ref(),
@@ -250,6 +262,12 @@ async fn run_compact_task_inner(
         new_history =
             insert_items_before_last_summary_or_compaction(new_history, authoritative_items);
     }
+    if thread_memory_present {
+        new_history = retain_recent_raw_conversation_messages(
+            new_history,
+            COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES,
+        );
+    }
     let ghost_snapshots: Vec<ResponseItem> = history_items
         .iter()
         .filter(|item| matches!(item, ResponseItem::GhostSnapshot { .. }))
@@ -309,6 +327,47 @@ pub(crate) fn collect_user_messages(items: &[ResponseItem]) -> Vec<String> {
             }
             _ => None,
         })
+        .collect()
+}
+
+fn is_raw_conversation_message(item: &ResponseItem) -> bool {
+    match item {
+        ResponseItem::Message { role, .. } if role == "assistant" => true,
+        ResponseItem::Message { role, .. } if role == "user" => {
+            matches!(
+                crate::event_mapping::parse_turn_item(item),
+                Some(TurnItem::UserMessage(user)) if !is_summary_message(&user.message())
+            )
+        }
+        _ => false,
+    }
+}
+
+pub(crate) fn retain_recent_raw_conversation_messages(
+    compacted_history: Vec<ResponseItem>,
+    max_messages: usize,
+) -> Vec<ResponseItem> {
+    if compacted_history.is_empty() {
+        return compacted_history;
+    }
+
+    let mut retained = vec![true; compacted_history.len()];
+    let mut remaining = max_messages;
+    for (index, item) in compacted_history.iter().enumerate().rev() {
+        if !is_raw_conversation_message(item) {
+            continue;
+        }
+        if remaining > 0 {
+            remaining -= 1;
+            continue;
+        }
+        retained[index] = false;
+    }
+
+    compacted_history
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, item)| retained[index].then_some(item))
         .collect()
 }
 

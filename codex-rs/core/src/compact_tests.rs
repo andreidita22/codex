@@ -122,6 +122,168 @@ do things
 }
 
 #[test]
+fn retain_recent_raw_conversation_messages_keeps_latest_window_and_preserves_summary() {
+    let history = vec![
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "older user".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "older assistant".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "latest user".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "latest assistant".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: format!("{SUMMARY_PREFIX}\nsummary"),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Compaction {
+            encrypted_content: "encrypted".to_string(),
+        },
+    ];
+
+    let retained = retain_recent_raw_conversation_messages(history, /*max_messages*/ 2);
+    let expected = vec![
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "latest user".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "latest assistant".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: format!("{SUMMARY_PREFIX}\nsummary"),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Compaction {
+            encrypted_content: "encrypted".to_string(),
+        },
+    ];
+
+    assert_eq!(retained, expected);
+}
+
+#[test]
+fn retain_recent_raw_conversation_messages_limit_zero_keeps_non_candidates() {
+    let history = vec![
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "drop user".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "drop assistant".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "developer".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "keep developer".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: format!("{SUMMARY_PREFIX}\nsummary"),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Compaction {
+            encrypted_content: "encrypted".to_string(),
+        },
+    ];
+
+    let retained = retain_recent_raw_conversation_messages(history, /*max_messages*/ 0);
+    let expected = vec![
+        ResponseItem::Message {
+            id: None,
+            role: "developer".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "keep developer".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: format!("{SUMMARY_PREFIX}\nsummary"),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+        ResponseItem::Compaction {
+            encrypted_content: "encrypted".to_string(),
+        },
+    ];
+
+    assert_eq!(retained, expected);
+}
+
+#[test]
 fn build_token_limited_compacted_history_truncates_overlong_user_messages() {
     // Use a small truncation limit so the test remains fast while still validating
     // that oversized user content is truncated.

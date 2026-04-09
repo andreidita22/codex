@@ -5,10 +5,12 @@ use crate::Prompt;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::codex::built_tools;
+use crate::compact::COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES;
 use crate::compact::InitialContextInjection;
 use crate::compact::insert_initial_context_before_last_real_user_or_summary;
 use crate::compact::insert_items_before_last_summary_or_compaction;
-use crate::config::GovernancePathVariant;
+use crate::compact::is_thread_memory_required;
+use crate::compact::retain_recent_raw_conversation_messages;
 use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
 use crate::context_manager::estimate_response_item_model_visible_bytes;
@@ -118,10 +120,8 @@ async fn run_remote_compact_task_inner_impl(
         personality: turn_context.personality,
         output_schema: None,
     };
-    let thread_memory_item = if turn_context.governance_path_variant() == GovernancePathVariant::Off
-    {
-        None
-    } else {
+    let governance_path_variant = turn_context.governance_path_variant();
+    let thread_memory_item = if is_thread_memory_required(governance_path_variant) {
         match generate_thread_memory_item(
             sess.as_ref(),
             turn_context.as_ref(),
@@ -129,13 +129,22 @@ async fn run_remote_compact_task_inner_impl(
         )
         .await
         {
-            Ok(item) => item,
+            Ok(Some(item)) => Some(item),
+            Ok(None) => {
+                return Err(CodexErr::Fatal(format!(
+                    "required thread memory generation returned empty output before remote compaction (path_variant={governance_path_variant:?})"
+                )));
+            }
             Err(err) => {
-                warn!("failed generating thread memory before remote compaction: {err}");
-                None
+                return Err(CodexErr::Fatal(format!(
+                    "failed generating required thread memory before remote compaction (path_variant={governance_path_variant:?}): {err}"
+                )));
             }
         }
+    } else {
+        None
     };
+    let thread_memory_present = thread_memory_item.is_some();
     let continuation_bridge_item = match generate_continuation_bridge_item(
         sess.as_ref(),
         turn_context.as_ref(),
@@ -187,6 +196,12 @@ async fn run_remote_compact_task_inner_impl(
     if !authoritative_items.is_empty() {
         new_history =
             insert_items_before_last_summary_or_compaction(new_history, authoritative_items);
+    }
+    if thread_memory_present {
+        new_history = retain_recent_raw_conversation_messages(
+            new_history,
+            COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES,
+        );
     }
 
     if !ghost_snapshots.is_empty() {
