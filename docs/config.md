@@ -67,6 +67,12 @@ This fork now includes strict-governance packet scaffolding behind a config gate
 artifact that is generated as a structured `developer` message and inserted into replacement
 history alongside the continuation bridge.
 
+Strict variants also inject a tagged `developer` prompt-layer artifact (`<governance_prompt_layers>`)
+on initial-context and settings-update paths. It carries:
+- explicit constitutional -> role -> task -> runtime precedence
+- layer presence and packet identities
+- fallback semantics when role/task/runtime narrowing data is missing
+
 ## JSON Schema
 
 The generated JSON Schema for `config.toml` lives at `codex-rs/core/config.schema.json`.
