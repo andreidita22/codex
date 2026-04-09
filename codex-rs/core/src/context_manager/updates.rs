@@ -190,6 +190,24 @@ pub(crate) struct SettingsUpdateBuildOptions<'a> {
     pub(crate) personality_feature_enabled: bool,
     pub(crate) governance_path_variant: GovernancePathVariant,
     pub(crate) base_instructions: &'a str,
+    pub(crate) full_role_sections: &'a [String],
+    pub(crate) full_task_sections: &'a [String],
+    pub(crate) full_runtime_sections: &'a [String],
+}
+
+pub(crate) fn insert_governance_prompt_layering_section(
+    developer_sections: &mut Vec<String>,
+    prompt_layering_section: String,
+) {
+    let insert_index = if developer_sections
+        .first()
+        .is_some_and(|section| section.trim_start().starts_with("<model_switch>"))
+    {
+        1
+    } else {
+        0
+    };
+    developer_sections.insert(insert_index, prompt_layering_section);
 }
 
 pub(crate) fn build_settings_update_items(
@@ -213,9 +231,6 @@ pub(crate) fn build_settings_update_items(
         build_personality_update_item(previous, next, options.personality_feature_enabled);
 
     let mut constitutional_sections = Vec::with_capacity(1);
-    let mut role_sections = Vec::with_capacity(2);
-    let task_sections = Vec::new();
-    let mut runtime_sections = Vec::with_capacity(2);
     let mut developer_update_sections = Vec::with_capacity(6);
 
     if let Some(model_switch_item) = model_switch_item {
@@ -226,25 +241,21 @@ pub(crate) fn build_settings_update_items(
 
     if let Some(permissions_item) = permissions_item {
         let permissions_text = permissions_item.into_text();
-        runtime_sections.push(permissions_text.clone());
         developer_update_sections.push(permissions_text);
     }
 
     if let Some(collaboration_mode_item) = collaboration_mode_item {
         let collaboration_mode_text = collaboration_mode_item.into_text();
-        role_sections.push(collaboration_mode_text.clone());
         developer_update_sections.push(collaboration_mode_text);
     }
 
     if let Some(realtime_item) = realtime_item {
         let realtime_text = realtime_item.into_text();
-        runtime_sections.push(realtime_text.clone());
         developer_update_sections.push(realtime_text);
     }
 
     if let Some(personality_item) = personality_item {
         let personality_text = personality_item.into_text();
-        role_sections.push(personality_text.clone());
         developer_update_sections.push(personality_text);
     }
 
@@ -258,13 +269,16 @@ pub(crate) fn build_settings_update_items(
                     session_source: &next.session_source,
                     base_instructions: options.base_instructions,
                     constitutional_sections: &constitutional_sections,
-                    role_sections: &role_sections,
-                    task_sections: &task_sections,
-                    runtime_sections: &runtime_sections,
+                    role_sections: options.full_role_sections,
+                    task_sections: options.full_task_sections,
+                    runtime_sections: options.full_runtime_sections,
                 },
             )
     {
-        developer_update_sections.insert(0, prompt_layering_section);
+        insert_governance_prompt_layering_section(
+            &mut developer_update_sections,
+            prompt_layering_section,
+        );
     }
 
     let mut items = Vec::with_capacity(2);
