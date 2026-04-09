@@ -2791,8 +2791,116 @@ impl Session {
                 state.session_configuration.base_instructions.clone(),
             )
         };
+        let personality_feature_enabled = self.features.enabled(Feature::Personality);
+        let mut full_role_sections = Vec::with_capacity(3);
+        if let Some(developer_instructions) = current_context.developer_instructions.as_deref() {
+            full_role_sections.push(developer_instructions.to_string());
+        }
+        if let Some(collab_instructions) =
+            DeveloperInstructions::from_collaboration_mode(&current_context.collaboration_mode)
+        {
+            full_role_sections.push(collab_instructions.into_text());
+        }
+        if personality_feature_enabled && let Some(personality) = current_context.personality {
+            let model_info = &current_context.model_info;
+            let has_baked_personality = model_info.supports_personality()
+                && base_instructions == model_info.get_model_instructions(Some(personality));
+            if !has_baked_personality
+                && let Some(personality_message) =
+                    crate::context_manager::updates::personality_message_for(
+                        model_info,
+                        personality,
+                    )
+            {
+                full_role_sections.push(
+                    DeveloperInstructions::personality_spec_message(personality_message)
+                        .into_text(),
+                );
+            }
+        }
+        let mut full_task_sections = Vec::with_capacity(3);
+        if current_context.features.enabled(Feature::CodexGitCommit)
+            && let Some(commit_message_instruction) = commit_message_trailer_instruction(
+                current_context.config.commit_attribution.as_deref(),
+            )
+        {
+            full_task_sections.push(commit_message_instruction);
+        }
+        if let Some(final_output_json_schema) = current_context.final_output_json_schema.as_ref()
+            && let Ok(final_output_json_schema) = serde_json::to_string(final_output_json_schema)
+        {
+            full_task_sections.push(format!(
+                "final_output_json_schema: {final_output_json_schema}"
+            ));
+        }
+        if let Some(user_instructions) = current_context.user_instructions.as_deref() {
+            full_task_sections.push(user_instructions.to_string());
+        }
         let shell = self.user_shell();
         let exec_policy = self.services.exec_policy.current();
+        let mut full_runtime_sections = Vec::with_capacity(8);
+        full_runtime_sections.push(
+            DeveloperInstructions::from_policy(
+                current_context.sandbox_policy.get(),
+                current_context.approval_policy.value(),
+                current_context.config.approvals_reviewer,
+                exec_policy.as_ref(),
+                &current_context.cwd,
+                current_context
+                    .features
+                    .enabled(Feature::ExecPermissionApprovals),
+                current_context
+                    .features
+                    .enabled(Feature::RequestPermissionsTool),
+            )
+            .into_text(),
+        );
+        if current_context.realtime_active {
+            let realtime_instructions = if let Some(instructions) = current_context
+                .config
+                .experimental_realtime_start_instructions
+                .as_deref()
+            {
+                DeveloperInstructions::realtime_start_message_with_instructions(instructions)
+            } else {
+                DeveloperInstructions::realtime_start_message()
+            };
+            full_runtime_sections.push(realtime_instructions.into_text());
+        }
+        if current_context.features.enabled(Feature::MemoryTool)
+            && current_context.config.memories.use_memories
+            && let Some(memory_prompt) =
+                build_memory_tool_developer_instructions(&current_context.config.codex_home).await
+        {
+            full_runtime_sections.push(memory_prompt);
+        }
+        if current_context.apps_enabled() {
+            let mcp_connection_manager = self.services.mcp_connection_manager.read().await;
+            let accessible_and_enabled_connectors =
+                connectors::list_accessible_and_enabled_connectors_from_manager(
+                    &mcp_connection_manager,
+                    &current_context.config,
+                )
+                .await;
+            if let Some(apps_section) = render_apps_section(&accessible_and_enabled_connectors) {
+                full_runtime_sections.push(apps_section);
+            }
+        }
+        let implicit_skills = current_context
+            .turn_skills
+            .outcome
+            .allowed_skills_for_implicit_invocation();
+        if let Some(skills_section) = render_skills_section(&implicit_skills) {
+            full_runtime_sections.push(skills_section);
+        }
+        let loaded_plugins = self
+            .services
+            .plugins_manager
+            .plugins_for_config(&current_context.config);
+        if let Some(plugin_section) = render_plugins_section(loaded_plugins.capability_summaries())
+        {
+            full_runtime_sections.push(plugin_section);
+        }
         crate::context_manager::updates::build_settings_update_items(
             reference_context_item,
             previous_turn_settings.as_ref(),
@@ -2800,9 +2908,12 @@ impl Session {
             shell.as_ref(),
             exec_policy.as_ref(),
             crate::context_manager::updates::SettingsUpdateBuildOptions {
-                personality_feature_enabled: self.features.enabled(Feature::Personality),
+                personality_feature_enabled,
                 governance_path_variant: current_context.governance_path_variant(),
                 base_instructions: &base_instructions,
+                full_role_sections: &full_role_sections,
+                full_task_sections: &full_task_sections,
+                full_runtime_sections: &full_runtime_sections,
             },
         )
     }

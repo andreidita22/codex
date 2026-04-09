@@ -307,6 +307,17 @@ fn user_input_texts(items: &[ResponseItem]) -> Vec<&str> {
         .collect()
 }
 
+fn governance_prompt_layers_payload(items: &[ResponseItem]) -> Option<serde_json::Value> {
+    let tagged = developer_input_texts(items)
+        .into_iter()
+        .find(|text| text.contains("<governance_prompt_layers"))?;
+    let open_end = tagged.find('>')?.saturating_add(1);
+    let close_start = tagged.find("</governance_prompt_layers>")?;
+    let payload = tagged.get(open_end..close_start)?.trim();
+    let json_start = payload.find('{')?;
+    serde_json::from_str(payload.get(json_start..)?).ok()
+}
+
 fn test_tool_runtime(session: Arc<Session>, turn_context: Arc<TurnContext>) -> ToolCallRuntime {
     let router = Arc::new(ToolRouter::from_config(
         &turn_context.tools_config,
@@ -4484,6 +4495,33 @@ async fn build_initial_context_includes_governance_layering_in_strict_mode() {
 }
 
 #[tokio::test]
+async fn build_initial_context_keeps_model_switch_before_governance_layering() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    let mut config = (*turn_context.config).clone();
+    config.governance_path_variant = Some(GovernancePathVariant::StrictV1Shadow);
+    turn_context.config = Arc::new(config);
+    session
+        .set_previous_turn_settings(Some(PreviousTurnSettings {
+            model: "previous-regular-model".to_string(),
+            realtime_active: None,
+        }))
+        .await;
+
+    let initial_context = session.build_initial_context(&turn_context).await;
+    let developer_texts = developer_input_texts(&initial_context);
+    let model_switch_index = developer_texts
+        .iter()
+        .position(|text| text.contains("<model_switch>"))
+        .expect("model switch section should be present");
+    let governance_index = developer_texts
+        .iter()
+        .position(|text| text.contains("<governance_prompt_layers"))
+        .expect("governance section should be present");
+    assert_eq!(model_switch_index, 0);
+    assert_eq!(governance_index, 1);
+}
+
+#[tokio::test]
 async fn build_settings_update_items_includes_governance_layering_in_strict_mode() {
     let (session, previous_context) = make_session_and_context().await;
     let mut current_context = previous_context
@@ -4493,6 +4531,14 @@ async fn build_settings_update_items_includes_governance_layering_in_strict_mode
         )
         .await;
     current_context.realtime_active = true;
+    current_context.developer_instructions = Some("role guidance".to_string());
+    current_context.user_instructions = Some("task guidance".to_string());
+    current_context.final_output_json_schema = Some(json!({
+        "type": "object",
+        "properties": {
+            "status": { "type": "string" }
+        }
+    }));
 
     let mut config = (*current_context.config).clone();
     config.governance_path_variant = Some(GovernancePathVariant::StrictV1Shadow);
@@ -4517,6 +4563,52 @@ async fn build_settings_update_items_includes_governance_layering_in_strict_mode
             .any(|text| text.contains("\"phase\": \"settings_update\"")),
         "expected settings update phase in prompt layering payload, got {developer_texts:?}"
     );
+    let payload = governance_prompt_layers_payload(&update_items)
+        .expect("expected governance prompt-layer payload");
+    assert_eq!(payload["source_presence"]["role"], json!(true));
+    assert_eq!(payload["source_presence"]["task"], json!(true));
+    assert_eq!(payload["active_layers"]["role"]["present"], json!(true));
+    assert_eq!(payload["active_layers"]["task"]["present"], json!(true));
+}
+
+#[tokio::test]
+async fn build_settings_update_items_keeps_model_switch_before_governance_layering() {
+    let (session, previous_context) = make_session_and_context().await;
+    let next_model = if previous_context.model_info.slug == "gpt-5.1" {
+        "gpt-5"
+    } else {
+        "gpt-5.1"
+    };
+    let mut current_context = previous_context
+        .with_model(next_model.to_string(), &session.services.models_manager)
+        .await;
+    let mut config = (*current_context.config).clone();
+    config.governance_path_variant = Some(GovernancePathVariant::StrictV1Shadow);
+    current_context.config = Arc::new(config);
+    session
+        .set_previous_turn_settings(Some(PreviousTurnSettings {
+            model: previous_context.model_info.slug.clone(),
+            realtime_active: Some(previous_context.realtime_active),
+        }))
+        .await;
+
+    let update_items = session
+        .build_settings_update_items(
+            Some(&previous_context.to_turn_context_item()),
+            &current_context,
+        )
+        .await;
+    let developer_texts = developer_input_texts(&update_items);
+    let model_switch_index = developer_texts
+        .iter()
+        .position(|text| text.contains("<model_switch>"))
+        .expect("model switch section should be present");
+    let governance_index = developer_texts
+        .iter()
+        .position(|text| text.contains("<governance_prompt_layers"))
+        .expect("governance section should be present");
+    assert_eq!(model_switch_index, 0);
+    assert_eq!(governance_index, 1);
 }
 
 #[tokio::test]
