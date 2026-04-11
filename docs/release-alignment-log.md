@@ -178,23 +178,30 @@ The main risk surface is therefore seam drift, not direct feature removal.
 ### Post-ingest status
 
 - Rebase completed successfully on `codex/update-0.119-prep`.
+- `cargo test -p codex-config`: passed.
+- `cargo test -p codex-tools`: passed.
+- targeted `cargo test -p codex-core tools::spec::tests::`: passed after aligning the
+  fork E-witness tools with the upstream `codex_tools` plan flow.
+- `cargo test -p codex-core`: completed and now fails only in untouched upstream
+  runtime-sensitive tests:
+  - `shell_snapshot::tests::snapshot_shell_does_not_inherit_stdin`
+  - `shell_snapshot::tests::timed_out_snapshot_shell_is_terminated`
+  - `unified_exec::tests::completed_pipe_commands_preserve_exit_code`
+  - `unified_exec::tests::reusing_completed_process_returns_unknown_process`
+  - `unified_exec::tests::unified_exec_pause_blocks_yield_timeout`
+- `just fix -p codex-tools`: passed.
+- `just fix -p codex-config`: passed.
+- `just fix -p codex-core`: passed.
 - `just fmt`: passed.
-- `cargo test -p codex-core`: blocked before build/test execution by upstream dependency resolution.
-- `just fix -p codex-core`: blocked by the same dependency resolution failure.
-- direct `./tools/argument-comment-lint/run.py`: blocked by the same dependency resolution failure through `cargo metadata`.
-
-Dependency blocker observed during validation:
-
-- `codex-realtime-webrtc` resolves `libwebrtc` from
-  `ssh://git@github.com/juberti-oai/rust-sdks.git`
-- requested revision:
-  `e2d1d1d230c6fc9df171ccb181423f957bb3c1f0`
-- failure mode in this environment:
-  repository authentication / revision fetch failure
+- `./tools/argument-comment-lint/run.py`: passed.
+- `just bazel-lock-update`: passed after installing Bazel via Bazelisk.
+- `just bazel-lock-check`: passed.
+- `MODULE.bazel.lock`: no diff after lock update/check.
 
 What this means:
 
-- the `0.119` alignment itself is complete at the git/rebase level
-- repo-local formatting succeeded
-- compile/test/lint validation that traverses Cargo metadata is currently blocked by
-  the upstream dependency source, so runtime verification remains pending
+- the `0.119` alignment is complete at the rebase level and validated for the fork-owned
+  seam files
+- the remaining full-`codex-core` failures are not in the files touched by the ingest and
+  currently look like pre-existing upstream/environment-sensitive failures rather than
+  fork regressions

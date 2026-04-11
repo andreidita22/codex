@@ -102,6 +102,8 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
     }
     let collab_specs = if config.multi_agent_v2 {
         vec![
+            create_inspect_agent_progress_tool(),
+            create_wait_for_agent_progress_tool(),
             create_spawn_agent_tool_v2(spawn_agent_tool_options(&config)),
             create_send_message_tool(),
             create_wait_agent_tool_v2(wait_agent_timeout_options()),
@@ -109,6 +111,8 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
         ]
     } else {
         vec![
+            create_inspect_agent_progress_tool(),
+            create_wait_for_agent_progress_tool(),
             create_spawn_agent_tool_v1(spawn_agent_tool_options(&config)),
             create_send_input_tool_v1(),
             create_wait_agent_tool_v1(wait_agent_timeout_options()),
@@ -503,9 +507,9 @@ fn test_build_specs_agent_job_worker_tools_enabled() {
             "close_agent",
             "spawn_agents_on_csv",
             "report_agent_job_result",
-            REQUEST_USER_INPUT_TOOL_NAME,
         ],
     );
+    assert_lacks_tool_name(&tools, REQUEST_USER_INPUT_TOOL_NAME);
 }
 
 #[test]

@@ -61,6 +61,23 @@ const RESERVED_MODEL_PROVIDER_IDS: [&str; 3] = [
     LMSTUDIO_OSS_PROVIDER_ID,
 ];
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ContinuationBridgeVariant {
+    #[default]
+    Baton,
+    RichReview,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GovernancePathVariant {
+    #[default]
+    Off,
+    StrictV1Shadow,
+    StrictV1Enforce,
+}
+
 /// Base config deserialized from ~/.codex/config.toml.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -142,6 +159,24 @@ pub struct ConfigToml {
 
     /// Compact prompt used for history compaction.
     pub compact_prompt: Option<String>,
+
+    /// Prompt override used before continuation-bridge generation.
+    pub continuation_bridge_prompt: Option<String>,
+
+    /// Optional file-backed prompt override used before continuation-bridge generation.
+    pub continuation_bridge_prompt_file: Option<AbsolutePathBuf>,
+
+    /// Selected built-in continuation-bridge variant.
+    pub continuation_bridge_variant: Option<ContinuationBridgeVariant>,
+
+    /// Optional model override used only for continuation-bridge generation.
+    pub continuation_bridge_model: Option<String>,
+
+    /// Optional reasoning effort override used only for continuation-bridge generation.
+    pub continuation_bridge_reasoning_effort: Option<ReasoningEffort>,
+
+    /// Optional strict-governance variant.
+    pub governance_path_variant: Option<GovernancePathVariant>,
 
     /// Optional commit attribution text for commit message co-author trailers.
     ///

@@ -16,7 +16,6 @@ use crate::tools::handlers::multi_agents_common::tool_output_response_item;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
-use async_trait::async_trait;
 use codex_protocol::ThreadId;
 use codex_protocol::models::ResponseInputItem;
 use serde::Deserialize;
@@ -31,7 +30,6 @@ const DEFAULT_STALLED_AFTER_MS: i64 = 120_000;
 pub(crate) struct InspectAgentProgressHandler;
 pub(crate) struct WaitForAgentProgressHandler;
 
-#[async_trait]
 impl ToolHandler for InspectAgentProgressHandler {
     type Output = InspectAgentProgressResult;
 
@@ -68,7 +66,6 @@ impl ToolHandler for InspectAgentProgressHandler {
     }
 }
 
-#[async_trait]
 impl ToolHandler for WaitForAgentProgressHandler {
     type Output = WaitForAgentProgressResult;
 

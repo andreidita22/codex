@@ -8,6 +8,8 @@ use codex_config::CONFIG_TOML_FILE;
 use codex_config::config_toml::AgentRoleToml;
 use codex_config::config_toml::AgentsToml;
 use codex_config::config_toml::ConfigToml;
+use codex_config::config_toml::ContinuationBridgeVariant as ContinuationBridgeVariantToml;
+use codex_config::config_toml::GovernancePathVariant as GovernancePathVariantToml;
 use codex_config::config_toml::ProjectConfig;
 use codex_config::config_toml::RealtimeAudioConfig;
 use codex_config::config_toml::RealtimeConfig;
@@ -3385,7 +3387,7 @@ fn continuation_bridge_prompt_prefers_inline_over_file() -> std::io::Result<()> 
 fn loads_continuation_bridge_variant_model_and_reasoning() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cfg = ConfigToml {
-        continuation_bridge_variant: Some(ContinuationBridgeVariant::RichReview),
+        continuation_bridge_variant: Some(ContinuationBridgeVariantToml::RichReview),
         continuation_bridge_model: Some("  gpt-5-codex-mini  ".to_string()),
         continuation_bridge_reasoning_effort: Some(ReasoningEffort::High),
         ..Default::default()
@@ -3417,7 +3419,7 @@ fn loads_continuation_bridge_variant_model_and_reasoning() -> std::io::Result<()
 fn loads_governance_path_variant() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cfg = ConfigToml {
-        governance_path_variant: Some(GovernancePathVariant::StrictV1Shadow),
+        governance_path_variant: Some(GovernancePathVariantToml::StrictV1Shadow),
         ..Default::default()
     };
 

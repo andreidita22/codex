@@ -754,6 +754,7 @@ mod tests {
             thread_id,
             &EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".to_string(),
+                started_at: None,
                 model_context_window: Some(256_000),
                 collaboration_mode_kind: Default::default(),
             }),
@@ -785,6 +786,7 @@ mod tests {
             thread_id,
             &EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".to_string(),
+                started_at: None,
                 model_context_window: Some(256_000),
                 collaboration_mode_kind: Default::default(),
             }),
@@ -859,6 +861,7 @@ mod tests {
             thread_id,
             &EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".to_string(),
+                started_at: None,
                 model_context_window: Some(256_000),
                 collaboration_mode_kind: Default::default(),
             }),
@@ -868,6 +871,8 @@ mod tests {
             &EventMsg::TurnComplete(TurnCompleteEvent {
                 turn_id: "turn-1".to_string(),
                 last_agent_message: Some("finished the audit".to_string()),
+                completed_at: None,
+                duration_ms: None,
             }),
         );
 
@@ -889,6 +894,8 @@ mod tests {
             &EventMsg::TurnAborted(TurnAbortedEvent {
                 turn_id: Some("turn-2".to_string()),
                 reason: TurnAbortReason::Interrupted,
+                completed_at: None,
+                duration_ms: None,
             }),
         );
         let interrupted =
@@ -908,6 +915,7 @@ mod tests {
             thread_id,
             &EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-1".to_string(),
+                started_at: None,
                 model_context_window: Some(256_000),
                 collaboration_mode_kind: Default::default(),
             }),

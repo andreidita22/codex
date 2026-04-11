@@ -1,6 +1,6 @@
 use crate::agent::AgentStatus;
 use crate::codex::Session;
-use crate::error::Result;
+use codex_protocol::error::Result;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use serde::Serialize;

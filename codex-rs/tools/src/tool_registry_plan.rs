@@ -24,6 +24,7 @@ use crate::create_code_mode_tool;
 use crate::create_exec_command_tool;
 use crate::create_followup_task_tool;
 use crate::create_image_generation_tool;
+use crate::create_inspect_agent_progress_tool;
 use crate::create_js_repl_reset_tool;
 use crate::create_js_repl_tool;
 use crate::create_list_agents_tool;
@@ -50,6 +51,7 @@ use crate::create_update_plan_tool;
 use crate::create_view_image_tool;
 use crate::create_wait_agent_tool_v1;
 use crate::create_wait_agent_tool_v2;
+use crate::create_wait_for_agent_progress_tool;
 use crate::create_wait_tool;
 use crate::create_web_search_tool;
 use crate::create_write_stdin_tool;
@@ -228,17 +230,19 @@ pub fn build_tool_registry_plan(
         plan.register_handler("js_repl_reset", ToolHandlerKind::JsReplReset);
     }
 
-    plan.push_spec(
-        create_request_user_input_tool(request_user_input_tool_description(
-            config.default_mode_request_user_input,
-        )),
-        /*supports_parallel_tool_calls*/ false,
-        config.code_mode_enabled,
-    );
-    plan.register_handler(
-        REQUEST_USER_INPUT_TOOL_NAME,
-        ToolHandlerKind::RequestUserInput,
-    );
+    if config.request_user_input_enabled {
+        plan.push_spec(
+            create_request_user_input_tool(request_user_input_tool_description(
+                config.default_mode_request_user_input,
+            )),
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+        plan.register_handler(
+            REQUEST_USER_INPUT_TOOL_NAME,
+            ToolHandlerKind::RequestUserInput,
+        );
+    }
 
     if config.request_permissions_tool_enabled {
         plan.push_spec(
@@ -368,20 +372,41 @@ pub fn build_tool_registry_plan(
     }
 
     if config.collab_tools {
+        plan.push_spec(
+            create_inspect_agent_progress_tool(),
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+        plan.push_spec(
+            create_wait_for_agent_progress_tool(),
+            /*supports_parallel_tool_calls*/ false,
+            config.code_mode_enabled,
+        );
+        plan.register_handler(
+            "inspect_agent_progress",
+            ToolHandlerKind::InspectAgentProgress,
+        );
+        plan.register_handler(
+            "wait_for_agent_progress",
+            ToolHandlerKind::WaitForAgentProgress,
+        );
+
         if config.multi_agent_v2 {
             let agent_type_description =
                 agent_type_description(config, params.default_agent_type_description);
-            plan.push_spec(
-                create_spawn_agent_tool_v2(SpawnAgentToolOptions {
-                    available_models: &config.available_models,
-                    agent_type_description,
-                    hide_agent_type_model_reasoning: config.hide_spawn_agent_metadata,
-                    include_usage_hint: config.spawn_agent_usage_hint,
-                    usage_hint_text: config.spawn_agent_usage_hint_text.clone(),
-                }),
-                /*supports_parallel_tool_calls*/ false,
-                config.code_mode_enabled,
-            );
+            if config.spawn_agent_enabled {
+                plan.push_spec(
+                    create_spawn_agent_tool_v2(SpawnAgentToolOptions {
+                        available_models: &config.available_models,
+                        agent_type_description,
+                        hide_agent_type_model_reasoning: config.hide_spawn_agent_metadata,
+                        include_usage_hint: config.spawn_agent_usage_hint,
+                        usage_hint_text: config.spawn_agent_usage_hint_text.clone(),
+                    }),
+                    /*supports_parallel_tool_calls*/ false,
+                    config.code_mode_enabled,
+                );
+            }
             plan.push_spec(
                 create_send_message_tool(),
                 /*supports_parallel_tool_calls*/ false,
@@ -407,7 +432,9 @@ pub fn build_tool_registry_plan(
                 /*supports_parallel_tool_calls*/ false,
                 config.code_mode_enabled,
             );
-            plan.register_handler("spawn_agent", ToolHandlerKind::SpawnAgentV2);
+            if config.spawn_agent_enabled {
+                plan.register_handler("spawn_agent", ToolHandlerKind::SpawnAgentV2);
+            }
             plan.register_handler("send_message", ToolHandlerKind::SendMessageV2);
             plan.register_handler("followup_task", ToolHandlerKind::FollowupTaskV2);
             plan.register_handler("wait_agent", ToolHandlerKind::WaitAgentV2);
@@ -416,17 +443,19 @@ pub fn build_tool_registry_plan(
         } else {
             let agent_type_description =
                 agent_type_description(config, params.default_agent_type_description);
-            plan.push_spec(
-                create_spawn_agent_tool_v1(SpawnAgentToolOptions {
-                    available_models: &config.available_models,
-                    agent_type_description,
-                    hide_agent_type_model_reasoning: config.hide_spawn_agent_metadata,
-                    include_usage_hint: config.spawn_agent_usage_hint,
-                    usage_hint_text: config.spawn_agent_usage_hint_text.clone(),
-                }),
-                /*supports_parallel_tool_calls*/ false,
-                config.code_mode_enabled,
-            );
+            if config.spawn_agent_enabled {
+                plan.push_spec(
+                    create_spawn_agent_tool_v1(SpawnAgentToolOptions {
+                        available_models: &config.available_models,
+                        agent_type_description,
+                        hide_agent_type_model_reasoning: config.hide_spawn_agent_metadata,
+                        include_usage_hint: config.spawn_agent_usage_hint,
+                        usage_hint_text: config.spawn_agent_usage_hint_text.clone(),
+                    }),
+                    /*supports_parallel_tool_calls*/ false,
+                    config.code_mode_enabled,
+                );
+            }
             plan.push_spec(
                 create_send_input_tool_v1(),
                 /*supports_parallel_tool_calls*/ false,
@@ -448,7 +477,9 @@ pub fn build_tool_registry_plan(
                 /*supports_parallel_tool_calls*/ false,
                 config.code_mode_enabled,
             );
-            plan.register_handler("spawn_agent", ToolHandlerKind::SpawnAgentV1);
+            if config.spawn_agent_enabled {
+                plan.register_handler("spawn_agent", ToolHandlerKind::SpawnAgentV1);
+            }
             plan.register_handler("send_input", ToolHandlerKind::SendInputV1);
             plan.register_handler("wait_agent", ToolHandlerKind::WaitAgentV1);
             plan.register_handler("close_agent", ToolHandlerKind::CloseAgentV1);

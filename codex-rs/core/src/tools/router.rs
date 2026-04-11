@@ -24,6 +24,14 @@ use tracing::instrument;
 
 pub use crate::tools::context::ToolCallSource;
 
+fn model_visible_in_code_mode_only(tool_name: &str) -> bool {
+    !codex_code_mode::is_code_mode_nested_tool(tool_name)
+        && !matches!(
+            tool_name,
+            "inspect_agent_progress" | "wait_for_agent_progress"
+        )
+}
+
 #[derive(Clone, Debug)]
 pub struct ToolCall {
     pub tool_name: String,
@@ -65,7 +73,7 @@ impl ToolRouter {
             specs
                 .iter()
                 .filter_map(|configured_tool| {
-                    if !codex_code_mode::is_code_mode_nested_tool(configured_tool.name()) {
+                    if model_visible_in_code_mode_only(configured_tool.name()) {
                         Some(configured_tool.spec.clone())
                     } else {
                         None

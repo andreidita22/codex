@@ -388,6 +388,7 @@ async fn remote_compact_keeps_continuation_bridge_when_bridge_response_has_trail
                 text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
+            responsesapi_client_metadata: None,
         })
         .await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
@@ -402,6 +403,7 @@ async fn remote_compact_keeps_continuation_bridge_when_bridge_response_has_trail
                 text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
+            responsesapi_client_metadata: None,
         })
         .await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
@@ -481,6 +483,7 @@ async fn remote_compact_uses_bridge_model_override_only_for_bridge_request() -> 
                 text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
+            responsesapi_client_metadata: None,
         })
         .await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;

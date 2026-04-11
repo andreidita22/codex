@@ -23,6 +23,8 @@ use crate::windows_sandbox::WindowsSandboxLevelExt;
 use crate::windows_sandbox::resolve_windows_sandbox_mode;
 use crate::windows_sandbox::resolve_windows_sandbox_private_desktop;
 use codex_config::config_toml::ConfigToml;
+use codex_config::config_toml::ContinuationBridgeVariant as ContinuationBridgeVariantToml;
+use codex_config::config_toml::GovernancePathVariant as GovernancePathVariantToml;
 use codex_config::config_toml::ProjectConfig;
 use codex_config::config_toml::RealtimeAudioConfig;
 use codex_config::config_toml::RealtimeConfig;
@@ -81,7 +83,9 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
+use schemars::JsonSchema;
 use serde::Deserialize;
+use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::io::ErrorKind;
@@ -106,6 +110,15 @@ pub(crate) mod service;
 pub use codex_config::Constrained;
 pub use codex_config::ConstraintError;
 pub use codex_config::ConstraintResult;
+pub use codex_config::permissions_toml::FilesystemPermissionToml;
+pub use codex_config::permissions_toml::FilesystemPermissionsToml;
+pub use codex_config::permissions_toml::NetworkDomainPermissionToml;
+pub use codex_config::permissions_toml::NetworkDomainPermissionsToml;
+pub use codex_config::permissions_toml::NetworkToml;
+pub use codex_config::permissions_toml::NetworkUnixSocketPermissionToml;
+pub use codex_config::permissions_toml::NetworkUnixSocketPermissionsToml;
+pub use codex_config::permissions_toml::PermissionProfileToml;
+pub use codex_config::permissions_toml::PermissionsToml;
 pub use codex_network_proxy::NetworkProxyAuditMetadata;
 pub use codex_sandboxing::system_bwrap_warning;
 pub use managed_features::ManagedFeatures;
@@ -128,16 +141,6 @@ pub enum GovernancePathVariant {
     StrictV1Shadow,
     StrictV1Enforce,
 }
-pub use permissions::FilesystemPermissionToml;
-pub use permissions::FilesystemPermissionsToml;
-pub use permissions::NetworkDomainPermissionToml;
-pub use permissions::NetworkDomainPermissionsToml;
-pub use permissions::NetworkToml;
-pub use permissions::NetworkUnixSocketPermissionToml;
-pub use permissions::NetworkUnixSocketPermissionsToml;
-pub use permissions::PermissionProfileToml;
-pub use permissions::PermissionsToml;
-pub(crate) use permissions::overlay_network_domain_permissions;
 pub(crate) use permissions::resolve_permission_profile;
 pub use service::ConfigService;
 pub use service::ConfigServiceError;
@@ -1870,9 +1873,20 @@ impl Config {
                 Some(trimmed.to_string())
             }
         });
-        let continuation_bridge_variant = cfg.continuation_bridge_variant;
+        let continuation_bridge_variant =
+            cfg.continuation_bridge_variant
+                .map(|variant| match variant {
+                    ContinuationBridgeVariantToml::Baton => ContinuationBridgeVariant::Baton,
+                    ContinuationBridgeVariantToml::RichReview => {
+                        ContinuationBridgeVariant::RichReview
+                    }
+                });
         let continuation_bridge_reasoning_effort = cfg.continuation_bridge_reasoning_effort;
-        let governance_path_variant = cfg.governance_path_variant;
+        let governance_path_variant = cfg.governance_path_variant.map(|variant| match variant {
+            GovernancePathVariantToml::Off => GovernancePathVariant::Off,
+            GovernancePathVariantToml::StrictV1Shadow => GovernancePathVariant::StrictV1Shadow,
+            GovernancePathVariantToml::StrictV1Enforce => GovernancePathVariant::StrictV1Enforce,
+        });
 
         let commit_attribution = cfg.commit_attribution;
 

@@ -618,6 +618,13 @@
       },
       "type": "object"
     },
+    "ContinuationBridgeVariant": {
+      "enum": [
+        "baton",
+        "rich_review"
+      ],
+      "type": "string"
+    },
     "FeatureToml_for_MultiAgentV2ConfigToml": {
       "anyOf": [
         {
@@ -627,13 +634,6 @@
           "$ref": "#/definitions/MultiAgentV2ConfigToml"
         }
       ]
-    },
-    "ContinuationBridgeVariant": {
-      "enum": [
-        "baton",
-        "rich_review"
-      ],
-      "type": "string"
     },
     "FeedbackConfigToml": {
       "additionalProperties": false,
@@ -2107,11 +2107,16 @@
       "type": "string"
     },
     "continuation_bridge_prompt": {
-      "description": "Continuation-bridge prompt used before context compaction.",
+      "description": "Prompt override used before continuation-bridge generation.",
       "type": "string"
     },
     "continuation_bridge_prompt_file": {
-      "$ref": "#/definitions/AbsolutePathBuf"
+      "allOf": [
+        {
+          "$ref": "#/definitions/AbsolutePathBuf"
+        }
+      ],
+      "description": "Optional file-backed prompt override used before continuation-bridge generation."
     },
     "continuation_bridge_reasoning_effort": {
       "allOf": [
@@ -2410,7 +2415,7 @@
           "$ref": "#/definitions/GovernancePathVariant"
         }
       ],
-      "description": "Optional strict-governance variant used by typed packet scaffolding."
+      "description": "Optional strict-governance variant."
     },
     "hide_agent_reasoning": {
       "description": "When set to `true`, `AgentReasoning` events will be hidden from the UI/output. Defaults to `false`.",

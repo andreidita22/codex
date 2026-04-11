@@ -1,8 +1,8 @@
 use crate::Prompt;
 use crate::codex::Session;
 use crate::codex::TurnContext;
-use crate::error::Result;
 use codex_api::ResponseEvent;
+use codex_protocol::error::Result;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;

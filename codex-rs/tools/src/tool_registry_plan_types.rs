@@ -18,6 +18,7 @@ pub enum ToolHandlerKind {
     CodeModeWait,
     DynamicTool,
     FollowupTaskV2,
+    InspectAgentProgress,
     JsRepl,
     JsReplReset,
     ListAgentsV2,
@@ -41,6 +42,7 @@ pub enum ToolHandlerKind {
     ViewImage,
     WaitAgentV1,
     WaitAgentV2,
+    WaitForAgentProgress,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

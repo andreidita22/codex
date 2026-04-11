@@ -9,20 +9,16 @@ pub fn create_inspect_agent_progress_tool() -> ToolSpec {
     let properties = BTreeMap::from([
         (
             "target".to_string(),
-            JsonSchema::String {
-                description: Some(
-                    "Agent id or canonical task name to inspect (from spawn_agent).".to_string(),
-                ),
-            },
+            JsonSchema::string(Some(
+                "Agent id or canonical task name to inspect (from spawn_agent).".to_string(),
+            )),
         ),
         (
             "stalled_after_ms".to_string(),
-            JsonSchema::Number {
-                description: Some(
-                    "Optional stall threshold in milliseconds. If the agent has not emitted meaningful progress since spawn or turn entry within this threshold, the result reports stalled=true."
-                        .to_string(),
-                ),
-            },
+            JsonSchema::number(Some(
+                "Optional stall threshold in milliseconds. If the agent has not emitted meaningful progress since spawn or turn entry within this threshold, the result reports stalled=true."
+                    .to_string(),
+            )),
         ),
     ]);
 
@@ -32,11 +28,11 @@ pub fn create_inspect_agent_progress_tool() -> ToolSpec {
             .to_string(),
         strict: false,
         defer_loading: None,
-        parameters: JsonSchema::Object {
+        parameters: JsonSchema::object(
             properties,
-            required: Some(vec!["target".to_string()]),
-            additional_properties: Some(false.into()),
-        },
+            Some(vec!["target".to_string()]),
+            Some(false.into()),
+        ),
         output_schema: Some(inspect_agent_progress_output_schema()),
     })
 }
@@ -45,48 +41,40 @@ pub fn create_wait_for_agent_progress_tool() -> ToolSpec {
     let properties = BTreeMap::from([
         (
             "target".to_string(),
-            JsonSchema::String {
-                description: Some(
-                    "Agent id or canonical task name to wait on (from spawn_agent).".to_string(),
-                ),
-            },
+            JsonSchema::string(Some(
+                "Agent id or canonical task name to wait on (from spawn_agent).".to_string(),
+            )),
         ),
         (
             "since_seq".to_string(),
-            JsonSchema::Number {
-                description: Some(
-                    "Optional material-progress sequence baseline. The wait completes when the agent's seq becomes greater than this value."
-                        .to_string(),
-                ),
-            },
+            JsonSchema::number(Some(
+                "Optional material-progress sequence baseline. The wait completes when the agent's seq becomes greater than this value."
+                    .to_string(),
+            )),
         ),
         (
             "until_phases".to_string(),
-            JsonSchema::Array {
-                items: Box::new(JsonSchema::String { description: None }),
-                description: Some(
+            JsonSchema::array(
+                JsonSchema::string(/*description*/ None),
+                Some(
                     "Optional set of progress phases that should satisfy the wait immediately when observed."
                         .to_string(),
                 ),
-            },
+            ),
         ),
         (
             "timeout_ms".to_string(),
-            JsonSchema::Number {
-                description: Some(
-                    "Optional timeout in milliseconds. Defaults to 30000, min 10000, max 3600000."
-                        .to_string(),
-                ),
-            },
+            JsonSchema::number(Some(
+                "Optional timeout in milliseconds. Defaults to 30000, min 10000, max 3600000."
+                    .to_string(),
+            )),
         ),
         (
             "stalled_after_ms".to_string(),
-            JsonSchema::Number {
-                description: Some(
-                    "Optional stall threshold in milliseconds used when computing the returned stalled field."
-                        .to_string(),
-                ),
-            },
+            JsonSchema::number(Some(
+                "Optional stall threshold in milliseconds used when computing the returned stalled field."
+                    .to_string(),
+            )),
         ),
     ]);
 
@@ -96,11 +84,11 @@ pub fn create_wait_for_agent_progress_tool() -> ToolSpec {
             .to_string(),
         strict: false,
         defer_loading: None,
-        parameters: JsonSchema::Object {
+        parameters: JsonSchema::object(
             properties,
-            required: Some(vec!["target".to_string()]),
-            additional_properties: Some(false.into()),
-        },
+            Some(vec!["target".to_string()]),
+            Some(false.into()),
+        ),
         output_schema: Some(wait_for_agent_progress_output_schema()),
     })
 }
@@ -361,17 +349,12 @@ mod tests {
         else {
             panic!("inspect_agent_progress should be a function tool");
         };
-        let JsonSchema::Object {
-            properties,
-            required,
-            ..
-        } = parameters
-        else {
-            panic!("inspect_agent_progress should use object params");
-        };
+        let properties = parameters
+            .properties
+            .expect("inspect_agent_progress should use object params");
         assert!(properties.contains_key("target"));
         assert!(properties.contains_key("stalled_after_ms"));
-        assert_eq!(required, Some(vec!["target".to_string()]));
+        assert_eq!(parameters.required, Some(vec!["target".to_string()]));
         let output_schema = output_schema.expect("inspect_agent_progress output schema");
         assert_eq!(
             output_schema["properties"]["canonical_target"]["required"],
@@ -397,20 +380,15 @@ mod tests {
         else {
             panic!("wait_for_agent_progress should be a function tool");
         };
-        let JsonSchema::Object {
-            properties,
-            required,
-            ..
-        } = parameters
-        else {
-            panic!("wait_for_agent_progress should use object params");
-        };
+        let properties = parameters
+            .properties
+            .expect("wait_for_agent_progress should use object params");
         assert!(properties.contains_key("target"));
         assert!(properties.contains_key("since_seq"));
         assert!(properties.contains_key("until_phases"));
         assert!(properties.contains_key("timeout_ms"));
         assert!(properties.contains_key("stalled_after_ms"));
-        assert_eq!(required, Some(vec!["target".to_string()]));
+        assert_eq!(parameters.required, Some(vec!["target".to_string()]));
         let output_schema = output_schema.expect("wait_for_agent_progress output schema");
         assert_eq!(
             output_schema["properties"]["match_reason"]["enum"],
