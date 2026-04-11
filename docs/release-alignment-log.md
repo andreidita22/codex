@@ -116,20 +116,20 @@ The main risk surface is therefore seam drift, not direct feature removal.
 
 | File | Fork-owned bundles affected | Initial risk | Decision | Rationale | Validation |
 | --- | --- | --- | --- | --- | --- |
-| `codex-rs/core/src/config/mod.rs` | continuation bridge, strict-v1 packets, governance mode config, bridge model config | high | `defer` | Upstream `0.119` has major config churn here; this file must be aligned before downstream seam fixes are trusted. | pending |
-| `codex-rs/core/config.schema.json` | strict-v1 config, continuation bridge config | high | `defer` | Schema must follow the final `config/mod.rs` result, not be merged independently. | pending |
-| `codex-rs/core/src/tools/spec.rs` | E-witness tools, thread-spawn containment patch | high | `defer` | Upstream heavily refactored tool/config plumbing in `0.119`; our `spawn_agent` suppression and collab exposure rules must be re-applied carefully. | pending |
-| `codex-rs/core/src/agent/control.rs` | E-witness lifecycle integration, continuation bridge sub-agent context | high | `defer` | Upstream changed sub-agent lifecycle behavior and fork-related control flow; this is a likely collision point for progress and child metadata handling. | pending |
-| `codex-rs/core/src/codex.rs` | continuation bridge injection, governance prompt layering, thread-memory hooks | high | `defer` | Large upstream churn in the main orchestration path means all fork runtime injections need fresh alignment here. | pending |
-| `codex-rs/core/src/compact.rs` | continuation bridge, thread-memory, fail-closed compaction, raw-window trimming | medium-high | `defer` | Upstream changed compaction-adjacent flow again; we need to preserve the fork's post-compaction authoritative artifact insertion and fail-closed rules. | pending |
-| `codex-rs/core/src/compact_remote.rs` | continuation bridge, thread-memory, fail-closed remote compaction | medium-high | `defer` | Same reason as local compaction, but specific to `/responses/compact` wrapping. | pending |
-| `codex-rs/core/src/context_manager/updates.rs` | governance prompt layering update propagation | medium | `defer` | Upstream changes are smaller, but this file is still one of our explicit strict-v1 seams. | pending |
-| `codex-rs/core/src/thread_manager.rs` | E-witness thread/progress flow | medium | `defer` | Upstream touched thread state ownership; check for any effect on progress registry expectations. | pending |
-| `codex-rs/core/src/codex_tests.rs` | governance/compaction expectations | medium | `defer` | Test churn is large; expect snapshot and helper drift once runtime seams are aligned. | pending |
-| `codex-rs/core/src/tools/spec_tests.rs` | E-witness and thread-spawn containment regression coverage | medium | `defer` | Upstream heavily refactored the tests here; re-home our new assertions after `tools/spec.rs` is aligned. | pending |
-| `codex-rs/core/tests/suite/compact.rs` | thread-memory + continuation bridge compaction assertions | medium | `defer` | Test-side overlap only; update after runtime compaction files settle. | pending |
-| `codex-rs/core/tests/suite/compact_remote.rs` | remote compaction assertions | medium | `defer` | Same as above. | pending |
-| `codex-rs/core/tests/suite/compact_resume_fork.rs` | compaction/fork interplay | low-medium | `defer` | Small overlap but worth rechecking because upstream also changed child-history behavior. | pending |
+| `codex-rs/core/src/config/mod.rs` | continuation bridge, strict-v1 packets, governance mode config, bridge model config | high | `merge_both` | Kept the `0.119` config host structure and dropped replayed historical `ConfigToml` blocks, while preserving the live fork seams for continuation bridge and governance path config. | manual rebase stop resolved; compile validation blocked by upstream dependency fetch |
+| `codex-rs/core/config.schema.json` | strict-v1 config, continuation bridge config | high | `merge_both` | Preserved both fork schema surfaces inside the rebased `0.119` schema instead of treating schema and config as separate decisions. | rebased cleanly after config alignment; compile validation blocked by upstream dependency fetch |
+| `codex-rs/core/src/tools/spec.rs` | E-witness tools, thread-spawn containment patch | high | `merge_both` | Kept the newer upstream `codex_tools` ownership/layout and preserved the fork rule that thread-spawned subagents do not receive `spawn_agent`. | manual rebase stop resolved; file matches current fork `main` |
+| `codex-rs/core/src/agent/control.rs` | E-witness lifecycle integration, continuation bridge sub-agent context | high | `merge_both` | Fork delta still applies on top of `0.119`; no manual conflict stop was needed, so the rebased result keeps both upstream lifecycle changes and the fork-owned control-plane behavior. | rebased cleanly; live validation still pending |
+| `codex-rs/core/src/codex.rs` | continuation bridge injection, governance prompt layering, thread-memory hooks | high | `merge_both` | Merged the new `include_permissions_instructions` / `include_environment_context` gates with the fork's governance prompt-layer insertion and current helper-based ordering. | manual rebase stop resolved; compile validation blocked by upstream dependency fetch |
+| `codex-rs/core/src/compact.rs` | continuation bridge, thread-memory, fail-closed compaction, raw-window trimming | medium-high | `merge_both` | Preserved fork-owned authoritative artifact insertion and fail-closed strict behavior while keeping the newer protocol/error import layout from upstream. | manual rebase stop resolved; compile validation blocked by upstream dependency fetch |
+| `codex-rs/core/src/compact_remote.rs` | continuation bridge, thread-memory, fail-closed remote compaction | medium-high | `merge_both` | Same as local compaction: keep `/responses/compact` wrapping behavior from the fork while preserving the `0.119` remote compact structure. | manual rebase stop resolved; compile validation blocked by upstream dependency fetch |
+| `codex-rs/core/src/context_manager/updates.rs` | governance prompt layering update propagation | medium | `merge_both` | Fork prompt-layer update propagation rebased onto the `0.119` update builder without needing a manual stop. | rebased cleanly; compile validation blocked by upstream dependency fetch |
+| `codex-rs/core/src/thread_manager.rs` | E-witness thread/progress flow | medium | `merge_both` | The fork delta remains present after rebase and did not require manual conflict surgery, so upstream thread ownership changes were absorbed without dropping progress behavior. | rebased cleanly; live validation still pending |
+| `codex-rs/core/src/codex_tests.rs` | governance/compaction expectations | medium | `merge_both` | Preserved the newer fork helpers and governance-layer assertions while reconciling test helper drift from `0.119`. | manual rebase stop resolved; runtime tests blocked by upstream dependency fetch |
+| `codex-rs/core/src/tools/spec_tests.rs` | E-witness and thread-spawn containment regression coverage | medium | `merge_both` | Took the current fork `main` test shape, which already contains the thread-spawn containment assertions in the new upstream test layout. | manual rebase stop resolved; runtime tests blocked by upstream dependency fetch |
+| `codex-rs/core/tests/suite/compact.rs` | thread-memory + continuation bridge compaction assertions | medium | `merge_both` | Test-side compaction assertions were rebased with the current fork import/test harness shape. | rebased cleanly; suite not executed because dependency fetch is blocked |
+| `codex-rs/core/tests/suite/compact_remote.rs` | remote compaction assertions | medium | `merge_both` | Remote compaction assertions remain part of the fork delta and rebased cleanly onto `0.119`. | rebased cleanly; suite not executed because dependency fetch is blocked |
+| `codex-rs/core/tests/suite/compact_resume_fork.rs` | compaction/fork interplay | low-medium | `merge_both` | The fork-specific compaction/fork test coverage remains in place after the rebase. | rebased cleanly; suite not executed because dependency fetch is blocked |
 
 ### Upstream themes likely to matter during alignment
 
@@ -174,3 +174,27 @@ The main risk surface is therefore seam drift, not direct feature removal.
 - governance prompt layers still appear at thread start and on settings updates
 - E-witness tools still expose progress snapshots and wait semantics
 - thread-spawned sub-agents still do not receive `spawn_agent`
+
+### Post-ingest status
+
+- Rebase completed successfully on `codex/update-0.119-prep`.
+- `just fmt`: passed.
+- `cargo test -p codex-core`: blocked before build/test execution by upstream dependency resolution.
+- `just fix -p codex-core`: blocked by the same dependency resolution failure.
+- direct `./tools/argument-comment-lint/run.py`: blocked by the same dependency resolution failure through `cargo metadata`.
+
+Dependency blocker observed during validation:
+
+- `codex-realtime-webrtc` resolves `libwebrtc` from
+  `ssh://git@github.com/juberti-oai/rust-sdks.git`
+- requested revision:
+  `e2d1d1d230c6fc9df171ccb181423f957bb3c1f0`
+- failure mode in this environment:
+  repository authentication / revision fetch failure
+
+What this means:
+
+- the `0.119` alignment itself is complete at the git/rebase level
+- repo-local formatting succeeded
+- compile/test/lint validation that traverses Cargo metadata is currently blocked by
+  the upstream dependency source, so runtime verification remains pending
