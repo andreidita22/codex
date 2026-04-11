@@ -30,15 +30,15 @@ This handoff is inserted into `replacement_history` so the successor instance re
 ### Core implementation
 
 - Generator and parser:
-  - `/home/rose/work/codex/fork/codex-rs/core/src/continuation_bridge.rs`
+  - `codex-rs/core/src/continuation_bridge.rs`
 - Bridge variants:
-  - `/home/rose/work/codex/fork/codex-rs/core/src/continuation_bridge/baton.rs`
-  - `/home/rose/work/codex/fork/codex-rs/core/src/continuation_bridge/rich_review.rs`
+  - `codex-rs/core/src/continuation_bridge/baton.rs`
+  - `codex-rs/core/src/continuation_bridge/rich_review.rs`
 - Prompt/schema artifacts:
-  - `/home/rose/work/codex/fork/codex-rs/core/templates/continuation_bridge/variants/baton/prompt.md`
-  - `/home/rose/work/codex/fork/codex-rs/core/templates/continuation_bridge/variants/baton/schema.json`
-  - `/home/rose/work/codex/fork/codex-rs/core/templates/continuation_bridge/variants/rich_review/prompt.md`
-  - `/home/rose/work/codex/fork/codex-rs/core/templates/continuation_bridge/variants/rich_review/schema.json`
+  - `codex-rs/core/templates/continuation_bridge/variants/baton/prompt.md`
+  - `codex-rs/core/templates/continuation_bridge/variants/baton/schema.json`
+  - `codex-rs/core/templates/continuation_bridge/variants/rich_review/prompt.md`
+  - `codex-rs/core/templates/continuation_bridge/variants/rich_review/schema.json`
 
 ### Variants
 
@@ -60,17 +60,17 @@ Bridge generation can use a dedicated model/reasoning effort, with fallback to r
 
 See:
 
-- `/home/rose/work/codex/fork/codex-rs/core/src/config/mod.rs`
-- `/home/rose/work/codex/fork/codex-rs/core/src/codex.rs` (`continuation_bridge_prompt`, `continuation_bridge_variant`)
+- `codex-rs/core/src/config/mod.rs`
+- `codex-rs/core/src/codex.rs` (`continuation_bridge_prompt`, `continuation_bridge_variant`)
 
 ### Compaction integration
 
 Bridge generation is called in both compaction paths:
 
 - Local compaction:
-  - `/home/rose/work/codex/fork/codex-rs/core/src/compact.rs`
+  - `codex-rs/core/src/compact.rs`
 - Remote compaction:
-  - `/home/rose/work/codex/fork/codex-rs/core/src/compact_remote.rs`
+  - `codex-rs/core/src/compact_remote.rs`
 
 In both paths, bridge items are treated as authoritative and inserted before summary/compaction marker in replacement history.
 
@@ -86,10 +86,10 @@ The updater treats the latest prior thread-memory artifact as canonical base and
 
 ### Core implementation
 
-- `/home/rose/work/codex/fork/codex-rs/core/src/governance/thread_memory.rs`
+- `codex-rs/core/src/governance/thread_memory.rs`
 - Prompt/schema artifacts:
-  - `/home/rose/work/codex/fork/codex-rs/core/templates/thread_memory/prompt.md`
-  - `/home/rose/work/codex/fork/codex-rs/core/templates/thread_memory/schema.json`
+  - `codex-rs/core/templates/thread_memory/prompt.md`
+  - `codex-rs/core/templates/thread_memory/schema.json`
 
 ### Update mechanics currently implemented
 
@@ -102,8 +102,8 @@ The updater treats the latest prior thread-memory artifact as canonical base and
 
 Thread-memory generation is invoked in:
 
-- `/home/rose/work/codex/fork/codex-rs/core/src/compact.rs`
-- `/home/rose/work/codex/fork/codex-rs/core/src/compact_remote.rs`
+- `codex-rs/core/src/compact.rs`
+- `codex-rs/core/src/compact_remote.rs`
 
 Gated by `governance_path_variant`:
 
@@ -117,8 +117,8 @@ returns empty output or errors before local/remote compaction completes.
 
 Implemented in:
 
-- `/home/rose/work/codex/fork/codex-rs/core/src/compact.rs`
-- `/home/rose/work/codex/fork/codex-rs/core/src/compact_remote.rs`
+- `codex-rs/core/src/compact.rs`
+- `codex-rs/core/src/compact_remote.rs`
 
 Current behavior:
 
@@ -132,10 +132,10 @@ Current behavior:
 
 If `memories.no_memories_if_mcp_or_web_search = true`, MCP tool calls and web-search calls mark thread memory mode as polluted in state DB:
 
-- `/home/rose/work/codex/fork/codex-rs/core/src/mcp_tool_call.rs`
-- `/home/rose/work/codex/fork/codex-rs/core/src/stream_events_utils.rs`
+- `codex-rs/core/src/mcp_tool_call.rs`
+- `codex-rs/core/src/stream_events_utils.rs`
 - Bridge re-export:
-  - `/home/rose/work/codex/fork/codex-rs/core/src/state_db_bridge.rs`
+  - `codex-rs/core/src/state_db_bridge.rs`
 
 ## 3) Strict-v1 Governance Path (Implemented as Scaffolding + Prompt Layering)
 
@@ -148,7 +148,7 @@ If `memories.no_memories_if_mcp_or_web_search = true`, MCP tool calls and web-se
 
 Defined in:
 
-- `/home/rose/work/codex/fork/codex-rs/core/src/config/mod.rs`
+- `codex-rs/core/src/config/mod.rs`
 
 ### Typed packet model
 
@@ -165,7 +165,7 @@ Implemented packet types and force typing:
 
 Defined in:
 
-- `/home/rose/work/codex/fork/codex-rs/core/src/governance/packets.rs`
+- `codex-rs/core/src/governance/packets.rs`
 
 ### Compiler + provenance witness
 
@@ -176,7 +176,7 @@ Implemented:
 
 Defined in:
 
-- `/home/rose/work/codex/fork/codex-rs/core/src/governance/compiler.rs`
+- `codex-rs/core/src/governance/compiler.rs`
 
 ### Diagnostics taxonomy + transition legality rules
 
@@ -195,8 +195,8 @@ Implemented:
 
 Defined in:
 
-- `/home/rose/work/codex/fork/codex-rs/core/src/governance/diagnostics.rs`
-- `/home/rose/work/codex/fork/codex-rs/core/src/governance/transitions.rs`
+- `codex-rs/core/src/governance/diagnostics.rs`
+- `codex-rs/core/src/governance/transitions.rs`
 
 Current status: these transition checks are implemented and tested, but not yet wired as a runtime gate in the main execution path.
 
@@ -206,16 +206,16 @@ A `<governance_prompt_layers ...>` tagged payload is generated and injected into
 
 Defined in:
 
-- `/home/rose/work/codex/fork/codex-rs/core/src/governance/prompt_layers.rs`
+- `codex-rs/core/src/governance/prompt_layers.rs`
 - contract text:
-  - `/home/rose/work/codex/fork/codex-rs/core/templates/governance/prompt_layering.md`
+  - `codex-rs/core/templates/governance/prompt_layering.md`
 
 Wired in:
 
 - initial context building:
-  - `/home/rose/work/codex/fork/codex-rs/core/src/codex.rs`
+  - `codex-rs/core/src/codex.rs`
 - settings update building:
-  - `/home/rose/work/codex/fork/codex-rs/core/src/context_manager/updates.rs`
+  - `codex-rs/core/src/context_manager/updates.rs`
 
 Recent fix included:
 
@@ -236,14 +236,14 @@ Two tools are exposed (when collaboration tools are enabled):
 ### Core implementation
 
 - progress reducer/registry:
-  - `/home/rose/work/codex/fork/codex-rs/core/src/agent/progress.rs`
+  - `codex-rs/core/src/agent/progress.rs`
 - control-plane API:
-  - `/home/rose/work/codex/fork/codex-rs/core/src/agent/control.rs`
+  - `codex-rs/core/src/agent/control.rs`
 - tool handlers:
-  - `/home/rose/work/codex/fork/codex-rs/core/src/tools/handlers/agent_progress.rs`
+  - `codex-rs/core/src/tools/handlers/agent_progress.rs`
 - tool specs:
-  - `/home/rose/work/codex/fork/codex-rs/tools/src/agent_progress_tool.rs`
-  - `/home/rose/work/codex/fork/codex-rs/core/src/tools/spec.rs`
+  - `codex-rs/tools/src/agent_progress_tool.rs`
+  - `codex-rs/core/src/tools/spec.rs`
 
 ### Thread-spawn containment rule
 
@@ -252,9 +252,9 @@ supervision, but do not receive `spawn_agent`.
 
 Implemented in:
 
-- `/home/rose/work/codex/fork/codex-rs/core/src/tools/spec.rs`
+- `codex-rs/core/src/tools/spec.rs`
 - tests:
-  - `/home/rose/work/codex/fork/codex-rs/core/src/tools/spec_tests.rs`
+  - `codex-rs/core/src/tools/spec_tests.rs`
 
 Current effect:
 
