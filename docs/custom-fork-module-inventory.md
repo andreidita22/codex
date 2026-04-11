@@ -5,8 +5,8 @@ must be revalidated when ingesting new upstream Codex releases.
 
 It complements:
 
-- [docs/fork-updates.md](/home/rose/work/codex/fork/docs/fork-updates.md)
-- [docs/local-builds.md](/home/rose/work/codex/fork/docs/local-builds.md)
+- [docs/fork-updates.md](fork-updates.md)
+- [docs/local-builds.md](local-builds.md)
 
 Those two docs explain the release-ingest workflow. This one explains what the
 fork actually adds on top of upstream.
@@ -25,7 +25,7 @@ release-merge artifact.
 ## How to use this during upstream ingest
 
 1. Rebase or merge the new upstream release into the fork using
-   [docs/fork-updates.md](/home/rose/work/codex/fork/docs/fork-updates.md).
+   [docs/fork-updates.md](fork-updates.md).
 2. Revisit each module listed here, in order.
 3. Resolve conflicts in the listed hot files first.
 4. Re-run the targeted tests for the affected bundle before doing a wider build.
@@ -67,22 +67,22 @@ release-merge artifact.
 
 ### Runtime hot files
 
-- [codex-rs/core/src/continuation_bridge.rs](/home/rose/work/codex/fork/codex-rs/core/src/continuation_bridge.rs)
-- [codex-rs/core/src/continuation_bridge/baton.rs](/home/rose/work/codex/fork/codex-rs/core/src/continuation_bridge/baton.rs)
-- [codex-rs/core/src/continuation_bridge/rich_review.rs](/home/rose/work/codex/fork/codex-rs/core/src/continuation_bridge/rich_review.rs)
-- [codex-rs/core/src/continuation_bridge/subagent_context.rs](/home/rose/work/codex/fork/codex-rs/core/src/continuation_bridge/subagent_context.rs)
-- [codex-rs/core/src/compact.rs](/home/rose/work/codex/fork/codex-rs/core/src/compact.rs)
-- [codex-rs/core/src/compact_remote.rs](/home/rose/work/codex/fork/codex-rs/core/src/compact_remote.rs)
-- [codex-rs/core/src/codex.rs](/home/rose/work/codex/fork/codex-rs/core/src/codex.rs)
-- [codex-rs/core/src/config/mod.rs](/home/rose/work/codex/fork/codex-rs/core/src/config/mod.rs)
-- [codex-rs/core/src/agent/control.rs](/home/rose/work/codex/fork/codex-rs/core/src/agent/control.rs)
+- [codex-rs/core/src/continuation_bridge.rs](../codex-rs/core/src/continuation_bridge.rs)
+- [codex-rs/core/src/continuation_bridge/baton.rs](../codex-rs/core/src/continuation_bridge/baton.rs)
+- [codex-rs/core/src/continuation_bridge/rich_review.rs](../codex-rs/core/src/continuation_bridge/rich_review.rs)
+- [codex-rs/core/src/continuation_bridge/subagent_context.rs](../codex-rs/core/src/continuation_bridge/subagent_context.rs)
+- [codex-rs/core/src/compact.rs](../codex-rs/core/src/compact.rs)
+- [codex-rs/core/src/compact_remote.rs](../codex-rs/core/src/compact_remote.rs)
+- [codex-rs/core/src/codex.rs](../codex-rs/core/src/codex.rs)
+- [codex-rs/core/src/config/mod.rs](../codex-rs/core/src/config/mod.rs)
+- [codex-rs/core/src/agent/control.rs](../codex-rs/core/src/agent/control.rs)
 
 ### Templates and schema artifacts
 
-- [codex-rs/core/templates/continuation_bridge/variants/baton/prompt.md](/home/rose/work/codex/fork/codex-rs/core/templates/continuation_bridge/variants/baton/prompt.md)
-- [codex-rs/core/templates/continuation_bridge/variants/baton/schema.json](/home/rose/work/codex/fork/codex-rs/core/templates/continuation_bridge/variants/baton/schema.json)
-- [codex-rs/core/templates/continuation_bridge/variants/rich_review/prompt.md](/home/rose/work/codex/fork/codex-rs/core/templates/continuation_bridge/variants/rich_review/prompt.md)
-- [codex-rs/core/templates/continuation_bridge/variants/rich_review/schema.json](/home/rose/work/codex/fork/codex-rs/core/templates/continuation_bridge/variants/rich_review/schema.json)
+- [codex-rs/core/templates/continuation_bridge/variants/baton/prompt.md](../codex-rs/core/templates/continuation_bridge/variants/baton/prompt.md)
+- [codex-rs/core/templates/continuation_bridge/variants/baton/schema.json](../codex-rs/core/templates/continuation_bridge/variants/baton/schema.json)
+- [codex-rs/core/templates/continuation_bridge/variants/rich_review/prompt.md](../codex-rs/core/templates/continuation_bridge/variants/rich_review/prompt.md)
+- [codex-rs/core/templates/continuation_bridge/variants/rich_review/schema.json](../codex-rs/core/templates/continuation_bridge/variants/rich_review/schema.json)
 
 ### Config surface
 
@@ -127,11 +127,11 @@ release-merge artifact.
 
 ### Main files
 
-- [scripts/rebase-bolt-on-release.sh](/home/rose/work/codex/fork/scripts/rebase-bolt-on-release.sh)
-- [scripts/build-vscode-binary.sh](/home/rose/work/codex/fork/scripts/build-vscode-binary.sh)
-- [scripts/prune-build-artifacts.sh](/home/rose/work/codex/fork/scripts/prune-build-artifacts.sh)
-- [docs/fork-updates.md](/home/rose/work/codex/fork/docs/fork-updates.md)
-- [docs/local-builds.md](/home/rose/work/codex/fork/docs/local-builds.md)
+- [scripts/rebase-bolt-on-release.sh](../scripts/rebase-bolt-on-release.sh)
+- [scripts/build-vscode-binary.sh](../scripts/build-vscode-binary.sh)
+- [scripts/prune-build-artifacts.sh](../scripts/prune-build-artifacts.sh)
+- [docs/fork-updates.md](fork-updates.md)
+- [docs/local-builds.md](local-builds.md)
 
 ### Upstream conflict risk
 
@@ -163,13 +163,13 @@ release-merge artifact.
 
 ### Runtime hot files
 
-- [codex-rs/core/src/agent/progress.rs](/home/rose/work/codex/fork/codex-rs/core/src/agent/progress.rs)
-- [codex-rs/core/src/agent/control.rs](/home/rose/work/codex/fork/codex-rs/core/src/agent/control.rs)
-- [codex-rs/core/src/thread_manager.rs](/home/rose/work/codex/fork/codex-rs/core/src/thread_manager.rs)
-- [codex-rs/core/src/codex.rs](/home/rose/work/codex/fork/codex-rs/core/src/codex.rs)
-- [codex-rs/core/src/tools/handlers/agent_progress.rs](/home/rose/work/codex/fork/codex-rs/core/src/tools/handlers/agent_progress.rs)
-- [codex-rs/core/src/tools/spec.rs](/home/rose/work/codex/fork/codex-rs/core/src/tools/spec.rs)
-- [codex-rs/tools/src/agent_progress_tool.rs](/home/rose/work/codex/fork/codex-rs/tools/src/agent_progress_tool.rs)
+- [codex-rs/core/src/agent/progress.rs](../codex-rs/core/src/agent/progress.rs)
+- [codex-rs/core/src/agent/control.rs](../codex-rs/core/src/agent/control.rs)
+- [codex-rs/core/src/thread_manager.rs](../codex-rs/core/src/thread_manager.rs)
+- [codex-rs/core/src/codex.rs](../codex-rs/core/src/codex.rs)
+- [codex-rs/core/src/tools/handlers/agent_progress.rs](../codex-rs/core/src/tools/handlers/agent_progress.rs)
+- [codex-rs/core/src/tools/spec.rs](../codex-rs/core/src/tools/spec.rs)
+- [codex-rs/tools/src/agent_progress_tool.rs](../codex-rs/tools/src/agent_progress_tool.rs)
 
 ### Upstream conflict risk
 
@@ -201,10 +201,10 @@ release-merge artifact.
 
 ### Runtime hot files
 
-- [codex-rs/core/src/governance/packets.rs](/home/rose/work/codex/fork/codex-rs/core/src/governance/packets.rs)
-- [codex-rs/core/src/governance/compiler.rs](/home/rose/work/codex/fork/codex-rs/core/src/governance/compiler.rs)
-- [codex-rs/core/src/governance/mod.rs](/home/rose/work/codex/fork/codex-rs/core/src/governance/mod.rs)
-- [codex-rs/core/src/config/mod.rs](/home/rose/work/codex/fork/codex-rs/core/src/config/mod.rs)
+- [codex-rs/core/src/governance/packets.rs](../codex-rs/core/src/governance/packets.rs)
+- [codex-rs/core/src/governance/compiler.rs](../codex-rs/core/src/governance/compiler.rs)
+- [codex-rs/core/src/governance/mod.rs](../codex-rs/core/src/governance/mod.rs)
+- [codex-rs/core/src/config/mod.rs](../codex-rs/core/src/config/mod.rs)
 
 ### Upstream conflict risk
 
@@ -234,9 +234,9 @@ release-merge artifact.
 
 ### Runtime hot files
 
-- [codex-rs/core/src/governance/transitions.rs](/home/rose/work/codex/fork/codex-rs/core/src/governance/transitions.rs)
-- [codex-rs/core/src/governance/diagnostics.rs](/home/rose/work/codex/fork/codex-rs/core/src/governance/diagnostics.rs)
-- [codex-rs/core/src/governance/compiler.rs](/home/rose/work/codex/fork/codex-rs/core/src/governance/compiler.rs)
+- [codex-rs/core/src/governance/transitions.rs](../codex-rs/core/src/governance/transitions.rs)
+- [codex-rs/core/src/governance/diagnostics.rs](../codex-rs/core/src/governance/diagnostics.rs)
+- [codex-rs/core/src/governance/compiler.rs](../codex-rs/core/src/governance/compiler.rs)
 
 ### Upstream conflict risk
 
@@ -265,12 +265,12 @@ release-merge artifact.
 
 ### Runtime hot files
 
-- [codex-rs/core/src/governance/thread_memory.rs](/home/rose/work/codex/fork/codex-rs/core/src/governance/thread_memory.rs)
-- [codex-rs/core/src/compact.rs](/home/rose/work/codex/fork/codex-rs/core/src/compact.rs)
-- [codex-rs/core/src/compact_remote.rs](/home/rose/work/codex/fork/codex-rs/core/src/compact_remote.rs)
-- [codex-rs/core/src/codex.rs](/home/rose/work/codex/fork/codex-rs/core/src/codex.rs)
-- [codex-rs/core/templates/thread_memory/prompt.md](/home/rose/work/codex/fork/codex-rs/core/templates/thread_memory/prompt.md)
-- [codex-rs/core/templates/thread_memory/schema.json](/home/rose/work/codex/fork/codex-rs/core/templates/thread_memory/schema.json)
+- [codex-rs/core/src/governance/thread_memory.rs](../codex-rs/core/src/governance/thread_memory.rs)
+- [codex-rs/core/src/compact.rs](../codex-rs/core/src/compact.rs)
+- [codex-rs/core/src/compact_remote.rs](../codex-rs/core/src/compact_remote.rs)
+- [codex-rs/core/src/codex.rs](../codex-rs/core/src/codex.rs)
+- [codex-rs/core/templates/thread_memory/prompt.md](../codex-rs/core/templates/thread_memory/prompt.md)
+- [codex-rs/core/templates/thread_memory/schema.json](../codex-rs/core/templates/thread_memory/schema.json)
 
 ### Upstream conflict risk
 
@@ -300,10 +300,10 @@ release-merge artifact.
 
 ### Runtime hot files
 
-- [codex-rs/core/src/governance/prompt_layers.rs](/home/rose/work/codex/fork/codex-rs/core/src/governance/prompt_layers.rs)
-- [codex-rs/core/src/codex.rs](/home/rose/work/codex/fork/codex-rs/core/src/codex.rs)
-- [codex-rs/core/src/context_manager/updates.rs](/home/rose/work/codex/fork/codex-rs/core/src/context_manager/updates.rs)
-- [codex-rs/core/templates/governance/prompt_layering.md](/home/rose/work/codex/fork/codex-rs/core/templates/governance/prompt_layering.md)
+- [codex-rs/core/src/governance/prompt_layers.rs](../codex-rs/core/src/governance/prompt_layers.rs)
+- [codex-rs/core/src/codex.rs](../codex-rs/core/src/codex.rs)
+- [codex-rs/core/src/context_manager/updates.rs](../codex-rs/core/src/context_manager/updates.rs)
+- [codex-rs/core/templates/governance/prompt_layering.md](../codex-rs/core/templates/governance/prompt_layering.md)
 
 ### Upstream conflict risk
 
@@ -333,9 +333,9 @@ release-merge artifact.
 
 ### Runtime hot files
 
-- [codex-rs/core/src/compact.rs](/home/rose/work/codex/fork/codex-rs/core/src/compact.rs)
-- [codex-rs/core/src/compact_remote.rs](/home/rose/work/codex/fork/codex-rs/core/src/compact_remote.rs)
-- [codex-rs/core/src/compact_tests.rs](/home/rose/work/codex/fork/codex-rs/core/src/compact_tests.rs)
+- [codex-rs/core/src/compact.rs](../codex-rs/core/src/compact.rs)
+- [codex-rs/core/src/compact_remote.rs](../codex-rs/core/src/compact_remote.rs)
+- [codex-rs/core/src/compact_tests.rs](../codex-rs/core/src/compact_tests.rs)
 
 ### Upstream conflict risk
 
@@ -366,8 +366,8 @@ fork-owned surface once merged to `origin/main`.
 
 ### Runtime hot files
 
-- [codex-rs/core/src/tools/spec.rs](/home/rose/work/codex/fork/codex-rs/core/src/tools/spec.rs)
-- [codex-rs/core/src/tools/spec_tests.rs](/home/rose/work/codex/fork/codex-rs/core/src/tools/spec_tests.rs)
+- [codex-rs/core/src/tools/spec.rs](../codex-rs/core/src/tools/spec.rs)
+- [codex-rs/core/src/tools/spec_tests.rs](../codex-rs/core/src/tools/spec_tests.rs)
 
 ### Upstream conflict risk
 
@@ -384,14 +384,14 @@ fork-owned surface once merged to `origin/main`.
 
 These are the files most likely to conflict again on future upstream ingests:
 
-- [codex-rs/core/src/compact.rs](/home/rose/work/codex/fork/codex-rs/core/src/compact.rs)
-- [codex-rs/core/src/compact_remote.rs](/home/rose/work/codex/fork/codex-rs/core/src/compact_remote.rs)
-- [codex-rs/core/src/codex.rs](/home/rose/work/codex/fork/codex-rs/core/src/codex.rs)
-- [codex-rs/core/src/config/mod.rs](/home/rose/work/codex/fork/codex-rs/core/src/config/mod.rs)
-- [codex-rs/core/config.schema.json](/home/rose/work/codex/fork/codex-rs/core/config.schema.json)
-- [codex-rs/core/src/tools/spec.rs](/home/rose/work/codex/fork/codex-rs/core/src/tools/spec.rs)
-- [codex-rs/core/src/agent/control.rs](/home/rose/work/codex/fork/codex-rs/core/src/agent/control.rs)
-- [codex-rs/core/src/context_manager/updates.rs](/home/rose/work/codex/fork/codex-rs/core/src/context_manager/updates.rs)
+- [codex-rs/core/src/compact.rs](../codex-rs/core/src/compact.rs)
+- [codex-rs/core/src/compact_remote.rs](../codex-rs/core/src/compact_remote.rs)
+- [codex-rs/core/src/codex.rs](../codex-rs/core/src/codex.rs)
+- [codex-rs/core/src/config/mod.rs](../codex-rs/core/src/config/mod.rs)
+- [codex-rs/core/config.schema.json](../codex-rs/core/config.schema.json)
+- [codex-rs/core/src/tools/spec.rs](../codex-rs/core/src/tools/spec.rs)
+- [codex-rs/core/src/agent/control.rs](../codex-rs/core/src/agent/control.rs)
+- [codex-rs/core/src/context_manager/updates.rs](../codex-rs/core/src/context_manager/updates.rs)
 
 ## Minimal post-ingest checklist
 
