@@ -178,6 +178,12 @@ The main risk surface is therefore seam drift, not direct feature removal.
 ### Post-ingest status
 
 - Rebase completed successfully on `codex/update-0.119-prep`.
+- The first prep branch was built from the upstream side rather than from fork
+  `main`, which later caused synthetic GitHub PR conflicts against `main` even
+  though the code alignment itself was already correct.
+- Resolution: treat the validated `0.119` ingest branch as the new canonical
+  fork state, back up the previous `main`, and intentionally swap `main` to the
+  validated branch instead of hand-resolving the false conflict set.
 - `cargo test -p codex-config`: passed.
 - `cargo test -p codex-tools`: passed.
 - targeted `cargo test -p codex-core tools::spec::tests::`: passed after aligning the

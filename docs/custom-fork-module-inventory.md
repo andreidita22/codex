@@ -24,8 +24,8 @@ release-merge artifact.
 
 ## How to use this during upstream ingest
 
-1. Rebase or merge the new upstream release into the fork using
-   [docs/fork-updates.md](fork-updates.md).
+1. Update `upstream-main`, create an ingest branch from current fork `main`,
+   and align the new release using [fork-updates.md](fork-updates.md).
 2. Revisit each module listed here, in order.
 3. Resolve conflicts in the listed hot files first.
 4. Re-run the targeted tests for the affected bundle before doing a wider build.
@@ -36,14 +36,14 @@ release-merge artifact.
 | Bundle | Status | Commits | Main seams |
 | --- | --- | --- | --- |
 | Continuation bridge | merged on `origin/main` | `c96b7f9e5a`, `afac096039`, `ab623fa1d1`, `1088d14864` | `compact.rs`, `compact_remote.rs`, `continuation_bridge.rs`, `config/mod.rs`, templates |
-| Update/build workflow | merged on `origin/main` | `bcd9716227`, `a3aefcd26a`, `532ff58d7d`, `909f9df193` | `scripts/rebase-bolt-on-release.sh`, `scripts/build-vscode-binary.sh`, `scripts/prune-build-artifacts.sh`, docs |
+| Update/build workflow helpers | merged on `origin/main` | `bcd9716227`, `a3aefcd26a`, `532ff58d7d`, `909f9df193` | `scripts/build-vscode-binary.sh`, `scripts/prune-build-artifacts.sh`, docs, legacy `scripts/rebase-bolt-on-release.sh` |
 | E-witness live sub-agent progress | merged on `origin/main` | `bf5705f1b4` | `agent/progress.rs`, `agent/control.rs`, `tools/spec.rs`, tool handlers/specs |
 | strict-v1 p1 packets/compiler | merged on `origin/main` | `4c24a10b79`, `933e19a1e1` | `governance/packets.rs`, `governance/compiler.rs`, `config/mod.rs` |
 | strict-v1 p2 transitions/diagnostics | merged on `origin/main` | `b1841b1abe`, `0b54dfec38` | `governance/transitions.rs`, `governance/diagnostics.rs` |
 | strict-v1 p3 thread memory | merged on `origin/main` | `a611d96b36`, `62adb98ead` | `governance/thread_memory.rs`, `compact.rs`, `compact_remote.rs`, templates |
 | strict-v1 p4 prompt layering | merged on `origin/main` | `6f53f9c9de`, `c287ba8676` | `governance/prompt_layers.rs`, `codex.rs`, `context_manager/updates.rs` |
 | strict-v1 p5 fail-closed compaction window | merged on `origin/main` | `e42a21fdbf`, `39232dce39` | `compact.rs`, `compact_remote.rs`, `compact_tests.rs` |
-| Thread-spawn sub-agent tool containment | branch-local on `HEAD` | current branch commit(s) | `tools/spec.rs`, `tools/spec_tests.rs` |
+| Thread-spawn sub-agent tool containment | merged on `origin/main` | `4c1ce68a44` | `tools/spec.rs`, `tools/spec_tests.rs` |
 
 ## 1. Continuation bridge
 
@@ -119,11 +119,10 @@ release-merge artifact.
 
 ### What it adds
 
-- Release-ingest helper script for rebasing the fork patch stack onto a fresh
-  upstream release tag.
 - Stable local build helpers for the VS Code binary path.
 - Artifact pruning helper tuned for this fork’s Rust build workflow.
-- Maintainer docs for the update/build loop.
+- Maintainer docs for the current fork-as-canonical update/build loop.
+- Legacy release-rebase helper retained only for the older small-patch workflow.
 
 ### Main files
 
@@ -141,10 +140,12 @@ release-merge artifact.
 
 ### Revalidation focus after ingest
 
-- Rebase helper still identifies the correct `rust-v*` base tag.
+- Active update docs still describe the current fork-as-canonical ingest flow.
 - VS Code binary script still copies the correct executable to the stable
   wrapper path.
 - Prune script still matches the active build strategy.
+- If the legacy rebase helper is still kept, it remains clearly documented as
+  legacy-only and is not mistaken for the mainline update path.
 
 ## 3. E-witness live sub-agent progress
 
@@ -350,10 +351,9 @@ release-merge artifact.
 
 ## 9. Thread-spawn sub-agent tool containment
 
-### Status
+### Commit
 
-This bundle is branch-local while this PR is open. It becomes part of the
-fork-owned surface once merged to `origin/main`.
+- `4c1ce68a44` Contain thread-spawned subagent tool surface
 
 ### What it adds
 
