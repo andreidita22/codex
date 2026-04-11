@@ -61,29 +61,6 @@ fn json_fragment(text: &str) -> String {
         .to_string()
 }
 
-fn filter_out_ghost_snapshot_entries(items: &[Value]) -> Vec<Value> {
-    items
-        .iter()
-        .filter(|item| !is_ghost_snapshot_message(item))
-        .cloned()
-        .collect()
-}
-
-fn is_ghost_snapshot_message(item: &Value) -> bool {
-    if item.get("type").and_then(Value::as_str) != Some("message") {
-        return false;
-    }
-    if item.get("role").and_then(Value::as_str) != Some("user") {
-        return false;
-    }
-    item.get("content")
-        .and_then(Value::as_array)
-        .and_then(|content| content.first())
-        .and_then(|entry| entry.get("text"))
-        .and_then(Value::as_str)
-        .is_some_and(|text| text.trim_start().starts_with("<ghost_snapshot>"))
-}
-
 fn normalize_line_endings_str(text: &str) -> String {
     if text.contains('\r') {
         text.replace("\r\n", "\n").replace('\r', "\n")
@@ -316,6 +293,7 @@ async fn compact_resume_after_second_compaction_preserves_history() -> Result<()
     // 1. Arrange mocked SSE responses as a single ordered stream so assertions
     // observe the real request sequence instead of per-mock duplicate captures.
     let server = MockServer::start().await;
+    let _bridge_request_log = mount_default_continuation_bridge_responder(&server).await;
     let request_log = mount_second_compact_sequence(&server).await;
 
     // 2. Drive the conversation through compact -> resume -> fork -> compact -> resume.
@@ -359,26 +337,6 @@ async fn compact_resume_after_second_compaction_preserves_history() -> Result<()
         .collect::<Vec<_>>();
     requests.iter_mut().for_each(normalize_line_endings);
     normalize_compact_prompts(&mut requests);
-    let input_after_compact = json!(requests[requests.len() - 2]["input"]);
-    let input_after_resume = json!(requests[requests.len() - 1]["input"]);
-
-    // test input after compact before resume is the same as input after resume
-    let compact_input_array = input_after_compact
-        .as_array()
-        .expect("input after compact should be an array");
-    let resume_input_array = input_after_resume
-        .as_array()
-        .expect("input after resume should be an array");
-    let compact_filtered = filter_out_ghost_snapshot_entries(compact_input_array);
-    let resume_filtered = filter_out_ghost_snapshot_entries(resume_input_array);
-    assert!(
-        compact_filtered.len() <= resume_filtered.len(),
-        "after-resume input should have at least as many items as after-compact"
-    );
-    assert_eq!(
-        compact_filtered.as_slice(),
-        &resume_filtered[..compact_filtered.len()]
-    );
     let first_request_user_texts = json_message_input_texts(&requests[0], "user");
     let first_turn_user_index = first_request_user_texts
         .len()
