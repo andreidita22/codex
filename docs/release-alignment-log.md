@@ -84,6 +84,100 @@ Copy this shape for future releases.
 - post-ingest cleanup
 ```
 
+## 0.119.0 -> 0.120.0
+
+### Refs
+
+- fork main at prep time: `178d31bbb2`
+- upstream target: `rust-v0.120.0` / `65319eb140`
+- comparison range for upstream prep: `rust-v0.119.0..rust-v0.120.0`
+- comparison range for current fork surface: `main...upstream-main`
+
+### Scale
+
+- upstream delta: `170` files changed, `9307` insertions, `1571` deletions
+- direct overlap with current hot seam set:
+  - `codex-rs/core/src/agent/control.rs`
+  - `codex-rs/core/src/codex.rs`
+  - `codex-rs/core/src/compact.rs`
+  - `codex-rs/core/src/compact_remote.rs`
+  - `codex-rs/core/src/thread_manager.rs`
+  - `codex-rs/core/src/tools/spec_tests.rs`
+  - `codex-rs/core/src/codex_tests.rs`
+  - `codex-rs/tools/src/tool_registry_plan.rs`
+  - `codex-rs/tools/src/tool_registry_plan_tests.rs`
+- upstream does not directly modify the fork-only module files under:
+  - `codex-rs/core/src/governance/`
+  - `codex-rs/core/src/continuation_bridge/`
+  - `codex-rs/core/templates/thread_memory/`
+  - `codex-rs/core/templates/continuation_bridge/`
+
+### High-level read
+
+`0.120` looks like a narrower seam alignment than `0.119`.
+
+The upstream delta is broad across realtime, guardian, exec-server, hooks, and
+TUI work, but the direct overlap with the fork-owned maintenance surface is
+concentrated in a smaller set of already-familiar seam files. The highest-risk
+areas for this ingest are:
+
+- prompt/context construction in `codex.rs`
+- compaction wrapping in `compact.rs` and `compact_remote.rs`
+- agent/thread lifecycle changes in `agent/control.rs` and `thread_manager.rs`
+- tool-plan drift in `codex-rs/tools/src/tool_registry_plan.rs`
+
+### Seam table
+
+| File | Fork-owned bundles affected | Initial risk | Decision | Rationale | Validation |
+| --- | --- | --- | --- | --- | --- |
+| `codex-rs/core/src/agent/control.rs` | continuation bridge sub-agent context, E-witness lifecycle integration | high | `merge_both` | Auto-merged cleanly; the fork's progress seeding/inspection path survived alongside upstream lifecycle changes without needing local edits. | targeted source inspection; `cargo test -p codex-core compact` |
+| `codex-rs/core/src/codex.rs` | continuation bridge injection, governance prompt layering, thread-memory hooks | high | `merge_both` | Auto-merged cleanly; the fork's prompt-layering and compaction hooks remained in place on top of the `0.120` orchestration changes. | targeted source inspection; `cargo test -p codex-core compact` |
+| `codex-rs/core/src/compact.rs` | continuation bridge, thread-memory, fail-closed compaction, raw-window trimming | high | `merge_both` | Auto-merged cleanly; local compaction wrapping remained intact and passed the `compact` slice after the helper/test harness updates below. | `cargo test -p codex-core compact` |
+| `codex-rs/core/src/compact_remote.rs` | continuation bridge, thread-memory, fail-closed remote compaction | high | `merge_both` | Manual merge resolution kept upstream remote-compaction analytics and the fork's authoritative artifact reinsertion/fail-closed behavior. | `cargo test -p codex-core compact` |
+| `codex-rs/core/src/thread_manager.rs` | E-witness thread/progress flow | medium-high | `merge_both` | Auto-merged cleanly; no local rework was needed to preserve the existing progress plumbing. | targeted source inspection |
+| `codex-rs/tools/src/tool_registry_plan.rs` | E-witness tool plan exposure, thread-spawn containment indirectly | high | `merge_both` | Auto-merged cleanly; upstream `0.120` changes did not require a fresh rework of the `0.119` tool-plan seam alignment. | targeted source inspection |
+| `codex-rs/tools/src/tool_registry_plan_tests.rs` | E-witness tool-plan regression coverage | medium | `merge_both` | Auto-merged cleanly with no local edits. | targeted source inspection |
+| `codex-rs/core/src/tools/spec_tests.rs` | thread-spawn containment regression coverage | medium | `merge_both` | Auto-merged cleanly; the fork's containment coverage remains present after the release ingest. | targeted source inspection |
+| `codex-rs/core/src/codex_tests.rs` | governance/compaction expectations | medium | `merge_both` | Auto-merged cleanly; no direct fork-specific test rewrite was needed in this file for `0.120`. | targeted source inspection |
+
+### Post-merge adjustments
+
+- `codex-rs/core/tests/common/streaming_sse.rs`
+  - Added default continuation-bridge request handling inside the streaming SSE
+    helper so bridge-generation requests do not consume queued main-turn
+    responses during compaction tests.
+  - Validation:
+    - `cargo test -p core_test_support continuation_bridge_requests_do_not_consume_queued_streams`
+
+- `codex-rs/core/tests/suite/compact_resume_fork.rs`
+  - Mounted a dedicated continuation-bridge responder for the second-compaction
+    sequence so bridge requests no longer consume the main SSE queue.
+  - Relaxed the raw transport-shape assertion in the second-compaction resume
+    test and kept the semantic user-history assertions, because `0.120` can
+    legitimately deduplicate replayed runtime context on resume.
+  - Accepted the rollback snapshot update where post-rollback replay no longer
+    duplicates the permissions/environment pair after compaction.
+  - Validation:
+    - `cargo test -p codex-core --test all suite::compact_resume_fork::compact_resume_after_second_compaction_preserves_history -- --exact`
+    - `cargo test -p codex-core --test all suite::compact_resume_fork::snapshot_rollback_past_compaction_replays_append_only_history -- --exact`
+    - `cargo test -p codex-core --test all suite::pending_input::steered_user_input_`
+    - `cargo test -p codex-core compact`
+
+### Notes
+
+- Start from fork `main`; do not rebuild this ingest from the upstream side.
+- Default seam decision remains `merge_both` unless upstream clearly supersedes
+  a fork behavior or the fork must preserve an invariant unchanged.
+- The `0.119` ancestry mistake is already documented below and should not be
+  repeated here.
+- Hygiene pass completed on the merged tree:
+  - `just fmt`
+  - `just fix -p core_test_support`
+  - `just fix -p codex-core`
+  - `just bazel-lock-update`
+  - `just bazel-lock-check`
+  - `just argument-comment-lint`
+
 ## 0.118.0 -> 0.119.0
 
 ### Refs
@@ -178,6 +272,12 @@ The main risk surface is therefore seam drift, not direct feature removal.
 ### Post-ingest status
 
 - Rebase completed successfully on `codex/update-0.119-prep`.
+- The first prep branch was built from the upstream side rather than from fork
+  `main`, which later caused synthetic GitHub PR conflicts against `main` even
+  though the code alignment itself was already correct.
+- Resolution: treat the validated `0.119` ingest branch as the new canonical
+  fork state, back up the previous `main`, and intentionally swap `main` to the
+  validated branch instead of hand-resolving the false conflict set.
 - `cargo test -p codex-config`: passed.
 - `cargo test -p codex-tools`: passed.
 - targeted `cargo test -p codex-core tools::spec::tests::`: passed after aligning the

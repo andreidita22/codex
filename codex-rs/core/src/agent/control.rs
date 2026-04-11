@@ -295,6 +295,7 @@ impl AgentControl {
                     .analytics_events_client,
                 client_metadata,
                 new_thread.thread_id,
+                /*parent_thread_id*/ None,
                 thread_config,
                 subagent_source.clone(),
             );
@@ -373,7 +374,7 @@ impl AgentControl {
                 .session
                 .ensure_rollout_materialized()
                 .await;
-            parent_thread.codex.session.flush_rollout().await;
+            parent_thread.codex.session.flush_rollout().await?;
         }
 
         let rollout_path = parent_thread
@@ -675,7 +676,7 @@ impl AgentControl {
         let state = self.upgrade()?;
         let result = if let Ok(thread) = state.get_thread(agent_id).await {
             thread.codex.session.ensure_rollout_materialized().await;
-            thread.codex.session.flush_rollout().await;
+            thread.codex.session.flush_rollout().await?;
             if matches!(thread.agent_status().await, AgentStatus::Shutdown) {
                 Ok(String::new())
             } else {

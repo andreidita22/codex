@@ -3,11 +3,16 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+use serde_json::Value;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::oneshot;
+
+use crate::responses::ev_assistant_message;
+use crate::responses::ev_completed;
+use crate::responses::sse;
 
 /// Streaming SSE chunk payload gated by a per-chunk signal.
 #[derive(Debug)]
@@ -112,6 +117,21 @@ pub async fn start_streaming_sse_server(
                                     return;
                                 }
                             };
+                            if is_continuation_bridge_request(&body) {
+                                if write_sse_headers(&mut stream).await.is_err() {
+                                    return;
+                                }
+                                if stream
+                                    .write_all(default_continuation_bridge_response().as_bytes())
+                                    .await
+                                    .is_err()
+                                {
+                                    return;
+                                }
+                                let _ = stream.flush().await;
+                                let _ = stream.shutdown().await;
+                                return;
+                            }
                             requests.lock().await.push(body);
                             let Some((chunks, completion)) = take_next_stream(&state).await else {
                                 let _ = write_http_response(&mut stream, /*status*/ 500, "no responses queued", "text/plain").await;
@@ -263,6 +283,66 @@ fn unix_ms_now() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+fn is_continuation_bridge_request(body: &[u8]) -> bool {
+    let Ok(body_json): Result<Value, _> = serde_json::from_slice(body) else {
+        return false;
+    };
+    body_json
+        .pointer("/text/format/schema/properties/schema/enum/0")
+        .and_then(Value::as_str)
+        .is_some_and(|schema| {
+            matches!(
+                schema,
+                "continuation_bridge_baton_v1" | "continuation_bridge_v2"
+            )
+        })
+}
+
+fn default_continuation_bridge_response() -> String {
+    let bridge_body = serde_json::json!({
+        "schema": "continuation_bridge_baton_v1",
+        "task": {
+            "objective": "",
+            "current_phase": "",
+            "success_condition": ""
+        },
+        "repo_identity": {
+            "repo_root": "",
+            "branch": "",
+            "head_commit": "",
+            "worktree_dirty": false,
+            "dirty_files": []
+        },
+        "state": {
+            "completed": [],
+            "in_progress": [],
+            "remaining": []
+        },
+        "blocking_state": {
+            "blocking": [],
+            "human_actions_pending": []
+        },
+        "artifacts": {
+            "authoritative_files": [],
+            "partial_implementations": []
+        },
+        "active_subagents": [],
+        "working_thesis": {
+            "current_best_answer": "",
+            "main_caveats": []
+        },
+        "next": {
+            "immediate_next_action": "",
+            "fallback_if_blocked": "",
+            "validation_step": ""
+        }
+    });
+    sse(vec![
+        ev_assistant_message("bridge-message", &bridge_body.to_string()),
+        ev_completed("bridge-response"),
+    ])
 }
 
 #[cfg(test)]
@@ -601,6 +681,75 @@ data: {"type":"response.completed","response":{"id":"resp-1"}}
 
         let bytes = resp.bytes().await.expect("read response body");
         assert_eq!(bytes, response_body.as_bytes());
+
+        let completion = completions.remove(0);
+        let completed_at = completion.await.expect("completion timestamp");
+        assert!(completed_at > 0);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn continuation_bridge_requests_do_not_consume_queued_streams() {
+        let response_body = "event: main\n\nevent: done\n\n";
+        let (server, mut completions) = start_streaming_sse_server(vec![vec![StreamingSseChunk {
+            gate: None,
+            body: response_body.to_string(),
+        }]])
+        .await;
+
+        let bridge_payload = serde_json::json!({
+            "model": "gpt-5.4-mini",
+            "input": [],
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "schema": {
+                                "type": "string",
+                                "enum": ["continuation_bridge_baton_v1"]
+                            }
+                        },
+                        "required": ["schema"]
+                    }
+                }
+            }
+        });
+
+        let bridge_response = reqwest::Client::new()
+            .post(format!("{}/v1/responses", server.uri()))
+            .json(&bridge_payload)
+            .send()
+            .await
+            .expect("send continuation bridge request");
+        assert_eq!(bridge_response.status(), StatusCode::OK);
+        let bridge_body = bridge_response
+            .text()
+            .await
+            .expect("read continuation bridge response");
+        assert!(
+            bridge_body.contains("continuation_bridge_baton_v1"),
+            "expected default continuation bridge payload"
+        );
+
+        let normal_payload = serde_json::json!({
+            "model": "gpt-5.4-mini",
+            "input": [],
+        });
+        let normal_response = reqwest::Client::new()
+            .post(format!("{}/v1/responses", server.uri()))
+            .json(&normal_payload)
+            .send()
+            .await
+            .expect("send normal request");
+        assert_eq!(normal_response.status(), StatusCode::OK);
+        let normal_body = normal_response.text().await.expect("read normal response");
+        assert_eq!(normal_body, response_body);
+
+        let requests = server.requests().await;
+        assert_eq!(requests.len(), 1);
 
         let completion = completions.remove(0);
         let completed_at = completion.await.expect("completion timestamp");
