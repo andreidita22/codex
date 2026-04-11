@@ -167,6 +167,7 @@ pub(crate) struct ToolsConfig {
     pub js_repl_tools_only: bool,
     pub can_request_original_image_detail: bool,
     pub collab_tools: bool,
+    pub spawn_agent_tool: bool,
     pub multi_agent_v2: bool,
     pub request_user_input: bool,
     pub default_mode_request_user_input: bool,
@@ -216,6 +217,11 @@ impl ToolsConfig {
         let include_js_repl_tools_only =
             include_js_repl && features.enabled(Feature::JsReplToolsOnly);
         let include_collab_tools = features.enabled(Feature::Collab);
+        let include_spawn_agent_tool = include_collab_tools
+            && !matches!(
+                session_source,
+                SessionSource::SubAgent(SubAgentSource::ThreadSpawn { .. })
+            );
         let include_multi_agent_v2 = features.enabled(Feature::MultiAgentV2);
         let include_agent_jobs = features.enabled(Feature::SpawnCsv);
         let include_request_user_input = !matches!(session_source, SessionSource::SubAgent(_));
@@ -301,6 +307,7 @@ impl ToolsConfig {
             js_repl_tools_only: include_js_repl_tools_only,
             can_request_original_image_detail: include_original_image_detail,
             collab_tools: include_collab_tools,
+            spawn_agent_tool: include_spawn_agent_tool,
             multi_agent_v2: include_multi_agent_v2,
             request_user_input: include_request_user_input,
             default_mode_request_user_input: include_default_mode_request_user_input,
@@ -799,17 +806,19 @@ pub(crate) fn build_specs_with_discoverable_tools(
             Arc::new(WaitForAgentProgressHandler),
         );
         if config.multi_agent_v2 {
-            push_tool_spec(
-                &mut builder,
-                create_spawn_agent_tool_v2(SpawnAgentToolOptions {
-                    available_models: &config.available_models,
-                    agent_type_description: crate::agent::role::spawn_tool_spec::build(
-                        &config.agent_roles,
-                    ),
-                }),
-                /*supports_parallel_tool_calls*/ false,
-                config.code_mode_enabled,
-            );
+            if config.spawn_agent_tool {
+                push_tool_spec(
+                    &mut builder,
+                    create_spawn_agent_tool_v2(SpawnAgentToolOptions {
+                        available_models: &config.available_models,
+                        agent_type_description: crate::agent::role::spawn_tool_spec::build(
+                            &config.agent_roles,
+                        ),
+                    }),
+                    /*supports_parallel_tool_calls*/ false,
+                    config.code_mode_enabled,
+                );
+            }
             push_tool_spec(
                 &mut builder,
                 create_send_message_tool(),
@@ -844,24 +853,28 @@ pub(crate) fn build_specs_with_discoverable_tools(
                 /*supports_parallel_tool_calls*/ false,
                 config.code_mode_enabled,
             );
-            builder.register_handler("spawn_agent", Arc::new(SpawnAgentHandlerV2));
+            if config.spawn_agent_tool {
+                builder.register_handler("spawn_agent", Arc::new(SpawnAgentHandlerV2));
+            }
             builder.register_handler("send_message", Arc::new(SendMessageHandlerV2));
             builder.register_handler("assign_task", Arc::new(AssignTaskHandlerV2));
             builder.register_handler("wait_agent", Arc::new(WaitAgentHandlerV2));
             builder.register_handler("close_agent", Arc::new(CloseAgentHandlerV2));
             builder.register_handler("list_agents", Arc::new(ListAgentsHandlerV2));
         } else {
-            push_tool_spec(
-                &mut builder,
-                create_spawn_agent_tool_v1(SpawnAgentToolOptions {
-                    available_models: &config.available_models,
-                    agent_type_description: crate::agent::role::spawn_tool_spec::build(
-                        &config.agent_roles,
-                    ),
-                }),
-                /*supports_parallel_tool_calls*/ false,
-                config.code_mode_enabled,
-            );
+            if config.spawn_agent_tool {
+                push_tool_spec(
+                    &mut builder,
+                    create_spawn_agent_tool_v1(SpawnAgentToolOptions {
+                        available_models: &config.available_models,
+                        agent_type_description: crate::agent::role::spawn_tool_spec::build(
+                            &config.agent_roles,
+                        ),
+                    }),
+                    /*supports_parallel_tool_calls*/ false,
+                    config.code_mode_enabled,
+                );
+            }
             push_tool_spec(
                 &mut builder,
                 create_send_input_tool_v1(),
@@ -891,7 +904,9 @@ pub(crate) fn build_specs_with_discoverable_tools(
                 /*supports_parallel_tool_calls*/ false,
                 config.code_mode_enabled,
             );
-            builder.register_handler("spawn_agent", Arc::new(SpawnAgentHandler));
+            if config.spawn_agent_tool {
+                builder.register_handler("spawn_agent", Arc::new(SpawnAgentHandler));
+            }
             builder.register_handler("send_input", Arc::new(SendInputHandler));
             builder.register_handler("wait_agent", Arc::new(WaitAgentHandler));
             builder.register_handler("close_agent", Arc::new(CloseAgentHandler));

@@ -125,16 +125,22 @@ async fn run_compact_task_inner(
                 let err = CodexErr::Fatal(format!(
                     "required thread memory generation returned empty output before local compaction (path_variant={governance_path_variant:?})"
                 ));
-                sess.send_event(&turn_context, EventMsg::Error(err.to_error_event(None)))
-                    .await;
+                sess.send_event(
+                    &turn_context,
+                    EventMsg::Error(err.to_error_event(/*message_prefix*/ None)),
+                )
+                .await;
                 return Err(err);
             }
             Err(err) => {
                 let err = CodexErr::Fatal(format!(
                     "failed generating required thread memory before local compaction (path_variant={governance_path_variant:?}): {err}"
                 ));
-                sess.send_event(&turn_context, EventMsg::Error(err.to_error_event(None)))
-                    .await;
+                sess.send_event(
+                    &turn_context,
+                    EventMsg::Error(err.to_error_event(/*message_prefix*/ None)),
+                )
+                .await;
                 return Err(err);
             }
         }

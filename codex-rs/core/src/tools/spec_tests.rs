@@ -6,6 +6,7 @@ use crate::shell::ShellType;
 use crate::tools::ToolRouter;
 use crate::tools::router::ToolRouterParams;
 use codex_app_server_protocol::AppInfo;
+use codex_protocol::ThreadId;
 use codex_protocol::models::VIEW_IMAGE_TOOL_NAME;
 use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ModelInfo;
@@ -834,6 +835,94 @@ fn test_build_specs_agent_job_worker_tools_enabled() {
             "report_agent_job_result",
         ],
     );
+    assert_lacks_tool_name(&tools, "request_user_input");
+}
+
+#[test]
+fn test_build_specs_thread_spawn_subagent_hides_spawn_agent_tool_v1() {
+    let config = test_config();
+    let model_info = ModelsManager::construct_model_info_offline_for_tests("gpt-5-codex", &config);
+    let features = Features::with_defaults();
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: ThreadId::new(),
+            depth: 1,
+            agent_path: None,
+            agent_nickname: None,
+            agent_role: None,
+        }),
+        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let (tools, _) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*app_tools*/ None,
+        &[],
+    )
+    .build();
+    assert_contains_tool_names(
+        &tools,
+        &[
+            "inspect_agent_progress",
+            "wait_for_agent_progress",
+            "send_input",
+            "resume_agent",
+            "wait_agent",
+            "close_agent",
+        ],
+    );
+    assert_lacks_tool_name(&tools, "spawn_agent");
+    assert_lacks_tool_name(&tools, "request_user_input");
+}
+
+#[test]
+fn test_build_specs_thread_spawn_subagent_hides_spawn_agent_tool_v2() {
+    let config = test_config();
+    let model_info = ModelsManager::construct_model_info_offline_for_tests("gpt-5-codex", &config);
+    let mut features = Features::with_defaults();
+    features.enable(Feature::MultiAgentV2);
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: ThreadId::new(),
+            depth: 1,
+            agent_path: None,
+            agent_nickname: None,
+            agent_role: None,
+        }),
+        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let (tools, _) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*app_tools*/ None,
+        &[],
+    )
+    .build();
+    assert_contains_tool_names(
+        &tools,
+        &[
+            "inspect_agent_progress",
+            "wait_for_agent_progress",
+            "send_message",
+            "assign_task",
+            "wait_agent",
+            "close_agent",
+            "list_agents",
+        ],
+    );
+    assert_lacks_tool_name(&tools, "spawn_agent");
     assert_lacks_tool_name(&tools, "request_user_input");
 }
 
