@@ -70,6 +70,17 @@ pub(crate) fn is_thread_memory_required(path_variant: GovernancePathVariant) -> 
     path_variant != GovernancePathVariant::Off
 }
 
+pub(crate) fn should_regenerate_thread_memory(
+    path_variant: GovernancePathVariant,
+    initial_context_injection: InitialContextInjection,
+) -> bool {
+    is_thread_memory_required(path_variant)
+        && matches!(
+            initial_context_injection,
+            InitialContextInjection::DoNotInject
+        )
+}
+
 pub(crate) async fn run_inline_auto_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
@@ -172,7 +183,10 @@ async fn run_compact_task_inner_impl(
         .clone()
         .for_prompt(&turn_context.model_info.input_modalities);
     let governance_path_variant = turn_context.governance_path_variant();
-    let thread_memory_item = if is_thread_memory_required(governance_path_variant) {
+    let thread_memory_item = if should_regenerate_thread_memory(
+        governance_path_variant,
+        initial_context_injection,
+    ) {
         match generate_thread_memory_item(
             &sess,
             turn_context.as_ref(),

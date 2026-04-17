@@ -27,6 +27,7 @@ mod commit_attribution;
 pub mod config;
 pub mod config_loader;
 pub mod connectors;
+mod context_maintenance;
 mod context_manager;
 mod contextual_user_message;
 mod continuation_bridge;

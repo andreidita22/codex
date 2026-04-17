@@ -11,8 +11,8 @@ use crate::compact::InitialContextInjection;
 use crate::compact::compaction_status_from_result;
 use crate::compact::insert_initial_context_before_last_real_user_or_summary;
 use crate::compact::insert_items_before_last_summary_or_compaction;
-use crate::compact::is_thread_memory_required;
 use crate::compact::retain_recent_raw_conversation_messages;
+use crate::compact::should_regenerate_thread_memory;
 use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
 use crate::context_manager::estimate_response_item_model_visible_bytes;
@@ -165,7 +165,10 @@ async fn run_remote_compact_task_inner_impl(
         output_schema: None,
     };
     let governance_path_variant = turn_context.governance_path_variant();
-    let thread_memory_item = if is_thread_memory_required(governance_path_variant) {
+    let thread_memory_item = if should_regenerate_thread_memory(
+        governance_path_variant,
+        initial_context_injection,
+    ) {
         match generate_thread_memory_item(
             sess.as_ref(),
             turn_context.as_ref(),

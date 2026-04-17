@@ -22,6 +22,10 @@ use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadCompactStartParams;
 use codex_app_server_protocol::ThreadCompactStartResponse;
 use codex_app_server_protocol::ThreadItem;
+use codex_app_server_protocol::ThreadPruneStartParams;
+use codex_app_server_protocol::ThreadPruneStartResponse;
+use codex_app_server_protocol::ThreadRefreshStartParams;
+use codex_app_server_protocol::ThreadRefreshStartResponse;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::TurnCompletedNotification;
@@ -243,6 +247,98 @@ async fn thread_compact_start_triggers_compaction_and_returns_empty_response() -
     assert_eq!(completed.thread_id, thread_id);
     assert_eq!(started_id, completed_id);
 
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn thread_refresh_start_triggers_compaction_and_returns_empty_response() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = responses::start_mock_server().await;
+    let codex_home = TempDir::new()?;
+    write_mock_responses_config_toml(
+        codex_home.path(),
+        &server.uri(),
+        &BTreeMap::default(),
+        AUTO_COMPACT_LIMIT,
+        /*requires_openai_auth*/ None,
+        "mock_provider",
+        COMPACT_PROMPT,
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let thread_id = start_thread(&mut mcp).await?;
+    let request_id = mcp
+        .send_thread_refresh_start_request(ThreadRefreshStartParams {
+            thread_id: thread_id.clone(),
+        })
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    let _refresh: ThreadRefreshStartResponse = to_response(response)?;
+
+    let started = wait_for_context_compaction_started(&mut mcp).await?;
+    let completed = wait_for_context_compaction_completed(&mut mcp).await?;
+    let ThreadItem::ContextCompaction { id: started_id } = started.item else {
+        unreachable!("started item should be context compaction");
+    };
+    let ThreadItem::ContextCompaction { id: completed_id } = completed.item else {
+        unreachable!("completed item should be context compaction");
+    };
+    assert_eq!(started.thread_id, thread_id);
+    assert_eq!(completed.thread_id, thread_id);
+    assert_eq!(started_id, completed_id);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn thread_prune_start_triggers_compaction_and_returns_empty_response() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = responses::start_mock_server().await;
+    let codex_home = TempDir::new()?;
+    write_mock_responses_config_toml(
+        codex_home.path(),
+        &server.uri(),
+        &BTreeMap::default(),
+        AUTO_COMPACT_LIMIT,
+        /*requires_openai_auth*/ None,
+        "mock_provider",
+        COMPACT_PROMPT,
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let thread_id = start_thread(&mut mcp).await?;
+    let request_id = mcp
+        .send_thread_prune_start_request(ThreadPruneStartParams {
+            thread_id: thread_id.clone(),
+        })
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    let _prune: ThreadPruneStartResponse = to_response(response)?;
+
+    let started = wait_for_context_compaction_started(&mut mcp).await?;
+    let completed = wait_for_context_compaction_completed(&mut mcp).await?;
+    let ThreadItem::ContextCompaction { id: started_id } = started.item else {
+        unreachable!("started item should be context compaction");
+    };
+    let ThreadItem::ContextCompaction { id: completed_id } = completed.item else {
+        unreachable!("completed item should be context compaction");
+    };
+    assert_eq!(started.thread_id, thread_id);
+    assert_eq!(completed.thread_id, thread_id);
+    assert_eq!(started_id, completed_id);
     Ok(())
 }
 

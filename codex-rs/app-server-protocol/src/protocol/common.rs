@@ -302,6 +302,14 @@ client_request_definitions! {
         params: v2::ThreadCompactStartParams,
         response: v2::ThreadCompactStartResponse,
     },
+    ThreadRefreshStart => "thread/refresh/start" {
+        params: v2::ThreadRefreshStartParams,
+        response: v2::ThreadRefreshStartResponse,
+    },
+    ThreadPruneStart => "thread/prune/start" {
+        params: v2::ThreadPruneStartParams,
+        response: v2::ThreadPruneStartResponse,
+    },
     ThreadShellCommand => "thread/shellCommand" {
         params: v2::ThreadShellCommandParams,
         response: v2::ThreadShellCommandResponse,

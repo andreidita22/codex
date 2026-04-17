@@ -5020,6 +5020,14 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                     handlers::compact(&sess, sub.id.clone()).await;
                     false
                 }
+                Op::RefreshContext => {
+                    handlers::refresh_context(&sess, sub.id.clone()).await;
+                    false
+                }
+                Op::PruneContext => {
+                    handlers::prune_context(&sess, sub.id.clone()).await;
+                    false
+                }
                 Op::DropMemories => {
                     handlers::drop_memories(&sess, &config, sub.id.clone()).await;
                     false
@@ -5132,6 +5140,8 @@ mod handlers {
     use crate::rollout::RolloutRecorder;
     use crate::rollout::read_session_meta_line;
     use crate::tasks::CompactTask;
+    use crate::tasks::ContextMaintenanceMode;
+    use crate::tasks::ContextMaintenanceTask;
     use crate::tasks::UndoTask;
     use crate::tasks::UserShellCommandMode;
     use crate::tasks::UserShellCommandTask;
@@ -5708,6 +5718,26 @@ mod handlers {
                 text_elements: Vec::new(),
             }],
             CompactTask,
+        )
+        .await;
+    }
+
+    pub async fn refresh_context(sess: &Arc<Session>, sub_id: String) {
+        let turn_context = sess.new_default_turn_with_sub_id(sub_id).await;
+        sess.spawn_task(
+            turn_context,
+            Vec::new(),
+            ContextMaintenanceTask::new(ContextMaintenanceMode::Refresh),
+        )
+        .await;
+    }
+
+    pub async fn prune_context(sess: &Arc<Session>, sub_id: String) {
+        let turn_context = sess.new_default_turn_with_sub_id(sub_id).await;
+        sess.spawn_task(
+            turn_context,
+            Vec::new(),
+            ContextMaintenanceTask::new(ContextMaintenanceMode::Prune),
         )
         .await;
     }

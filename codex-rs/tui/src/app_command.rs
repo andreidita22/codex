@@ -95,6 +95,8 @@ pub(crate) enum AppCommandView<'a> {
         force_reload: bool,
     },
     Compact,
+    RefreshContext,
+    PruneContext,
     SetThreadName {
         name: &'a str,
     },
@@ -248,6 +250,14 @@ impl AppCommand {
         Self(Op::Compact)
     }
 
+    pub(crate) fn refresh_context() -> Self {
+        Self(Op::RefreshContext)
+    }
+
+    pub(crate) fn prune_context() -> Self {
+        Self(Op::PruneContext)
+    }
+
     pub(crate) fn set_thread_name(name: String) -> Self {
         Self(Op::SetThreadName { name })
     }
@@ -370,6 +380,8 @@ impl AppCommand {
                 force_reload: *force_reload,
             },
             Op::Compact => AppCommandView::Compact,
+            Op::RefreshContext => AppCommandView::RefreshContext,
+            Op::PruneContext => AppCommandView::PruneContext,
             Op::SetThreadName { name } => AppCommandView::SetThreadName { name },
             Op::Shutdown => AppCommandView::Shutdown,
             Op::ThreadRollback { num_turns } => AppCommandView::ThreadRollback {

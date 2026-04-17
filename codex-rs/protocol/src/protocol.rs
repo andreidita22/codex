@@ -641,6 +641,12 @@ pub enum Op {
     /// to generate a summary which will be returned as an AgentMessage event.
     Compact,
 
+    /// Refresh continuity artifacts and prune stale compact-context data.
+    RefreshContext,
+
+    /// Deterministically prune compact-context data without semantic regeneration.
+    PruneContext,
+
     /// Drop all persisted memory artifacts and memory-tracking DB rows.
     DropMemories,
 
@@ -781,6 +787,8 @@ impl Op {
             Self::ReloadUserConfig => "reload_user_config",
             Self::ListSkills { .. } => "list_skills",
             Self::Compact => "compact",
+            Self::RefreshContext => "refresh_context",
+            Self::PruneContext => "prune_context",
             Self::DropMemories => "drop_memories",
             Self::UpdateMemories => "update_memories",
             Self::SetThreadName { .. } => "set_thread_name",

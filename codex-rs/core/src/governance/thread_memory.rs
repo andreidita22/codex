@@ -538,23 +538,38 @@ mod tests {
             "thread": {}
         }))
         .expect("thread memory item");
-        let expected = ResponseItem::Message {
-            id: None,
-            role: "developer".to_string(),
-            content: vec![ContentItem::InputText {
-                text: format!(
-                    "<{THREAD_MEMORY_TAG} schema=\"{SCHEMA}\">\n{}\n</{THREAD_MEMORY_TAG}>",
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "schema": SCHEMA,
-                        "thread": {}
-                    }))
-                    .expect("json")
-                ),
-            }],
-            end_turn: None,
-            phase: None,
-        };
 
-        assert_eq!(item, expected);
+        let ResponseItem::Message {
+            role,
+            content,
+            end_turn,
+            phase,
+            ..
+        } = item
+        else {
+            panic!("expected developer message item");
+        };
+        assert_eq!(role, "developer");
+        assert_eq!(end_turn, None);
+        assert_eq!(phase, None);
+        assert_eq!(content.len(), 1);
+        let ContentItem::InputText { text } = &content[0] else {
+            panic!("expected input_text content");
+        };
+        let prefix = format!("<{THREAD_MEMORY_TAG} schema=\"{SCHEMA}\">\n");
+        let suffix = format!("\n</{THREAD_MEMORY_TAG}>");
+        assert!(text.starts_with(&prefix));
+        assert!(text.ends_with(&suffix));
+        let payload = text
+            .strip_prefix(&prefix)
+            .and_then(|value| value.strip_suffix(&suffix))
+            .expect("wrapped thread memory payload");
+        let parsed: serde_json::Value = serde_json::from_str(payload).expect("valid json payload");
+        let expected_payload = serde_json::json!({
+            "schema": SCHEMA,
+            "thread": {}
+        });
+
+        assert_eq!(parsed, expected_payload);
     }
 }

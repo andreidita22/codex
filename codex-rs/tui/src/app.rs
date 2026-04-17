@@ -2499,6 +2499,14 @@ impl App {
                 app_server.thread_compact_start(thread_id).await?;
                 Ok(true)
             }
+            AppCommandView::RefreshContext => {
+                app_server.thread_refresh_start(thread_id).await?;
+                Ok(true)
+            }
+            AppCommandView::PruneContext => {
+                app_server.thread_prune_start(thread_id).await?;
+                Ok(true)
+            }
             AppCommandView::SetThreadName { name } => {
                 app_server
                     .thread_set_name(thread_id, name.to_string())

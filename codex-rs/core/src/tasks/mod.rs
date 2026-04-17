@@ -1,4 +1,5 @@
 mod compact;
+mod context_maintenance;
 mod ghost_snapshot;
 mod regular;
 mod review;
@@ -52,6 +53,8 @@ use codex_protocol::user_input::UserInput;
 
 use codex_features::Feature;
 pub(crate) use compact::CompactTask;
+pub(crate) use context_maintenance::ContextMaintenanceMode;
+pub(crate) use context_maintenance::ContextMaintenanceTask;
 pub(crate) use ghost_snapshot::GhostSnapshotTask;
 pub(crate) use regular::RegularTask;
 pub(crate) use review::ReviewTask;
