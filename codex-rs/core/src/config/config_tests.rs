@@ -3373,7 +3373,7 @@ fn loads_continuation_bridge_prompt_from_config() -> std::io::Result<()> {
     let config = Config::load_from_base_config_with_overrides(
         cfg,
         ConfigOverrides::default(),
-        codex_home.path().to_path_buf(),
+        codex_home.abs(),
     )?;
 
     assert_eq!(
@@ -3403,11 +3403,7 @@ fn loads_continuation_bridge_prompt_from_file() -> std::io::Result<()> {
         ..Default::default()
     };
 
-    let config = Config::load_from_base_config_with_overrides(
-        cfg,
-        overrides,
-        codex_home.path().to_path_buf(),
-    )?;
+    let config = Config::load_from_base_config_with_overrides(cfg, overrides, codex_home.abs())?;
 
     assert_eq!(
         config.continuation_bridge_prompt.as_deref(),
@@ -3437,11 +3433,7 @@ fn continuation_bridge_prompt_prefers_inline_over_file() -> std::io::Result<()> 
         ..Default::default()
     };
 
-    let config = Config::load_from_base_config_with_overrides(
-        cfg,
-        overrides,
-        codex_home.path().to_path_buf(),
-    )?;
+    let config = Config::load_from_base_config_with_overrides(cfg, overrides, codex_home.abs())?;
 
     assert_eq!(
         config.continuation_bridge_prompt.as_deref(),
@@ -3464,7 +3456,7 @@ fn loads_continuation_bridge_variant_model_and_reasoning() -> std::io::Result<()
     let config = Config::load_from_base_config_with_overrides(
         cfg,
         ConfigOverrides::default(),
-        codex_home.path().to_path_buf(),
+        codex_home.abs(),
     )?;
 
     assert_eq!(
@@ -3494,7 +3486,7 @@ fn loads_governance_path_variant() -> std::io::Result<()> {
     let config = Config::load_from_base_config_with_overrides(
         cfg,
         ConfigOverrides::default(),
-        codex_home.path().to_path_buf(),
+        codex_home.abs(),
     )?;
 
     assert_eq!(

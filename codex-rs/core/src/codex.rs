@@ -2979,7 +2979,8 @@ impl Session {
         let loaded_plugins = self
             .services
             .plugins_manager
-            .plugins_for_config(&current_context.config);
+            .plugins_for_config(&current_context.config)
+            .await;
         if let Some(plugin_section) = render_plugins_section(loaded_plugins.capability_summaries())
         {
             full_runtime_sections.push(plugin_section);

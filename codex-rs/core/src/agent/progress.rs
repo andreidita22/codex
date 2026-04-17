@@ -716,8 +716,8 @@ mod tests {
     use codex_protocol::protocol::WarningEvent;
     use codex_protocol::request_permissions::RequestPermissionProfile;
     use codex_protocol::request_permissions::RequestPermissionsEvent;
+    use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
-    use std::path::PathBuf;
     use tokio::time::timeout;
 
     fn thread_id() -> ThreadId {
@@ -957,7 +957,7 @@ mod tests {
                 process_id: None,
                 turn_id: "turn-1".to_string(),
                 command: vec!["rg".to_string(), "--files".to_string()],
-                cwd: PathBuf::from("/tmp"),
+                cwd: AbsolutePathBuf::from_absolute_path("/tmp").expect("/tmp is absolute"),
                 parsed_cmd: vec![],
                 source: Default::default(),
                 interaction_input: None,
@@ -1001,7 +1001,7 @@ mod tests {
                 process_id: None,
                 turn_id: "turn-1".to_string(),
                 command: vec!["rg".to_string(), "--files".to_string()],
-                cwd: PathBuf::from("/tmp"),
+                cwd: AbsolutePathBuf::from_absolute_path("/tmp").expect("/tmp is absolute"),
                 parsed_cmd: vec![],
                 source: Default::default(),
                 interaction_input: None,
