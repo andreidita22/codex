@@ -10,6 +10,8 @@ see [fork-updates.md](fork-updates.md).
   `rust-v*` release.
 - Start every release ingest branch from current fork `main`, never from
   `upstream-main`.
+- Do not open a PR for the raw upstream-ingest branch.
+- Open PRs only for the later fork-alignment branch that contains our commits.
 
 ## Standard sequence
 
@@ -26,7 +28,7 @@ git push origin upstream-main:upstream-main
 ```sh
 git switch main
 git pull --ff-only origin main
-git switch -c codex/update-0.120
+git switch -c codex/update-0.120-ingest
 ```
 
 ### 3. Seed the decision log before editing
@@ -79,18 +81,25 @@ just bazel-lock-update
 just bazel-lock-check
 ```
 
-### 7. Land the branch
-
-- Preferred path: normal PR into fork `main`
-- Fallback only if ancestry was already botched:
-  - back up old `main`
-  - intentionally swap `main` to the validated branch
-
-Backup pattern:
+### 7. Land the ingest branch directly on `main`
 
 ```sh
-git push origin origin/main:refs/heads/backup/main-before-0.120-swap-$(date +%Y%m%d)
+git switch main
+git merge --ff-only codex/update-0.120-ingest
+git push origin main
 ```
+
+### 8. Create the review branch for our commits only
+
+```sh
+git switch main
+git pull --ff-only origin main
+git switch -c codex/update-0.120-align
+```
+
+- Put only fork-specific alignment commits here.
+- Open the PR from this branch into fork `main`.
+- This is the only branch that should receive bot review.
 
 ## Anti-pattern
 

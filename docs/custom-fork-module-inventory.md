@@ -24,12 +24,15 @@ release-merge artifact.
 
 ## How to use this during upstream ingest
 
-1. Update `upstream-main`, create an ingest branch from current fork `main`,
-   and align the new release using [fork-updates.md](fork-updates.md).
+1. Update `upstream-main`, create the local-only ingest branch from current fork
+   `main`, and ingest the upstream release using [fork-updates.md](fork-updates.md).
 2. Revisit each module listed here, in order.
 3. Resolve conflicts in the listed hot files first.
 4. Re-run the targeted tests for the affected bundle before doing a wider build.
-5. Update this document if a custom bundle is merged, removed, or replaced.
+5. Land the validated ingest branch directly onto `main`.
+6. Create the PR branch from the updated `main` and put only fork-owned
+   alignment commits there.
+7. Update this document if a custom bundle is merged, removed, or replaced.
 
 ## Bundle summary
 

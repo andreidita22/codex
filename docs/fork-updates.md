@@ -43,9 +43,14 @@ is already correct.
 - `upstream-main`
   - read-only local tracking branch for the latest upstream `rust-v*` release
   - used for comparison and alignment, not as the base of the ingest branch
-- `codex/update-<version>`
-  - temporary ingest branch created from current fork `main`
-  - used to align the fork to a new upstream release before merging or swapping
+- `codex/update-<version>-ingest`
+  - temporary local-only branch created from current fork `main`
+  - used to ingest the new upstream release into the fork baseline
+  - not opened as a PR
+- `codex/update-<version>-align`
+  - temporary review branch created from the newly updated fork `main`
+  - contains only fork-owned adaptation commits made after the upstream ingest
+  - this is the branch that should be opened as a PR
 
 ## One-time setup
 
@@ -81,10 +86,10 @@ Create the ingest branch from current fork `main`, not from `upstream-main`.
 ```sh
 git switch main
 git pull --ff-only origin main
-git switch -c codex/update-0.120
+git switch -c codex/update-0.120-ingest
 ```
 
-This preserves the correct ancestry for a later PR into fork `main`.
+This branch is for local upstream ingestion only. It is not the review branch.
 
 ### 3. Record the release in the alignment log before editing
 
@@ -135,6 +140,10 @@ This usually means:
 - re-aligning the shared seam files where upstream moved surrounding structure
 - keeping upstream improvements where they do not violate fork invariants
 
+At this stage, prefer mechanical release ingestion and seam reconciliation only.
+Do not bundle extra fork feature work here if it can be separated into a later
+alignment branch.
+
 ### 6. Validate the aligned branch
 
 Run the targeted validation required by the touched seam files. Common examples:
@@ -169,35 +178,45 @@ example:
 - E-witness tool exposure
 - thread-spawn tool containment
 
-### 7. Merge or swap intentionally
+### 7. Land the ingest step locally, without a PR
 
-If the ingest branch was created from `main`, a normal PR into fork `main`
-should now have the correct ancestry and should not show synthetic conflicts.
+Once the upstream ingest branch is validated, land it onto fork `main`
+directly. This keeps the upstream release delta out of PR review and prevents
+bot reviews from wasting effort on upstream commits.
 
-If you ever end up with a validated branch that is intended to supersede `main`
-but was prepared from the wrong ancestry, do not hand-resolve the synthetic PR
-conflicts in GitHub. Use one of these two fixes instead:
-
-1. Rebuild the ingest branch from current fork `main` and replay the alignment.
-2. If the branch is already fully validated and meant to replace `main`, back
-   up the old `main` and intentionally swap `main` to the validated branch.
-
-Backup pattern:
+Typical pattern:
 
 ```sh
-git push origin origin/main:refs/heads/backup/main-before-0.120-swap-$(date +%Y%m%d)
-```
-
-Intentional swap pattern:
-
-```sh
-git branch -f main codex/update-0.120
-git push origin codex/update-0.120:main --force-with-lease
 git switch main
+git merge --ff-only codex/update-0.120-ingest
+git push origin main
 ```
 
-Only do this when the branch has already been validated as the new canonical
-fork state.
+If a fast-forward is not possible because you intentionally used a temporary
+integration branch with local-only commits, merge or swap intentionally only
+after validation.
+
+### 8. Create the PR branch for fork-owned alignment commits
+
+Now branch from the newly updated fork `main` and place only fork-specific
+adaptation commits there.
+
+```sh
+git switch main
+git pull --ff-only origin main
+git switch -c codex/update-0.120-align
+```
+
+This branch should contain only:
+
+- fork-owned follow-up adjustments
+- reviewable policy/alignment choices
+- any fixes discovered only after the upstream ingest baseline was landed
+
+Open the PR from `codex/update-0.120-align` into fork `main`.
+
+This keeps bot review focused on the fork delta instead of the upstream release
+churn.
 
 ## Mistake to avoid
 
@@ -223,7 +242,10 @@ The correct pattern is:
 2. branch from current fork `main`
 3. ingest upstream changes there
 4. validate
-5. merge or intentionally swap
+5. land the ingest onto `main` locally, without a PR
+6. branch again from the updated `main`
+7. commit only fork-owned alignment work
+8. open the PR only for that fork-owned alignment branch
 
 ## Legacy note
 
