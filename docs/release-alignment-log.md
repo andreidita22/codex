@@ -180,6 +180,55 @@ areas for this ingest are:
 
 ## 0.118.0 -> 0.119.0
 
+## 0.120.0 -> 0.121.0 (prep)
+
+### Refs
+
+- fork main at prep time: `c06783bd26`
+- upstream target: `rust-v0.121.0` / `d65ed92a5e` (tag object `b3442f5e85`)
+- comparison range for upstream release delta: `rust-v0.120.0..rust-v0.121.0`
+- comparison range for fork ingest surface: `main..upstream-main`
+
+### Scale
+
+- upstream release delta (`rust-v0.120.0..rust-v0.121.0`): `764` files changed, `34540` insertions, `9361` deletions
+- current fork-main vs upstream target (`main..upstream-main`): `822` files changed, `34862` insertions, `19713` deletions
+- direct overlap (`main...upstream-main`): `764` files
+- known fork seam overlap candidates present in upstream delta: `14` files
+
+### High-level read (pre-alignment)
+
+Initial risk surface remains seam-drift, not fork-module replacement:
+
+- upstream continues to move high-touch core orchestration files
+- our compaction/governance seams remain in shared host files (`codex.rs`, `compact*.rs`, config/schema)
+- strict-governance and continuation/thread-memory wrappers need explicit preservation while absorbing upstream host-shape changes
+
+### Prep seam table (before decisions)
+
+| File | Fork-owned bundles affected | Initial risk | Decision | Rationale | Validation |
+| --- | --- | --- | --- | --- | --- |
+| `codex-rs/core/src/config/mod.rs` | continuation bridge config, governance mode/profile config | high | `defer` | Shared config host file; likely both upstream structure and fork keys changed. | pending |
+| `codex-rs/core/config.schema.json` | strict/governance and continuation config schema | high | `defer` | Schema must stay aligned with config changes; drift here is a common breakage source. | pending |
+| `codex-rs/core/src/tools/spec.rs` | E-witness tools, thread-spawn tool containment | high | `defer` | Tool registry drift can silently drop custom tools or containment logic. | pending |
+| `codex-rs/core/src/agent/control.rs` | E-witness lifecycle integration, continuation bridge sub-agent carryover | high | `defer` | Upstream lifecycle changes may conflict with progress-state semantics. | pending |
+| `codex-rs/core/src/codex.rs` | compaction injection points, governance prompt layering hooks | high | `defer` | Largest orchestrator seam; needs careful merge-both handling. | pending |
+| `codex-rs/core/src/compact.rs` | local compaction wrappers, bridge/thread-memory insertion, fail-closed behavior | high | `defer` | Primary compaction seam for fork-owned continuity behavior. | pending |
+| `codex-rs/core/src/compact_remote.rs` | remote compaction wrapping and post-compact artifact insertion | high | `defer` | Must preserve wrapper semantics around `/responses/compact`. | pending |
+| `codex-rs/core/src/context_manager/updates.rs` | governance prompt-layer settings update propagation | medium | `defer` | Host update ordering changes can drop prompt-layer sections. | pending |
+| `codex-rs/core/src/thread_manager.rs` | E-witness continuity during fork/resume/history reconstruction | medium | `defer` | Regression risk around thread lifecycle reconstruction. | pending |
+| `codex-rs/core/src/codex_tests.rs` | seam-level behavior assertions | medium | `defer` | Tests need re-alignment to host refactors while preserving fork expectations. | pending |
+| `codex-rs/core/src/tools/spec_tests.rs` | E-witness + containment test coverage | medium | `defer` | Ensures custom tools remain exposed and constrained as expected. | pending |
+| `codex-rs/core/tests/suite/compact.rs` | local compaction behavior coverage | medium | `defer` | Must confirm bridge/memory/fail-closed semantics survive host changes. | pending |
+| `codex-rs/core/tests/suite/compact_remote.rs` | remote compaction behavior coverage | medium | `defer` | Must confirm post-compact insertion and replacement history shape. | pending |
+| `codex-rs/core/tests/suite/compact_resume_fork.rs` | compact/fork/resume interplay | low-medium | `defer` | Ensures continuity across rollback/fork edges after alignment. | pending |
+
+### Notes (prep)
+
+- `origin/upstream-main` has been force-synced to `rust-v0.121.0` (`d65ed92a5e`) as the canonical mirror.
+- Ingest branch was created from fork canonical line: `codex/update-0.121`.
+- Next step is seam-by-seam alignment with `merge_both` as default decision and explicit rationale for exceptions.
+
 ### Refs
 
 - fork main at prep time: `686aaae0a3`
