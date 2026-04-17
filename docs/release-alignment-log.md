@@ -204,30 +204,42 @@ Initial risk surface remains seam-drift, not fork-module replacement:
 - our compaction/governance seams remain in shared host files (`codex.rs`, `compact*.rs`, config/schema)
 - strict-governance and continuation/thread-memory wrappers need explicit preservation while absorbing upstream host-shape changes
 
-### Prep seam table (before decisions)
+### Seam table (alignment decisions)
 
 | File | Fork-owned bundles affected | Initial risk | Decision | Rationale | Validation |
 | --- | --- | --- | --- | --- | --- |
-| `codex-rs/core/src/config/mod.rs` | continuation bridge config, governance mode/profile config | high | `defer` | Shared config host file; likely both upstream structure and fork keys changed. | pending |
-| `codex-rs/core/config.schema.json` | strict/governance and continuation config schema | high | `defer` | Schema must stay aligned with config changes; drift here is a common breakage source. | pending |
-| `codex-rs/core/src/tools/spec.rs` | E-witness tools, thread-spawn tool containment | high | `defer` | Tool registry drift can silently drop custom tools or containment logic. | pending |
-| `codex-rs/core/src/agent/control.rs` | E-witness lifecycle integration, continuation bridge sub-agent carryover | high | `defer` | Upstream lifecycle changes may conflict with progress-state semantics. | pending |
-| `codex-rs/core/src/codex.rs` | compaction injection points, governance prompt layering hooks | high | `defer` | Largest orchestrator seam; needs careful merge-both handling. | pending |
-| `codex-rs/core/src/compact.rs` | local compaction wrappers, bridge/thread-memory insertion, fail-closed behavior | high | `defer` | Primary compaction seam for fork-owned continuity behavior. | pending |
-| `codex-rs/core/src/compact_remote.rs` | remote compaction wrapping and post-compact artifact insertion | high | `defer` | Must preserve wrapper semantics around `/responses/compact`. | pending |
-| `codex-rs/core/src/context_manager/updates.rs` | governance prompt-layer settings update propagation | medium | `defer` | Host update ordering changes can drop prompt-layer sections. | pending |
-| `codex-rs/core/src/thread_manager.rs` | E-witness continuity during fork/resume/history reconstruction | medium | `defer` | Regression risk around thread lifecycle reconstruction. | pending |
-| `codex-rs/core/src/codex_tests.rs` | seam-level behavior assertions | medium | `defer` | Tests need re-alignment to host refactors while preserving fork expectations. | pending |
-| `codex-rs/core/src/tools/spec_tests.rs` | E-witness + containment test coverage | medium | `defer` | Ensures custom tools remain exposed and constrained as expected. | pending |
-| `codex-rs/core/tests/suite/compact.rs` | local compaction behavior coverage | medium | `defer` | Must confirm bridge/memory/fail-closed semantics survive host changes. | pending |
-| `codex-rs/core/tests/suite/compact_remote.rs` | remote compaction behavior coverage | medium | `defer` | Must confirm post-compact insertion and replacement history shape. | pending |
-| `codex-rs/core/tests/suite/compact_resume_fork.rs` | compact/fork/resume interplay | low-medium | `defer` | Ensures continuity across rollback/fork edges after alignment. | pending |
+| `codex-rs/core/src/config/mod.rs` | continuation bridge config, governance mode/profile config | high | `merge_both` | Accepted upstream config host evolution while keeping fork keys and defaults intact. | merged cleanly; covered by focused `codex-core` compile/tests |
+| `codex-rs/core/config.schema.json` | strict/governance and continuation config schema | high | `merge_both` | Preserved fork schema surfaces while ingesting upstream schema evolution. | merged cleanly; no schema regeneration needed in this turn |
+| `codex-rs/core/src/tools/spec.rs` | E-witness tools, thread-spawn tool containment | high | `merge_both` | Retained fork tool visibility/containment semantics on top of upstream tool-surface updates. | merged cleanly; validated by `tools::spec::tests::` |
+| `codex-rs/core/src/agent/control.rs` | E-witness lifecycle integration, continuation bridge sub-agent carryover | high | `merge_both` | Kept fork progress/lifecycle behavior while absorbing upstream control-plane changes. | merged cleanly; compile passed in focused run |
+| `codex-rs/core/src/codex.rs` | compaction injection points, governance prompt layering hooks | high | `merge_both` | Preserved fork compaction/governance insertion seams; fixed one async plugin-loading drift after merge. | follow-up fix committed in `2afd7d4aae`; focused tests pass |
+| `codex-rs/core/src/compact.rs` | local compaction wrappers, bridge/thread-memory insertion, fail-closed behavior | high | `merge_both` | Kept local-compaction fork wrappers and fail-closed semantics while ingesting upstream host changes. | merged cleanly; compile passed in focused run |
+| `codex-rs/core/src/compact_remote.rs` | remote compaction wrapping and post-compact artifact insertion | high | `merge_both` | Preserved post-`/responses/compact` artifact reinsertion semantics over upstream remote changes. | merged cleanly; compile passed in focused run |
+| `codex-rs/core/src/context_manager/updates.rs` | governance prompt-layer settings update propagation | medium | `merge_both` | Maintained governance prompt-layer propagation while accepting upstream update mechanics. | merged cleanly; compile passed in focused run |
+| `codex-rs/core/src/thread_manager.rs` | E-witness continuity during fork/resume/history reconstruction | medium | `merge_both` | Kept fork continuity expectations while ingesting upstream thread-manager updates. | merged cleanly; compile passed in focused run |
+| `codex-rs/core/src/codex_tests.rs` | seam-level behavior assertions | medium | `merge_both` | Accepted upstream test-host changes and retained fork seam expectations. | compile passed; full-suite deferred to final validation checkpoint |
+| `codex-rs/core/src/tools/spec_tests.rs` | E-witness + containment test coverage | medium | `merge_both` | Resolved conflict by preserving both upstream namespace assertions and fork absence assertions. | `tools::spec::tests::` passed |
+| `codex-rs/core/tests/suite/compact.rs` | local compaction behavior coverage | medium | `merge_both` | Carried fork compaction expectations on top of upstream suite updates. | merged cleanly; full suite deferred |
+| `codex-rs/core/tests/suite/compact_remote.rs` | remote compaction behavior coverage | medium | `merge_both` | Carried fork remote-compaction expectations on top of upstream suite updates. | merged cleanly; full suite deferred |
+| `codex-rs/core/tests/suite/compact_resume_fork.rs` | compact/fork/resume interplay | low-medium | `merge_both` | Preserved fork continuity/fork-resume expectations while ingesting upstream updates. | merged cleanly; full suite deferred |
 
 ### Notes (prep)
 
 - `origin/upstream-main` has been force-synced to `rust-v0.121.0` (`d65ed92a5e`) as the canonical mirror.
 - Ingest branch was created from fork canonical line: `codex/update-0.121`.
-- Next step is seam-by-seam alignment with `merge_both` as default decision and explicit rationale for exceptions.
+- Alignment was applied with `merge_both` as the default across all tracked seam candidates.
+- Merge conflicts were limited to:
+  - `codex-rs/Cargo.toml`
+  - `codex-rs/core/src/tools/handlers/multi_agents_tests.rs`
+  - `codex-rs/core/src/tools/spec_tests.rs`
+- Follow-up compile-drift fixes after merge:
+  - async await for `plugins_for_config()` in `codex.rs`
+  - absolute-path test updates in `agent/progress.rs` and `config/config_tests.rs`
+  - lockfile workspace-version refresh to `0.121.0`
+- Fast sanity checks run in this checkpoint:
+  - `cd codex-rs && just fmt`
+  - `cd codex-rs && cargo test -p codex-core tools::spec::tests::`
+  - `cd codex-rs && cargo test -p codex-core handler_rejects_non_function_payloads`
 
 ### Refs
 
