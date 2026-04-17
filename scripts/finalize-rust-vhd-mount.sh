@@ -42,6 +42,30 @@ if ! mountpoint -q /mnt/rust-build; then
   mount "$dev" /mnt/rust-build
 fi
 
+cache_owner="${CODEX_RUST_CACHE_OWNER:-}"
+if [[ -z "$cache_owner" ]]; then
+  mapfile -t candidate_users < <(
+    getent passwd | awk -F: '$3 >= 1000 && $1 != "nobody" && $6 ~ "^/home/" { print $1 }'
+  )
+  if [[ ${#candidate_users[@]} -eq 1 ]]; then
+    cache_owner="${candidate_users[0]}"
+  fi
+fi
+
+if [[ -n "$cache_owner" ]]; then
+  if ! id "$cache_owner" >/dev/null 2>&1; then
+    echo "Configured CODEX_RUST_CACHE_OWNER does not exist: $cache_owner" >&2
+    exit 1
+  fi
+  install -d -m 0775 -o "$cache_owner" -g "$cache_owner" /mnt/rust-build/cargo-target
+else
+  install -d -m 0775 /mnt/rust-build/cargo-target
+  cat >&2 <<'EOF'
+warning: could not infer a single non-root cache owner; /mnt/rust-build/cargo-target remains root-owned.
+Set CODEX_RUST_CACHE_OWNER=<user> and re-run this script if non-root cargo commands need write access.
+EOF
+fi
+
 uuid="$(blkid -s UUID -o value "$dev" | tr -d '[:space:]')"
 if [[ -z "$uuid" ]]; then
   echo "Could not read UUID for $dev" >&2

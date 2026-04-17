@@ -40,6 +40,10 @@ One-time VHD setup helpers:
 - Windows (Admin): `/home/rose/work/codex/fork/scripts/setup-rust-vhd.ps1`
 - WSL (root): `/home/rose/work/codex/fork/scripts/finalize-rust-vhd-mount.sh /dev/sdX`
 
+`finalize-rust-vhd-mount.sh` also prepares `/mnt/rust-build/cargo-target` for a
+normal user session. If user inference is ambiguous, re-run it with
+`CODEX_RUST_CACHE_OWNER=<user>`.
+
 For plain `cargo` use, shell startup prepends a `cargo` shim directory.
 The shim walks upward from the current directory, and if it finds a repo root
 with `scripts/cargo-workflow.sh`, it runs `ensure-mount` before delegating to

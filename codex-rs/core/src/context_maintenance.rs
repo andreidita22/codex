@@ -141,6 +141,10 @@ pub(crate) async fn run_prune(
 
     let original_len = raw_history.len();
     let (mut pruned_history, mut removed_count) = prune_superseded_artifacts(raw_history);
+    let (next_history, manifest_removed) =
+        remove_artifact_kind(pruned_history, ArtifactKind::PruneManifest);
+    pruned_history = next_history;
+    removed_count = removed_count.saturating_add(manifest_removed);
     let (next_history, summary_removed) = retain_latest_summary_message(pruned_history);
     pruned_history = next_history;
     removed_count = removed_count.saturating_add(summary_removed);
@@ -305,9 +309,12 @@ fn tagged_artifact_kind(item: &ResponseItem) -> Option<ArtifactKind> {
 }
 
 fn has_tagged_block(text: &str, tag: &str) -> bool {
-    let open_tag_prefix = format!("<{tag}");
-    let close_tag = format!("</{tag}>");
-    text.contains(&open_tag_prefix) && text.contains(&close_tag)
+    has_tagged_block_prefix(text, "<", tag) && has_tagged_block_prefix(text, "</", tag)
+}
+
+fn has_tagged_block_prefix(text: &str, prefix: &str, tag: &str) -> bool {
+    text.match_indices(prefix)
+        .any(|(idx, _)| text[idx + prefix.len()..].starts_with(tag))
 }
 
 fn build_prune_manifest_item(
@@ -343,4 +350,56 @@ async fn send_turn_started_event(sess: &Session, turn_context: &TurnContext) {
         collaboration_mode_kind: turn_context.collaboration_mode.mode,
     });
     sess.send_event(turn_context, start_event).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    fn developer_message(text: &str) -> ResponseItem {
+        ResponseItem::Message {
+            id: None,
+            role: "developer".to_string(),
+            content: vec![ContentItem::InputText {
+                text: text.to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        }
+    }
+
+    #[test]
+    fn prune_removes_all_but_latest_prune_manifest() {
+        let items = vec![
+            developer_message("<prune_manifest>old</prune_manifest>"),
+            developer_message("<prune_manifest>new</prune_manifest>"),
+        ];
+
+        let (items, removed) = prune_superseded_artifacts(items);
+        assert_eq!(removed, 1);
+        assert_eq!(
+            items,
+            vec![developer_message("<prune_manifest>new</prune_manifest>")]
+        );
+    }
+
+    #[test]
+    fn tagged_block_detection_does_not_require_allocated_tag_strings() {
+        assert_eq!(
+            has_tagged_block(
+                "<thread_memory schema=\"x\">payload</thread_memory>",
+                THREAD_MEMORY_TAG,
+            ),
+            true
+        );
+        assert_eq!(
+            has_tagged_block("<thread_memory>payload", THREAD_MEMORY_TAG),
+            false
+        );
+        assert_eq!(
+            has_tagged_block("payload</thread_memory>", THREAD_MEMORY_TAG),
+            false
+        );
+    }
 }

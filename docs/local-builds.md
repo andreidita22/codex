@@ -52,8 +52,8 @@ Use the helper:
 Plain `cargo` is also intercepted now for repos that expose
 `scripts/cargo-workflow.sh`.
 The shell shim ensures `/mnt/rust-build` is mounted before delegating to the
-real Cargo, while repo-local Cargo config keeps the default target path on the
-dedicated rust disk.
+real Cargo, and the shim is responsible for exporting the dedicated target path
+for local fork sessions.
 
 ### `fast` mode
 
