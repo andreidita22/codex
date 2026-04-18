@@ -32,13 +32,14 @@ This handoff is inserted into `replacement_history` so the successor instance re
 - Generator and parser:
   - `codex-rs/core/src/continuation_bridge.rs`
 - Bridge variants:
-  - `codex-rs/core/src/continuation_bridge/baton.rs`
-  - `codex-rs/core/src/continuation_bridge/rich_review.rs`
+  - `codex-rs/context-maintenance-policy/src/continuation_bridge/mod.rs`
+  - `codex-rs/context-maintenance-policy/src/continuation_bridge/baton.rs`
+  - `codex-rs/context-maintenance-policy/src/continuation_bridge/rich_review.rs`
 - Prompt/schema artifacts:
-  - `codex-rs/core/templates/continuation_bridge/variants/baton/prompt.md`
-  - `codex-rs/core/templates/continuation_bridge/variants/baton/schema.json`
-  - `codex-rs/core/templates/continuation_bridge/variants/rich_review/prompt.md`
-  - `codex-rs/core/templates/continuation_bridge/variants/rich_review/schema.json`
+  - `codex-rs/context-maintenance-policy/templates/continuation_bridge/variants/baton/prompt.md`
+  - `codex-rs/context-maintenance-policy/templates/continuation_bridge/variants/baton/schema.json`
+  - `codex-rs/context-maintenance-policy/templates/continuation_bridge/variants/rich_review/prompt.md`
+  - `codex-rs/context-maintenance-policy/templates/continuation_bridge/variants/rich_review/schema.json`
 
 ### Variants
 

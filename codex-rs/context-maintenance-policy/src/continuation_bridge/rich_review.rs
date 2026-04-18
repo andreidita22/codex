@@ -9,35 +9,35 @@ pub(crate) const OUTPUT_SCHEMA: &str =
     include_str!("../../templates/continuation_bridge/variants/rich_review/schema.json");
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RichReviewBridge {
+pub struct RichReviewBridge {
     #[serde(default = "default_schema")]
-    pub(crate) schema: String,
+    pub schema: String,
     #[serde(default)]
-    pub(crate) task: RichReviewTask,
+    pub task: RichReviewTask,
     #[serde(default)]
-    pub(crate) repo_identity: RichReviewRepoIdentity,
+    pub repo_identity: RichReviewRepoIdentity,
     #[serde(default)]
-    pub(crate) state: RichReviewListSection,
+    pub state: RichReviewListSection,
     #[serde(default)]
-    pub(crate) blocking_state: RichReviewBlockingState,
+    pub blocking_state: RichReviewBlockingState,
     #[serde(default)]
-    pub(crate) artifacts: RichReviewArtifacts,
+    pub artifacts: RichReviewArtifacts,
     #[serde(default)]
-    pub(crate) active_subagents: Vec<RichReviewSubagent>,
+    pub active_subagents: Vec<RichReviewSubagent>,
     #[serde(default)]
-    pub(crate) key_claims_with_evidence: Vec<RichReviewClaim>,
+    pub key_claims_with_evidence: Vec<RichReviewClaim>,
     #[serde(default)]
-    pub(crate) invariants: RichReviewInvariants,
+    pub invariants: RichReviewInvariants,
     #[serde(default)]
-    pub(crate) epistemics: RichReviewEpistemics,
+    pub epistemics: RichReviewEpistemics,
     #[serde(default)]
-    pub(crate) provenance: RichReviewProvenance,
+    pub provenance: RichReviewProvenance,
     #[serde(default)]
-    pub(crate) working_thesis: RichReviewWorkingThesis,
+    pub working_thesis: RichReviewWorkingThesis,
     #[serde(default)]
-    pub(crate) recommended_output_shape: Vec<String>,
+    pub recommended_output_shape: Vec<String>,
     #[serde(default)]
-    pub(crate) next: RichReviewNext,
+    pub next: RichReviewNext,
 }
 
 impl Default for RichReviewBridge {
@@ -62,161 +62,161 @@ impl Default for RichReviewBridge {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RichReviewTask {
+pub struct RichReviewTask {
     #[serde(default)]
-    pub(crate) objective: String,
+    pub objective: String,
     #[serde(default)]
-    pub(crate) current_phase: String,
+    pub current_phase: String,
     #[serde(default)]
-    pub(crate) success_condition: String,
+    pub success_condition: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RichReviewRepoIdentity {
+pub struct RichReviewRepoIdentity {
     #[serde(default)]
-    pub(crate) repo_root: String,
+    pub repo_root: String,
     #[serde(default)]
-    pub(crate) branch: String,
+    pub branch: String,
     #[serde(default)]
-    pub(crate) head_commit: String,
+    pub head_commit: String,
     #[serde(default)]
-    pub(crate) worktree_dirty: bool,
+    pub worktree_dirty: bool,
     #[serde(default)]
-    pub(crate) dirty_files: Vec<String>,
+    pub dirty_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RichReviewListSection {
+pub struct RichReviewListSection {
     #[serde(default)]
-    pub(crate) completed: Vec<String>,
+    pub completed: Vec<String>,
     #[serde(default)]
-    pub(crate) in_progress: Vec<String>,
+    pub in_progress: Vec<String>,
     #[serde(default)]
-    pub(crate) not_started: Vec<String>,
+    pub not_started: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RichReviewBlockingState {
+pub struct RichReviewBlockingState {
     #[serde(default)]
-    pub(crate) blocking: Vec<RichReviewBlocker>,
+    pub blocking: Vec<RichReviewBlocker>,
     #[serde(default)]
-    pub(crate) non_blocking: Vec<String>,
+    pub non_blocking: Vec<String>,
     #[serde(default)]
-    pub(crate) optional_followups: Vec<String>,
+    pub optional_followups: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RichReviewBlocker {
+pub struct RichReviewBlocker {
     #[serde(default)]
-    pub(crate) kind: String,
+    pub kind: String,
     #[serde(default)]
-    pub(crate) reason: String,
+    pub reason: String,
     #[serde(default)]
-    pub(crate) owner: String,
+    pub owner: String,
     #[serde(default)]
-    pub(crate) unblocks: String,
+    pub unblocks: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RichReviewArtifacts {
+pub struct RichReviewArtifacts {
     #[serde(default)]
-    pub(crate) files_touched: Vec<String>,
+    pub files_touched: Vec<String>,
     #[serde(default)]
-    pub(crate) authoritative_files: Vec<String>,
+    pub authoritative_files: Vec<String>,
     #[serde(default)]
-    pub(crate) partial_implementations: Vec<String>,
+    pub partial_implementations: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RichReviewSubagent {
+pub struct RichReviewSubagent {
     #[serde(default)]
-    pub(crate) agent_id: String,
+    pub agent_id: String,
     #[serde(default)]
-    pub(crate) thread_id: String,
+    pub thread_id: String,
     #[serde(default)]
-    pub(crate) role: String,
+    pub role: String,
     #[serde(default)]
-    pub(crate) task: String,
+    pub task: String,
     #[serde(default)]
-    pub(crate) status: String,
+    pub status: String,
     #[serde(default)]
-    pub(crate) blocking: bool,
+    pub blocking: bool,
     #[serde(default)]
-    pub(crate) last_result_summary: String,
+    pub last_result_summary: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RichReviewClaim {
+pub struct RichReviewClaim {
     #[serde(default)]
-    pub(crate) claim: String,
+    pub claim: String,
     #[serde(default)]
-    pub(crate) confidence: String,
+    pub confidence: String,
     #[serde(default)]
-    pub(crate) ready_for_output: bool,
+    pub ready_for_output: bool,
     #[serde(default)]
-    pub(crate) evidence: Vec<RichReviewEvidence>,
+    pub evidence: Vec<RichReviewEvidence>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RichReviewEvidence {
+pub struct RichReviewEvidence {
     #[serde(default)]
-    pub(crate) path: String,
+    pub path: String,
     #[serde(default)]
-    pub(crate) line: u32,
+    pub line: u32,
     #[serde(default)]
-    pub(crate) kind: String,
+    pub kind: String,
     #[serde(default)]
-    pub(crate) why_it_supports_claim: String,
+    pub why_it_supports_claim: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RichReviewInvariants {
+pub struct RichReviewInvariants {
     #[serde(default)]
-    pub(crate) must_preserve: Vec<String>,
+    pub must_preserve: Vec<String>,
     #[serde(default)]
-    pub(crate) must_not_do: Vec<String>,
+    pub must_not_do: Vec<String>,
     #[serde(default)]
-    pub(crate) assumptions_in_force: Vec<String>,
+    pub assumptions_in_force: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RichReviewEpistemics {
+pub struct RichReviewEpistemics {
     #[serde(default)]
-    pub(crate) known_uncertainties: Vec<String>,
+    pub known_uncertainties: Vec<String>,
     #[serde(default)]
-    pub(crate) questions_already_resolved: Vec<String>,
+    pub questions_already_resolved: Vec<String>,
     #[serde(default)]
-    pub(crate) questions_still_open: Vec<String>,
+    pub questions_still_open: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RichReviewProvenance {
+pub struct RichReviewProvenance {
     #[serde(default)]
-    pub(crate) why_current_code_looks_like_this: Vec<String>,
+    pub why_current_code_looks_like_this: Vec<String>,
     #[serde(default)]
-    pub(crate) rejected_paths: Vec<String>,
+    pub rejected_paths: Vec<String>,
     #[serde(default)]
-    pub(crate) pending_decisions: Vec<String>,
+    pub pending_decisions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RichReviewWorkingThesis {
+pub struct RichReviewWorkingThesis {
     #[serde(default)]
-    pub(crate) current_best_answer: String,
+    pub current_best_answer: String,
     #[serde(default)]
-    pub(crate) main_caveats: Vec<String>,
+    pub main_caveats: Vec<String>,
     #[serde(default)]
-    pub(crate) likely_conclusion: String,
+    pub likely_conclusion: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RichReviewNext {
+pub struct RichReviewNext {
     #[serde(default)]
-    pub(crate) immediate_next_action: String,
+    pub immediate_next_action: String,
     #[serde(default)]
-    pub(crate) fallback_if_blocked: String,
+    pub fallback_if_blocked: String,
     #[serde(default)]
-    pub(crate) validation_step: String,
+    pub validation_step: String,
 }
 
 pub(crate) fn default_schema() -> String {
