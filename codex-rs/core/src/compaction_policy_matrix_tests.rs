@@ -1,285 +1,147 @@
-use crate::compact::CurrentCompactRouteBehaviorForTests;
-use crate::compact::InitialContextInjection;
-use crate::compact::MaintenanceTimingForTests;
-use crate::compact::current_compact_route_behavior_for_tests;
+use crate::config::CompactionEngine;
 use crate::config::GovernancePathVariant;
-use crate::context_maintenance::CurrentTurnBoundaryMaintenanceBehaviorForTests;
-use crate::context_maintenance::TurnBoundaryMaintenanceActionForTests;
-use crate::context_maintenance::current_turn_boundary_maintenance_behavior_for_tests;
+use crate::context_maintenance_runtime::CompactTimingForTests;
+use crate::context_maintenance_runtime::TurnBoundaryMaintenanceActionForTests;
+use crate::context_maintenance_runtime::live_compact_route_behavior_for_tests;
+use crate::context_maintenance_runtime::live_turn_boundary_maintenance_behavior_for_tests;
+use crate::context_maintenance_runtime::try_live_turn_boundary_maintenance_behavior_for_tests;
+use codex_context_maintenance_policy::ArtifactKind;
+use codex_context_maintenance_policy::GovernanceEffect;
 use pretty_assertions::assert_eq;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ExpectedAction {
-    Compact,
-    Refresh,
-    Prune,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ExpectedTiming {
-    TurnBoundary,
-    IntraTurn,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ExpectedEngine {
-    RemoteVanilla,
-    RemoteHybrid,
-    LocalPure,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TargetRouteValidity {
-    Supported,
-    Invalid,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct TargetRouteFixture {
-    action: ExpectedAction,
-    timing: ExpectedTiming,
-    engine: ExpectedEngine,
-    validity: TargetRouteValidity,
-    generates_thread_memory: bool,
-    generates_continuation_bridge: bool,
-}
-
-fn target_route_fixture(
-    action: ExpectedAction,
-    timing: ExpectedTiming,
-    engine: ExpectedEngine,
-) -> TargetRouteFixture {
-    match (action, timing, engine) {
-        (ExpectedAction::Compact, ExpectedTiming::IntraTurn, ExpectedEngine::LocalPure)
-        | (ExpectedAction::Compact, ExpectedTiming::IntraTurn, ExpectedEngine::RemoteHybrid) => {
-            TargetRouteFixture {
-                action,
-                timing,
-                engine,
-                validity: TargetRouteValidity::Supported,
-                generates_thread_memory: false,
-                generates_continuation_bridge: true,
-            }
-        }
-        (ExpectedAction::Compact, ExpectedTiming::IntraTurn, ExpectedEngine::RemoteVanilla) => {
-            TargetRouteFixture {
-                action,
-                timing,
-                engine,
-                validity: TargetRouteValidity::Supported,
-                generates_thread_memory: false,
-                generates_continuation_bridge: false,
-            }
-        }
-        (ExpectedAction::Compact, ExpectedTiming::TurnBoundary, ExpectedEngine::LocalPure)
-        | (ExpectedAction::Compact, ExpectedTiming::TurnBoundary, ExpectedEngine::RemoteHybrid) => {
-            TargetRouteFixture {
-                action,
-                timing,
-                engine,
-                validity: TargetRouteValidity::Supported,
-                generates_thread_memory: true,
-                generates_continuation_bridge: false,
-            }
-        }
-        (ExpectedAction::Compact, ExpectedTiming::TurnBoundary, ExpectedEngine::RemoteVanilla) => {
-            TargetRouteFixture {
-                action,
-                timing,
-                engine,
-                validity: TargetRouteValidity::Supported,
-                generates_thread_memory: false,
-                generates_continuation_bridge: false,
-            }
-        }
-        (ExpectedAction::Refresh, ExpectedTiming::TurnBoundary, ExpectedEngine::LocalPure)
-        | (ExpectedAction::Refresh, ExpectedTiming::TurnBoundary, ExpectedEngine::RemoteHybrid) => {
-            TargetRouteFixture {
-                action,
-                timing,
-                engine,
-                validity: TargetRouteValidity::Supported,
-                generates_thread_memory: true,
-                generates_continuation_bridge: false,
-            }
-        }
-        (ExpectedAction::Refresh, ExpectedTiming::TurnBoundary, ExpectedEngine::RemoteVanilla) => {
-            TargetRouteFixture {
-                action,
-                timing,
-                engine,
-                validity: TargetRouteValidity::Invalid,
-                generates_thread_memory: false,
-                generates_continuation_bridge: false,
-            }
-        }
-        (ExpectedAction::Prune, ExpectedTiming::TurnBoundary, _) => TargetRouteFixture {
-            action,
-            timing,
-            engine,
-            validity: TargetRouteValidity::Supported,
-            generates_thread_memory: false,
-            generates_continuation_bridge: false,
-        },
-        (ExpectedAction::Refresh, ExpectedTiming::IntraTurn, _)
-        | (ExpectedAction::Prune, ExpectedTiming::IntraTurn, _) => TargetRouteFixture {
-            action,
-            timing,
-            engine,
-            validity: TargetRouteValidity::Invalid,
-            generates_thread_memory: false,
-            generates_continuation_bridge: false,
-        },
-    }
-}
-
 #[test]
-fn target_matrix_marks_refresh_and_prune_intra_turn_routes_invalid() {
-    for action in [ExpectedAction::Refresh, ExpectedAction::Prune] {
-        for engine in [
-            ExpectedEngine::RemoteVanilla,
-            ExpectedEngine::RemoteHybrid,
-            ExpectedEngine::LocalPure,
-        ] {
-            let fixture = target_route_fixture(action, ExpectedTiming::IntraTurn, engine);
-            assert_eq!(fixture.validity, TargetRouteValidity::Invalid);
-        }
-    }
-}
-
-#[test]
-fn target_matrix_marks_remote_vanilla_refresh_invalid() {
-    let fixture = target_route_fixture(
-        ExpectedAction::Refresh,
-        ExpectedTiming::TurnBoundary,
-        ExpectedEngine::RemoteVanilla,
-    );
-    assert_eq!(fixture.validity, TargetRouteValidity::Invalid);
-    assert_eq!(fixture.generates_thread_memory, false);
-    assert_eq!(fixture.generates_continuation_bridge, false);
-}
-
-#[test]
-fn target_matrix_marks_local_pure_intra_turn_compact_as_bridge_only() {
-    let fixture = target_route_fixture(
-        ExpectedAction::Compact,
-        ExpectedTiming::IntraTurn,
-        ExpectedEngine::LocalPure,
-    );
-
-    assert_eq!(fixture.validity, TargetRouteValidity::Supported);
-    assert_eq!(fixture.generates_thread_memory, false);
-    assert_eq!(fixture.generates_continuation_bridge, true);
-}
-
-#[test]
-fn current_compact_turn_boundary_route_matches_locked_behavior_for_strict_memory() {
-    let behavior = current_compact_route_behavior_for_tests(
+fn live_local_pure_intra_turn_compact_is_bridge_only() {
+    let behavior = live_compact_route_behavior_for_tests(
+        CompactionEngine::LocalPure,
         GovernancePathVariant::StrictV1Shadow,
-        MaintenanceTimingForTests::TurnBoundary,
+        CompactTimingForTests::IntraTurn,
     );
-    let expected = CurrentCompactRouteBehaviorForTests {
-        initial_context_injection: InitialContextInjection::DoNotInject,
-        regenerates_thread_memory: true,
-    };
-    assert_eq!(behavior, expected);
+
+    assert_eq!(
+        behavior.requests_artifact(ArtifactKind::ThreadMemory),
+        false
+    );
+    assert_eq!(
+        behavior.requests_artifact(ArtifactKind::ContinuationBridge),
+        true
+    );
+    assert_eq!(
+        behavior.drops_prior_artifact(ArtifactKind::ContinuationBridge),
+        true
+    );
 }
 
 #[test]
-fn current_compact_intra_turn_route_matches_locked_behavior_for_strict_memory() {
-    let behavior = current_compact_route_behavior_for_tests(
+fn live_remote_hybrid_turn_boundary_compact_is_thread_memory_only() {
+    let behavior = live_compact_route_behavior_for_tests(
+        CompactionEngine::RemoteHybrid,
         GovernancePathVariant::StrictV1Shadow,
-        MaintenanceTimingForTests::IntraTurn,
+        CompactTimingForTests::TurnBoundary,
     );
-    let expected = CurrentCompactRouteBehaviorForTests {
-        initial_context_injection: InitialContextInjection::BeforeLastUserMessage,
-        regenerates_thread_memory: false,
-    };
-    assert_eq!(behavior, expected);
+
+    assert_eq!(behavior.requests_artifact(ArtifactKind::ThreadMemory), true);
+    assert_eq!(
+        behavior.requests_artifact(ArtifactKind::ContinuationBridge),
+        false
+    );
+    assert_eq!(
+        behavior.drops_prior_artifact(ArtifactKind::ThreadMemory),
+        true
+    );
+    assert_eq!(
+        behavior.drops_prior_artifact(ArtifactKind::ContinuationBridge),
+        true
+    );
 }
 
 #[test]
-fn current_compact_turn_boundary_route_keeps_thread_memory_off_when_governance_is_off() {
-    let behavior = current_compact_route_behavior_for_tests(
+fn live_turn_boundary_compact_suppresses_thread_memory_when_governance_is_off() {
+    let behavior = live_compact_route_behavior_for_tests(
+        CompactionEngine::LocalPure,
         GovernancePathVariant::Off,
-        MaintenanceTimingForTests::TurnBoundary,
-    );
-    let expected = CurrentCompactRouteBehaviorForTests {
-        initial_context_injection: InitialContextInjection::DoNotInject,
-        regenerates_thread_memory: false,
-    };
-    assert_eq!(behavior, expected);
-}
-
-#[test]
-fn current_refresh_behavior_is_a_known_delta_from_target_matrix() {
-    let target = target_route_fixture(
-        ExpectedAction::Refresh,
-        ExpectedTiming::TurnBoundary,
-        ExpectedEngine::LocalPure,
-    );
-    let current = current_turn_boundary_maintenance_behavior_for_tests(
-        TurnBoundaryMaintenanceActionForTests::Refresh,
-        GovernancePathVariant::StrictV1Shadow,
+        CompactTimingForTests::TurnBoundary,
     );
 
-    assert_eq!(target.validity, TargetRouteValidity::Supported);
-    assert_eq!(target.generates_thread_memory, true);
-    assert_eq!(target.generates_continuation_bridge, false);
     assert_eq!(
-        current,
-        CurrentTurnBoundaryMaintenanceBehaviorForTests {
-            generates_thread_memory: true,
-            generates_continuation_bridge: true,
-            emits_prune_manifest: false,
-        }
+        behavior.requests_artifact(ArtifactKind::ThreadMemory),
+        false
     );
-}
-
-#[test]
-fn current_refresh_behavior_is_also_a_known_delta_for_remote_vanilla() {
-    let target = target_route_fixture(
-        ExpectedAction::Refresh,
-        ExpectedTiming::TurnBoundary,
-        ExpectedEngine::RemoteVanilla,
-    );
-    let current = current_turn_boundary_maintenance_behavior_for_tests(
-        TurnBoundaryMaintenanceActionForTests::Refresh,
-        GovernancePathVariant::StrictV1Shadow,
-    );
-
-    assert_eq!(target.validity, TargetRouteValidity::Invalid);
     assert_eq!(
-        current,
-        CurrentTurnBoundaryMaintenanceBehaviorForTests {
-            generates_thread_memory: true,
-            generates_continuation_bridge: true,
-            emits_prune_manifest: false,
-        }
+        behavior.governance_effects(),
+        &[GovernanceEffect::ThreadMemorySuppressed]
     );
 }
 
 #[test]
-fn current_prune_behavior_matches_locked_turn_boundary_behavior() {
-    let target = target_route_fixture(
-        ExpectedAction::Prune,
-        ExpectedTiming::TurnBoundary,
-        ExpectedEngine::LocalPure,
+fn live_refresh_is_thread_memory_only_for_supported_engines() {
+    for engine in [CompactionEngine::LocalPure, CompactionEngine::RemoteHybrid] {
+        let behavior = live_turn_boundary_maintenance_behavior_for_tests(
+            engine,
+            GovernancePathVariant::StrictV1Shadow,
+            TurnBoundaryMaintenanceActionForTests::Refresh,
+        );
+
+        assert_eq!(behavior.requests_artifact(ArtifactKind::ThreadMemory), true);
+        assert_eq!(
+            behavior.requests_artifact(ArtifactKind::ContinuationBridge),
+            false
+        );
+        assert_eq!(
+            behavior.requests_artifact(ArtifactKind::PruneManifest),
+            false
+        );
+        assert_eq!(
+            behavior.drops_prior_artifact(ArtifactKind::ThreadMemory),
+            true
+        );
+        assert_eq!(
+            behavior.drops_prior_artifact(ArtifactKind::ContinuationBridge),
+            true
+        );
+    }
+}
+
+#[test]
+fn live_remote_vanilla_refresh_fails_closed() {
+    let err = try_live_turn_boundary_maintenance_behavior_for_tests(
+        CompactionEngine::RemoteVanilla,
+        GovernancePathVariant::StrictV1Shadow,
+        TurnBoundaryMaintenanceActionForTests::Refresh,
+    )
+    .expect_err("remote vanilla refresh should be unsupported");
+
+    assert_eq!(
+        err.to_string(),
+        "Fatal error: Unsupported context-maintenance route: unsupported context-maintenance route: action=Refresh timing=TurnBoundary engine=RemoteVanilla"
     );
-    let current = current_turn_boundary_maintenance_behavior_for_tests(
+}
+
+#[test]
+fn live_prune_is_manifest_only_and_drops_turn_scoped_bridge() {
+    let behavior = live_turn_boundary_maintenance_behavior_for_tests(
+        CompactionEngine::RemoteHybrid,
+        GovernancePathVariant::StrictV1Shadow,
         TurnBoundaryMaintenanceActionForTests::Prune,
-        GovernancePathVariant::StrictV1Shadow,
     );
 
-    assert_eq!(target.validity, TargetRouteValidity::Supported);
-    assert_eq!(target.generates_thread_memory, false);
-    assert_eq!(target.generates_continuation_bridge, false);
     assert_eq!(
-        current,
-        CurrentTurnBoundaryMaintenanceBehaviorForTests {
-            generates_thread_memory: false,
-            generates_continuation_bridge: false,
-            emits_prune_manifest: true,
-        }
+        behavior.requests_artifact(ArtifactKind::ThreadMemory),
+        false
+    );
+    assert_eq!(
+        behavior.requests_artifact(ArtifactKind::ContinuationBridge),
+        false
+    );
+    assert_eq!(
+        behavior.requests_artifact(ArtifactKind::PruneManifest),
+        true
+    );
+    assert_eq!(
+        behavior.drops_prior_artifact(ArtifactKind::ContinuationBridge),
+        true
+    );
+    assert_eq!(
+        behavior.drops_prior_artifact(ArtifactKind::PruneManifest),
+        true
     );
 }

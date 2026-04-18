@@ -17,6 +17,7 @@ use crate::PolicyEngine;
 struct BaseRoutePlan {
     context_injection: ContextInjectionPolicy,
     requested_artifacts: Vec<ArtifactRequest>,
+    drop_prior_artifact_kinds: Vec<ArtifactKind>,
     legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy,
 }
 
@@ -43,6 +44,7 @@ fn select_base_route_plan(
                     ArtifactKind::ContinuationBridge,
                     ArtifactLifetime::TurnScoped,
                 )],
+                drop_prior_artifact_kinds: vec![ArtifactKind::ContinuationBridge],
                 legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
             })
         }
@@ -53,6 +55,7 @@ fn select_base_route_plan(
                     ArtifactKind::ContinuationBridge,
                     ArtifactLifetime::TurnScoped,
                 )],
+                drop_prior_artifact_kinds: vec![ArtifactKind::ContinuationBridge],
                 legacy_compaction_marker_policy:
                     LegacyCompactionMarkerPolicy::PreserveForUpstreamCompatibility,
             })
@@ -61,6 +64,7 @@ fn select_base_route_plan(
             Ok(BaseRoutePlan {
                 context_injection: ContextInjectionPolicy::BeforeLastRealUserOrSummary,
                 requested_artifacts: vec![],
+                drop_prior_artifact_kinds: vec![ArtifactKind::ContinuationBridge],
                 legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
             })
         }
@@ -71,6 +75,10 @@ fn select_base_route_plan(
                     ArtifactKind::ThreadMemory,
                     ArtifactLifetime::DurableAcrossTurns,
                 )],
+                drop_prior_artifact_kinds: vec![
+                    ArtifactKind::ThreadMemory,
+                    ArtifactKind::ContinuationBridge,
+                ],
                 legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
             })
         }
@@ -84,6 +92,10 @@ fn select_base_route_plan(
                 ArtifactKind::ThreadMemory,
                 ArtifactLifetime::DurableAcrossTurns,
             )],
+            drop_prior_artifact_kinds: vec![
+                ArtifactKind::ThreadMemory,
+                ArtifactKind::ContinuationBridge,
+            ],
             legacy_compaction_marker_policy:
                 LegacyCompactionMarkerPolicy::PreserveForUpstreamCompatibility,
         }),
@@ -94,6 +106,10 @@ fn select_base_route_plan(
         ) => Ok(BaseRoutePlan {
             context_injection: ContextInjectionPolicy::None,
             requested_artifacts: vec![],
+            drop_prior_artifact_kinds: vec![
+                ArtifactKind::ThreadMemory,
+                ArtifactKind::ContinuationBridge,
+            ],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
         }),
         (MaintenanceAction::Refresh, MaintenanceTiming::TurnBoundary, PolicyEngine::LocalPure) => {
@@ -103,6 +119,10 @@ fn select_base_route_plan(
                     ArtifactKind::ThreadMemory,
                     ArtifactLifetime::DurableAcrossTurns,
                 )],
+                drop_prior_artifact_kinds: vec![
+                    ArtifactKind::ThreadMemory,
+                    ArtifactKind::ContinuationBridge,
+                ],
                 legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
             })
         }
@@ -116,6 +136,10 @@ fn select_base_route_plan(
                 ArtifactKind::ThreadMemory,
                 ArtifactLifetime::DurableAcrossTurns,
             )],
+            drop_prior_artifact_kinds: vec![
+                ArtifactKind::ThreadMemory,
+                ArtifactKind::ContinuationBridge,
+            ],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
         }),
         (MaintenanceAction::Prune, MaintenanceTiming::TurnBoundary, _) => Ok(BaseRoutePlan {
@@ -124,6 +148,10 @@ fn select_base_route_plan(
                 ArtifactKind::PruneManifest,
                 ArtifactLifetime::MarkerOnly,
             )],
+            drop_prior_artifact_kinds: vec![
+                ArtifactKind::PruneManifest,
+                ArtifactKind::ContinuationBridge,
+            ],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
         }),
         _ => Err(MaintenancePolicyError::UnsupportedRoute {
@@ -152,6 +180,7 @@ fn apply_governance_overlay(
     MaintenancePolicyPlan {
         context_injection: base_plan.context_injection,
         requested_artifacts: base_plan.requested_artifacts,
+        drop_prior_artifact_kinds: base_plan.drop_prior_artifact_kinds,
         legacy_compaction_marker_policy: base_plan.legacy_compaction_marker_policy,
         governance_effects,
     }

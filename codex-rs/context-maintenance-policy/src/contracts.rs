@@ -72,6 +72,7 @@ pub struct MaintenancePlanningRequest {
 pub struct MaintenancePolicyPlan {
     pub context_injection: ContextInjectionPolicy,
     pub requested_artifacts: Vec<ArtifactRequest>,
+    pub drop_prior_artifact_kinds: Vec<ArtifactKind>,
     pub legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy,
     pub governance_effects: Vec<GovernanceEffect>,
 }

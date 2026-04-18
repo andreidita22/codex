@@ -33,6 +33,7 @@ fn compact_intra_turn_local_pure_requests_turn_scoped_bridge() {
                 kind: ArtifactKind::ContinuationBridge,
                 lifetime: ArtifactLifetime::TurnScoped,
             }],
+            drop_prior_artifact_kinds: vec![ArtifactKind::ContinuationBridge],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
             governance_effects: vec![],
         }
@@ -57,6 +58,10 @@ fn compact_turn_boundary_local_pure_requests_durable_thread_memory() {
                 kind: ArtifactKind::ThreadMemory,
                 lifetime: ArtifactLifetime::DurableAcrossTurns,
             }],
+            drop_prior_artifact_kinds: vec![
+                ArtifactKind::ThreadMemory,
+                ArtifactKind::ContinuationBridge,
+            ],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
             governance_effects: vec![],
         }
@@ -78,6 +83,10 @@ fn compact_turn_boundary_governance_off_suppresses_thread_memory() {
         MaintenancePolicyPlan {
             context_injection: ContextInjectionPolicy::None,
             requested_artifacts: vec![],
+            drop_prior_artifact_kinds: vec![
+                ArtifactKind::ThreadMemory,
+                ArtifactKind::ContinuationBridge,
+            ],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
             governance_effects: vec![GovernanceEffect::ThreadMemorySuppressed],
         }
@@ -99,6 +108,10 @@ fn compact_turn_boundary_remote_vanilla_preserves_legacy_marker_without_fork_art
         MaintenancePolicyPlan {
             context_injection: ContextInjectionPolicy::None,
             requested_artifacts: vec![],
+            drop_prior_artifact_kinds: vec![
+                ArtifactKind::ThreadMemory,
+                ArtifactKind::ContinuationBridge,
+            ],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
             governance_effects: vec![],
         }
@@ -123,6 +136,10 @@ fn refresh_turn_boundary_local_pure_requests_durable_thread_memory() {
                 kind: ArtifactKind::ThreadMemory,
                 lifetime: ArtifactLifetime::DurableAcrossTurns,
             }],
+            drop_prior_artifact_kinds: vec![
+                ArtifactKind::ThreadMemory,
+                ArtifactKind::ContinuationBridge,
+            ],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
             governance_effects: vec![],
         }
@@ -185,6 +202,10 @@ fn prune_turn_boundary_requests_marker_only_prune_manifest() {
                 kind: ArtifactKind::PruneManifest,
                 lifetime: ArtifactLifetime::MarkerOnly,
             }],
+            drop_prior_artifact_kinds: vec![
+                ArtifactKind::PruneManifest,
+                ArtifactKind::ContinuationBridge,
+            ],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
             governance_effects: vec![],
         }

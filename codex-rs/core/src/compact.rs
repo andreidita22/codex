@@ -10,8 +10,9 @@ use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::codex::get_last_assistant_message_from_turn;
 use crate::config::CompactionEngine;
-use crate::config::GovernancePathVariant;
 use crate::context_maintenance_config::resolve_context_maintenance_request_context;
+use crate::context_maintenance_runtime::compact_timing_from_initial_context_injection;
+use crate::context_maintenance_runtime::runtime_plan_for_compact;
 use crate::continuation_bridge::generate_continuation_bridge_item;
 use crate::governance::thread_memory::generate_thread_memory_item;
 use crate::util::backoff;
@@ -23,6 +24,7 @@ use codex_analytics::CompactionStatus;
 use codex_analytics::CompactionStrategy;
 use codex_analytics::CompactionTrigger;
 use codex_analytics::now_unix_seconds;
+use codex_context_maintenance_policy::ArtifactKind;
 use codex_context_maintenance_policy::insert_initial_context_before_last_real_user_or_summary as insert_initial_context_before_last_real_user_or_summary_impl;
 use codex_context_maintenance_policy::insert_items_before_last_summary_or_compaction as insert_items_before_last_summary_or_compaction_impl;
 use codex_context_maintenance_policy::retain_recent_raw_conversation_messages as retain_recent_raw_conversation_messages_impl;
@@ -71,57 +73,6 @@ pub(crate) fn should_use_remote_compact_task(turn_context: &TurnContext) -> bool
         turn_context.config.compaction_engine.unwrap_or_default(),
         CompactionEngine::LocalPure
     )
-}
-
-pub(crate) fn compaction_engine(turn_context: &TurnContext) -> CompactionEngine {
-    turn_context.config.compaction_engine.unwrap_or_default()
-}
-
-pub(crate) fn is_thread_memory_required(path_variant: GovernancePathVariant) -> bool {
-    path_variant != GovernancePathVariant::Off
-}
-
-pub(crate) fn should_regenerate_thread_memory(
-    path_variant: GovernancePathVariant,
-    initial_context_injection: InitialContextInjection,
-) -> bool {
-    is_thread_memory_required(path_variant)
-        && matches!(
-            initial_context_injection,
-            InitialContextInjection::DoNotInject
-        )
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum MaintenanceTimingForTests {
-    TurnBoundary,
-    IntraTurn,
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct CurrentCompactRouteBehaviorForTests {
-    pub(crate) initial_context_injection: InitialContextInjection,
-    pub(crate) regenerates_thread_memory: bool,
-}
-
-#[cfg(test)]
-pub(crate) fn current_compact_route_behavior_for_tests(
-    path_variant: GovernancePathVariant,
-    timing: MaintenanceTimingForTests,
-) -> CurrentCompactRouteBehaviorForTests {
-    let initial_context_injection = match timing {
-        MaintenanceTimingForTests::TurnBoundary => InitialContextInjection::DoNotInject,
-        MaintenanceTimingForTests::IntraTurn => InitialContextInjection::BeforeLastUserMessage,
-    };
-    CurrentCompactRouteBehaviorForTests {
-        initial_context_injection,
-        regenerates_thread_memory: should_regenerate_thread_memory(
-            path_variant,
-            initial_context_injection,
-        ),
-    }
 }
 
 pub(crate) async fn run_inline_auto_compact_task(
@@ -216,6 +167,9 @@ async fn run_compact_task_inner_impl(
     input: Vec<UserInput>,
     initial_context_injection: InitialContextInjection,
 ) -> CodexResult<()> {
+    let timing = compact_timing_from_initial_context_injection(initial_context_injection);
+    let runtime_plan = runtime_plan_for_compact(turn_context.as_ref(), timing)?;
+    let initial_context_injection = runtime_plan.initial_context_injection();
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(&turn_context, &compaction_item)
         .await;
@@ -225,11 +179,7 @@ async fn run_compact_task_inner_impl(
     let history_for_artifacts = history
         .clone()
         .for_prompt(&turn_context.model_info.input_modalities);
-    let governance_path_variant = turn_context.governance_path_variant();
-    let thread_memory_item = if should_regenerate_thread_memory(
-        governance_path_variant,
-        initial_context_injection,
-    ) {
+    let thread_memory_item = if runtime_plan.requests_artifact(ArtifactKind::ThreadMemory) {
         match generate_thread_memory_item(
             &sess,
             turn_context.as_ref(),
@@ -239,9 +189,7 @@ async fn run_compact_task_inner_impl(
         {
             Ok(Some(item)) => Some(item),
             Ok(None) => {
-                let err = CodexErr::Fatal(format!(
-                    "required thread memory generation returned empty output before local compaction (path_variant={governance_path_variant:?})"
-                ));
+                let err = CodexErr::Fatal("required thread memory generation returned empty output before local compaction".to_string());
                 sess.send_event(
                     &turn_context,
                     EventMsg::Error(err.to_error_event(/*message_prefix*/ None)),
@@ -251,7 +199,7 @@ async fn run_compact_task_inner_impl(
             }
             Err(err) => {
                 let err = CodexErr::Fatal(format!(
-                    "failed generating required thread memory before local compaction (path_variant={governance_path_variant:?}): {err}"
+                    "failed generating required thread memory before local compaction: {err}"
                 ));
                 sess.send_event(
                     &turn_context,
@@ -265,19 +213,25 @@ async fn run_compact_task_inner_impl(
         None
     };
     let thread_memory_present = thread_memory_item.is_some();
-    let continuation_bridge_item = match generate_continuation_bridge_item(
-        &sess,
-        turn_context.as_ref(),
-        history_for_artifacts,
-    )
-    .await
+    let continuation_bridge_item = if runtime_plan
+        .requests_artifact(ArtifactKind::ContinuationBridge)
     {
-        Ok(item) => item,
-        Err(err) => {
-            warn!("failed generating continuation bridge before local compaction: {err}");
-            None
+        match generate_continuation_bridge_item(&sess, turn_context.as_ref(), history_for_artifacts)
+            .await
+        {
+            Ok(item) => item,
+            Err(err) => {
+                warn!("failed generating continuation bridge before local compaction: {err}");
+                None
+            }
         }
+    } else {
+        None
     };
+    let authoritative_items: Vec<_> = thread_memory_item
+        .into_iter()
+        .chain(continuation_bridge_item)
+        .collect();
     let request_context =
         resolve_context_maintenance_request_context(sess.as_ref(), turn_context.as_ref()).await;
     history.record_items(
@@ -386,10 +340,6 @@ async fn run_compact_task_inner_impl(
         new_history =
             insert_initial_context_before_last_real_user_or_summary(new_history, initial_context);
     }
-    let authoritative_items: Vec<_> = thread_memory_item
-        .into_iter()
-        .chain(continuation_bridge_item)
-        .collect();
     if !authoritative_items.is_empty() {
         new_history =
             insert_items_before_last_summary_or_compaction(new_history, authoritative_items);

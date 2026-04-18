@@ -8,13 +8,12 @@ use crate::codex::built_tools;
 use crate::compact::COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES;
 use crate::compact::CompactionAnalyticsAttempt;
 use crate::compact::InitialContextInjection;
-use crate::compact::compaction_engine;
 use crate::compact::compaction_status_from_result;
 use crate::compact::is_raw_conversation_message;
 use crate::compact::is_real_user_message;
 use crate::compact::is_user_or_summary_message;
-use crate::compact::should_regenerate_thread_memory;
-use crate::config::CompactionEngine;
+use crate::context_maintenance_runtime::compact_timing_from_initial_context_injection;
+use crate::context_maintenance_runtime::runtime_plan_for_compact;
 use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
 use crate::context_manager::estimate_response_item_model_visible_bytes;
@@ -25,6 +24,7 @@ use codex_analytics::CompactionImplementation;
 use codex_analytics::CompactionPhase;
 use codex_analytics::CompactionReason;
 use codex_analytics::CompactionTrigger;
+use codex_context_maintenance_policy::ArtifactKind;
 use codex_context_maintenance_policy::ContextInjectionPolicy;
 use codex_context_maintenance_policy::RemoteCompactedHistoryShapeRequest;
 use codex_context_maintenance_policy::shape_remote_compacted_history;
@@ -126,6 +126,9 @@ async fn run_remote_compact_task_inner_impl(
     turn_context: &Arc<TurnContext>,
     initial_context_injection: InitialContextInjection,
 ) -> CodexResult<()> {
+    let timing = compact_timing_from_initial_context_injection(initial_context_injection);
+    let runtime_plan = runtime_plan_for_compact(turn_context.as_ref(), timing)?;
+    let initial_context_injection = runtime_plan.initial_context_injection();
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(turn_context, &compaction_item)
         .await;
@@ -169,14 +172,7 @@ async fn run_remote_compact_task_inner_impl(
         personality: turn_context.personality,
         output_schema: None,
     };
-    let governance_path_variant = turn_context.governance_path_variant();
-    let inject_authoritative_items = !matches!(
-        compaction_engine(turn_context),
-        CompactionEngine::RemoteVanilla
-    );
-    let thread_memory_item = if inject_authoritative_items
-        && should_regenerate_thread_memory(governance_path_variant, initial_context_injection)
-    {
+    let thread_memory_item = if runtime_plan.requests_artifact(ArtifactKind::ThreadMemory) {
         match generate_thread_memory_item(
             sess.as_ref(),
             turn_context.as_ref(),
@@ -186,13 +182,11 @@ async fn run_remote_compact_task_inner_impl(
         {
             Ok(Some(item)) => Some(item),
             Ok(None) => {
-                return Err(CodexErr::Fatal(format!(
-                    "required thread memory generation returned empty output before remote compaction (path_variant={governance_path_variant:?})"
-                )));
+                return Err(CodexErr::Fatal("required thread memory generation returned empty output before remote compaction".to_string()));
             }
             Err(err) => {
                 return Err(CodexErr::Fatal(format!(
-                    "failed generating required thread memory before remote compaction (path_variant={governance_path_variant:?}): {err}"
+                    "failed generating required thread memory before remote compaction: {err}"
                 )));
             }
         }
@@ -200,23 +194,24 @@ async fn run_remote_compact_task_inner_impl(
         None
     };
     let thread_memory_present = thread_memory_item.is_some();
-    let continuation_bridge_item = if inject_authoritative_items {
-        match generate_continuation_bridge_item(
-            sess.as_ref(),
-            turn_context.as_ref(),
-            prompt.input.clone(),
-        )
-        .await
-        {
-            Ok(item) => item,
-            Err(err) => {
-                warn!("failed generating continuation bridge before remote compaction: {err}");
-                None
+    let continuation_bridge_item =
+        if runtime_plan.requests_artifact(ArtifactKind::ContinuationBridge) {
+            match generate_continuation_bridge_item(
+                sess.as_ref(),
+                turn_context.as_ref(),
+                prompt.input.clone(),
+            )
+            .await
+            {
+                Ok(item) => item,
+                Err(err) => {
+                    warn!("failed generating continuation bridge before remote compaction: {err}");
+                    None
+                }
             }
-        }
-    } else {
-        None
-    };
+        } else {
+            None
+        };
 
     let mut new_history = sess
         .services
@@ -241,22 +236,18 @@ async fn run_remote_compact_task_inner_impl(
             Err(err)
         })
         .await?;
-    let authoritative_items: Vec<_> = if inject_authoritative_items {
-        thread_memory_item
-            .iter()
-            .cloned()
-            .chain(continuation_bridge_item.iter().cloned())
-            .collect()
-    } else {
-        Vec::new()
-    };
     new_history = process_compacted_history(
         sess.as_ref(),
         turn_context.as_ref(),
         new_history,
-        initial_context_injection,
-        authoritative_items,
-        inject_authoritative_items && thread_memory_present,
+        thread_memory_item
+            .iter()
+            .cloned()
+            .chain(continuation_bridge_item.iter().cloned())
+            .collect(),
+        thread_memory_present,
+        runtime_plan.context_injection_policy(),
+        runtime_plan.preserves_legacy_compaction_marker(),
     )
     .await;
 
@@ -284,16 +275,17 @@ pub(crate) async fn process_compacted_history(
     sess: &Session,
     turn_context: &TurnContext,
     compacted_history: Vec<ResponseItem>,
-    initial_context_injection: InitialContextInjection,
     authoritative_items: Vec<ResponseItem>,
     retain_recent_raw_messages: bool,
+    context_injection: ContextInjectionPolicy,
+    preserve_legacy_compaction_marker: bool,
 ) -> Vec<ResponseItem> {
     // Mid-turn compaction is the only path that must inject initial context above the last user
     // message in the replacement history. Pre-turn compaction instead injects context after the
     // compaction item, but mid-turn compaction keeps the compaction item last for model training.
     let initial_context = if matches!(
-        initial_context_injection,
-        InitialContextInjection::BeforeLastUserMessage
+        context_injection,
+        ContextInjectionPolicy::BeforeLastRealUserOrSummary
     ) {
         sess.build_initial_context(turn_context).await
     } else {
@@ -306,15 +298,10 @@ pub(crate) async fn process_compacted_history(
             initial_context,
             authoritative_items,
             raw_message_retention_limit: COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES,
-            context_injection: match initial_context_injection {
-                InitialContextInjection::BeforeLastUserMessage => {
-                    ContextInjectionPolicy::BeforeLastRealUserOrSummary
-                }
-                InitialContextInjection::DoNotInject => ContextInjectionPolicy::None,
-            },
+            context_injection,
             retain_recent_raw_messages,
         },
-        should_keep_compacted_history_item,
+        |item| should_keep_compacted_history_item(item, preserve_legacy_compaction_marker),
         is_real_user_message,
         is_user_or_summary_message,
         is_raw_conversation_message,
@@ -336,7 +323,10 @@ pub(crate) async fn process_compacted_history(
 /// - `assistant` messages (future remote compaction models may emit them)
 /// - `user`-role warnings and compaction-generated summary messages because
 ///   they parse as `TurnItem::UserMessage`.
-fn should_keep_compacted_history_item(item: &ResponseItem) -> bool {
+fn should_keep_compacted_history_item(
+    item: &ResponseItem,
+    preserve_legacy_compaction_marker: bool,
+) -> bool {
     match item {
         ResponseItem::Message { role, .. } if role == "developer" => false,
         ResponseItem::Message { role, .. } if role == "user" => {
@@ -347,7 +337,7 @@ fn should_keep_compacted_history_item(item: &ResponseItem) -> bool {
         }
         ResponseItem::Message { role, .. } if role == "assistant" => true,
         ResponseItem::Message { .. } => false,
-        ResponseItem::Compaction { .. } => true,
+        ResponseItem::Compaction { .. } => preserve_legacy_compaction_marker,
         ResponseItem::Reasoning { .. }
         | ResponseItem::LocalShellCall { .. }
         | ResponseItem::FunctionCall { .. }

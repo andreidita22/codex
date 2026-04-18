@@ -6,9 +6,10 @@ use crate::compact::COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES;
 use crate::compact::insert_items_before_last_summary_or_compaction;
 use crate::compact::is_summary_message;
 use crate::compact::retain_recent_raw_conversation_messages;
-use crate::continuation_bridge::generate_continuation_bridge_item;
+use crate::context_maintenance_runtime::runtime_plan_for_turn_boundary_maintenance;
 use crate::governance::thread_memory::generate_thread_memory_item;
 use codex_context_maintenance_policy::ArtifactKind;
+use codex_context_maintenance_policy::MaintenanceAction;
 use codex_context_maintenance_policy::build_prune_manifest_item;
 use codex_context_maintenance_policy::prune_superseded_artifacts;
 use codex_context_maintenance_policy::remove_artifact_kind;
@@ -21,50 +22,14 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::WarningEvent;
-use tracing::warn;
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TurnBoundaryMaintenanceActionForTests {
-    Refresh,
-    Prune,
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct CurrentTurnBoundaryMaintenanceBehaviorForTests {
-    pub(crate) generates_thread_memory: bool,
-    pub(crate) generates_continuation_bridge: bool,
-    pub(crate) emits_prune_manifest: bool,
-}
-
-#[cfg(test)]
-pub(crate) fn current_turn_boundary_maintenance_behavior_for_tests(
-    action: TurnBoundaryMaintenanceActionForTests,
-    path_variant: crate::config::GovernancePathVariant,
-) -> CurrentTurnBoundaryMaintenanceBehaviorForTests {
-    match action {
-        TurnBoundaryMaintenanceActionForTests::Refresh => {
-            CurrentTurnBoundaryMaintenanceBehaviorForTests {
-                generates_thread_memory: crate::compact::is_thread_memory_required(path_variant),
-                generates_continuation_bridge: true,
-                emits_prune_manifest: false,
-            }
-        }
-        TurnBoundaryMaintenanceActionForTests::Prune => {
-            CurrentTurnBoundaryMaintenanceBehaviorForTests {
-                generates_thread_memory: false,
-                generates_continuation_bridge: false,
-                emits_prune_manifest: true,
-            }
-        }
-    }
-}
-
 pub(crate) async fn run_refresh(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
 ) -> CodexResult<()> {
+    let runtime_plan = runtime_plan_for_turn_boundary_maintenance(
+        turn_context.as_ref(),
+        MaintenanceAction::Refresh,
+    )?;
     send_turn_started_event(sess.as_ref(), turn_context.as_ref()).await;
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(turn_context.as_ref(), &compaction_item)
@@ -75,8 +40,7 @@ pub(crate) async fn run_refresh(
     let prompt_history = history_snapshot
         .clone()
         .for_prompt(&turn_context.model_info.input_modalities);
-    let governance_path_variant = turn_context.governance_path_variant();
-    let thread_memory_item = if crate::compact::is_thread_memory_required(governance_path_variant) {
+    let thread_memory_item = if runtime_plan.requests_artifact(ArtifactKind::ThreadMemory) {
         match generate_thread_memory_item(
             sess.as_ref(),
             turn_context.as_ref(),
@@ -86,13 +50,14 @@ pub(crate) async fn run_refresh(
         {
             Ok(Some(item)) => Some(item),
             Ok(None) => {
-                return Err(CodexErr::Fatal(format!(
-                    "required thread memory generation returned empty output during /refresh (path_variant={governance_path_variant:?})"
-                )));
+                return Err(CodexErr::Fatal(
+                    "required thread memory generation returned empty output during /refresh"
+                        .to_string(),
+                ));
             }
             Err(err) => {
                 return Err(CodexErr::Fatal(format!(
-                    "failed generating required thread memory during /refresh (path_variant={governance_path_variant:?}): {err}"
+                    "failed generating required thread memory during /refresh: {err}"
                 )));
             }
         }
@@ -100,37 +65,14 @@ pub(crate) async fn run_refresh(
         None
     };
 
-    let continuation_bridge_item = match generate_continuation_bridge_item(
-        sess.as_ref(),
-        turn_context.as_ref(),
-        prompt_history,
-    )
-    .await
-    {
-        Ok(item) => item,
-        Err(err) => {
-            warn!("failed generating continuation bridge during /refresh: {err}");
-            None
-        }
-    };
-
     let (mut new_history, mut removed_count) = prune_superseded_artifacts(raw_history);
-    if thread_memory_item.is_some() {
-        let (next_history, removed) = remove_artifact_kind(new_history, ArtifactKind::ThreadMemory);
-        new_history = next_history;
-        removed_count = removed_count.saturating_add(removed);
-    }
-    if continuation_bridge_item.is_some() {
-        let (next_history, removed) =
-            remove_artifact_kind(new_history, ArtifactKind::ContinuationBridge);
+    for artifact_kind in runtime_plan.drop_prior_artifact_kinds() {
+        let (next_history, removed) = remove_artifact_kind(new_history, *artifact_kind);
         new_history = next_history;
         removed_count = removed_count.saturating_add(removed);
     }
 
-    let authoritative_items: Vec<_> = thread_memory_item
-        .into_iter()
-        .chain(continuation_bridge_item)
-        .collect();
+    let authoritative_items: Vec<_> = thread_memory_item.into_iter().collect();
     if !authoritative_items.is_empty() {
         new_history =
             insert_items_before_last_summary_or_compaction(new_history, authoritative_items);
@@ -168,6 +110,10 @@ pub(crate) async fn run_prune(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
 ) -> CodexResult<()> {
+    let runtime_plan = runtime_plan_for_turn_boundary_maintenance(
+        turn_context.as_ref(),
+        MaintenanceAction::Prune,
+    )?;
     send_turn_started_event(sess.as_ref(), turn_context.as_ref()).await;
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(turn_context.as_ref(), &compaction_item)
@@ -178,10 +124,11 @@ pub(crate) async fn run_prune(
 
     let original_len = raw_history.len();
     let (mut pruned_history, mut removed_count) = prune_superseded_artifacts(raw_history);
-    let (next_history, manifest_removed) =
-        remove_artifact_kind(pruned_history, ArtifactKind::PruneManifest);
-    pruned_history = next_history;
-    removed_count = removed_count.saturating_add(manifest_removed);
+    for artifact_kind in runtime_plan.drop_prior_artifact_kinds() {
+        let (next_history, removed) = remove_artifact_kind(pruned_history, *artifact_kind);
+        pruned_history = next_history;
+        removed_count = removed_count.saturating_add(removed);
+    }
     let (next_history, summary_removed) = retain_latest_summary_message(pruned_history);
     pruned_history = next_history;
     removed_count = removed_count.saturating_add(summary_removed);

@@ -21,6 +21,7 @@ It complements:
 - [docs/compaction-policy-p1-scaffold-implementation-spec.md](compaction-policy-p1-scaffold-implementation-spec.md)
 - [docs/compaction-policy-p2-history-shaping-implementation-spec.md](compaction-policy-p2-history-shaping-implementation-spec.md)
 - [docs/compaction-policy-p3-artifact-codecs-implementation-spec.md](compaction-policy-p3-artifact-codecs-implementation-spec.md)
+- [docs/compaction-policy-p4-timing-law-implementation-spec.md](compaction-policy-p4-timing-law-implementation-spec.md)
 - [docs/compaction-policy-route-matrix.md](compaction-policy-route-matrix.md)
 - [docs/custom-fork-module-inventory.md](custom-fork-module-inventory.md)
 
@@ -430,8 +431,12 @@ matrix as an explicit doctrine artifact and fixture source.
 | `Compact` | `TurnBoundary` | `LocalPure` | yes | no durable carry-forward | none | no | updated durable memory |
 | `Compact` | `TurnBoundary` | `RemoteHybrid` | yes | no durable carry-forward | none | no | updated durable memory + upstream summary |
 | `Compact` | `TurnBoundary` | `RemoteVanilla` | no | no | none | no | upstream summary only |
-| `Refresh` | `TurnBoundary` | any | yes | no | none | no | updated durable memory |
-| `Prune` | `TurnBoundary` | any | no | no | none | no | prune manifest only |
+| `Refresh` | `TurnBoundary` | `LocalPure` | yes | no | none | no | updated durable memory |
+| `Refresh` | `TurnBoundary` | `RemoteHybrid` | yes | no | none | no | updated durable memory |
+| `Refresh` | `TurnBoundary` | `RemoteVanilla` | no | no | none | no | unsupported route |
+| `Prune` | `TurnBoundary` | `LocalPure` | no | no | none | no | prune manifest only |
+| `Prune` | `TurnBoundary` | `RemoteHybrid` | no | no | none | no | prune manifest only |
+| `Prune` | `TurnBoundary` | `RemoteVanilla` | no | no | none | no | prune manifest only |
 
 This table should exist as:
 
