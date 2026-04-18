@@ -20,6 +20,7 @@ It complements:
 - [docs/compaction-policy-p0-route-matrix-implementation-spec.md](compaction-policy-p0-route-matrix-implementation-spec.md)
 - [docs/compaction-policy-p1-scaffold-implementation-spec.md](compaction-policy-p1-scaffold-implementation-spec.md)
 - [docs/compaction-policy-p2-history-shaping-implementation-spec.md](compaction-policy-p2-history-shaping-implementation-spec.md)
+- [docs/compaction-policy-p3-artifact-codecs-implementation-spec.md](compaction-policy-p3-artifact-codecs-implementation-spec.md)
 - [docs/compaction-policy-route-matrix.md](compaction-policy-route-matrix.md)
 - [docs/custom-fork-module-inventory.md](custom-fork-module-inventory.md)
 

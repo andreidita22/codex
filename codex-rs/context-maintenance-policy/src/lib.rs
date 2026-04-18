@@ -1,8 +1,16 @@
+mod artifact_codecs;
 mod contracts;
 mod history_shape;
 mod retention;
 mod route_matrix;
 
+pub use artifact_codecs::build_prune_manifest_item;
+pub use artifact_codecs::content_items_to_text;
+pub use artifact_codecs::extract_tagged_payload;
+pub use artifact_codecs::has_tagged_block;
+pub use artifact_codecs::prune_superseded_artifacts;
+pub use artifact_codecs::remove_artifact_kind;
+pub use artifact_codecs::tagged_artifact_kind;
 pub use contracts::ArtifactKind;
 pub use contracts::ArtifactLifetime;
 pub use contracts::ArtifactRequest;
