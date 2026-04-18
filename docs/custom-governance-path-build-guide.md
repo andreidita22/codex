@@ -88,9 +88,10 @@ The updater treats the latest prior thread-memory artifact as canonical base and
 ### Core implementation
 
 - `codex-rs/core/src/governance/thread_memory.rs`
+- `codex-rs/context-maintenance-policy/src/thread_memory.rs`
 - Prompt/schema artifacts:
-  - `codex-rs/core/templates/thread_memory/prompt.md`
-  - `codex-rs/core/templates/thread_memory/schema.json`
+  - `codex-rs/context-maintenance-policy/templates/thread_memory/prompt.md`
+  - `codex-rs/context-maintenance-policy/templates/thread_memory/schema.json`
 
 ### Update mechanics currently implemented
 

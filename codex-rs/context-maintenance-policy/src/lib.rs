@@ -4,6 +4,7 @@ mod contracts;
 mod history_shape;
 mod retention;
 mod route_matrix;
+mod thread_memory;
 
 pub use artifact_codecs::build_prune_manifest_item;
 pub use artifact_codecs::content_items_to_text;
@@ -38,6 +39,16 @@ pub use history_shape::insert_items_before_last_summary_or_compaction;
 pub use history_shape::shape_remote_compacted_history;
 pub use retention::retain_recent_raw_conversation_messages;
 pub use route_matrix::plan_route;
+pub use thread_memory::THREAD_MEMORY_PROMPT;
+pub use thread_memory::THREAD_MEMORY_SCHEMA;
+pub use thread_memory::ThreadMemorySourceSelection;
+pub use thread_memory::ThreadMemoryTrimResult;
+pub use thread_memory::build_thread_memory_update_message;
+pub use thread_memory::limit_thread_memory_source_items;
+pub use thread_memory::parse_thread_memory_payload;
+pub use thread_memory::split_previous_memory_and_source_items;
+pub use thread_memory::thread_memory_output_schema;
+pub use thread_memory::thread_memory_response_item;
 
 #[cfg(test)]
 mod tests;

@@ -271,11 +271,12 @@ release-merge artifact.
 ### Runtime hot files
 
 - [codex-rs/core/src/governance/thread_memory.rs](../codex-rs/core/src/governance/thread_memory.rs)
+- [codex-rs/context-maintenance-policy/src/thread_memory.rs](../codex-rs/context-maintenance-policy/src/thread_memory.rs)
 - [codex-rs/core/src/compact.rs](../codex-rs/core/src/compact.rs)
 - [codex-rs/core/src/compact_remote.rs](../codex-rs/core/src/compact_remote.rs)
 - [codex-rs/core/src/codex.rs](../codex-rs/core/src/codex.rs)
-- [codex-rs/core/templates/thread_memory/prompt.md](../codex-rs/core/templates/thread_memory/prompt.md)
-- [codex-rs/core/templates/thread_memory/schema.json](../codex-rs/core/templates/thread_memory/schema.json)
+- [codex-rs/context-maintenance-policy/templates/thread_memory/prompt.md](../codex-rs/context-maintenance-policy/templates/thread_memory/prompt.md)
+- [codex-rs/context-maintenance-policy/templates/thread_memory/schema.json](../codex-rs/context-maintenance-policy/templates/thread_memory/schema.json)
 
 ### Upstream conflict risk
 
