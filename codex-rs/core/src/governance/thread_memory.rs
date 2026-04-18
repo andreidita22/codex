@@ -1,6 +1,7 @@
 use crate::Prompt;
 use crate::codex::Session;
 use crate::codex::TurnContext;
+use crate::context_maintenance_config::resolve_context_maintenance_request_context;
 use codex_api::ResponseEvent;
 use codex_protocol::error::Result;
 use codex_protocol::models::BaseInstructions;
@@ -59,6 +60,7 @@ pub(crate) async fn generate_thread_memory_item(
         end_turn: None,
         phase: None,
     });
+    let request_context = resolve_context_maintenance_request_context(sess, turn_context).await;
 
     let prompt = Prompt {
         input: source_items,
@@ -75,9 +77,9 @@ pub(crate) async fn generate_thread_memory_item(
     let mut stream = client_session
         .stream(
             &prompt,
-            &turn_context.model_info,
-            &turn_context.session_telemetry,
-            turn_context.reasoning_effort,
+            &request_context.model_info,
+            &request_context.session_telemetry,
+            request_context.reasoning_effort,
             turn_context.reasoning_summary,
             turn_context.config.service_tier,
             turn_metadata_header.as_deref(),

@@ -6,9 +6,10 @@ use crate::Prompt;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::config::ContinuationBridgeVariant;
+use crate::context_maintenance_config::ContextMaintenanceRequestContext;
+use crate::context_maintenance_config::resolve_context_maintenance_request_context;
 use baton::BatonBridge;
 use codex_api::ResponseEvent;
-use codex_models_manager::manager::RefreshStrategy;
 use codex_otel::SessionTelemetry;
 use codex_protocol::error::Result;
 use codex_protocol::models::BaseInstructions;
@@ -20,10 +21,6 @@ use futures::StreamExt;
 use rich_review::RichReviewBridge;
 use serde_json::Value;
 use tracing::warn;
-
-const DEFAULT_CONTINUATION_BRIDGE_MODEL: &str = "gpt-5-codex-mini";
-const DEFAULT_CONTINUATION_BRIDGE_REASONING_EFFORT: ReasoningEffortConfig =
-    ReasoningEffortConfig::High;
 
 pub(crate) fn default_prompt(variant: ContinuationBridgeVariant) -> &'static str {
     match variant {
@@ -212,60 +209,16 @@ async fn resolve_request_context(
     turn_context: &TurnContext,
 ) -> ContinuationBridgeRequestContext {
     let variant = turn_context.continuation_bridge_variant();
-    let requested_model = turn_context
-        .config
-        .continuation_bridge_model
-        .as_deref()
-        .unwrap_or(DEFAULT_CONTINUATION_BRIDGE_MODEL);
-    let requested_reasoning_effort = turn_context
-        .config
-        .continuation_bridge_reasoning_effort
-        .unwrap_or(DEFAULT_CONTINUATION_BRIDGE_REASONING_EFFORT);
-
-    let resident_context = || ContinuationBridgeRequestContext {
-        variant,
-        model_info: turn_context.model_info.clone(),
-        session_telemetry: turn_context.session_telemetry.clone(),
-        reasoning_effort: turn_context.reasoning_effort,
-    };
-
-    let available_models = sess
-        .services
-        .models_manager
-        .list_models(RefreshStrategy::Offline)
-        .await;
-    if !available_models
-        .iter()
-        .any(|model| model.model == requested_model)
-    {
-        warn!(
-            "continuation bridge model `{requested_model}` unavailable; falling back to resident model `{}`",
-            turn_context.model_info.slug
-        );
-        return resident_context();
-    }
-
-    let bridge_turn = turn_context
-        .with_model(requested_model.to_string(), &sess.services.models_manager)
-        .await;
-    if !bridge_turn
-        .model_info
-        .supported_reasoning_levels
-        .iter()
-        .any(|preset| preset.effort == requested_reasoning_effort)
-    {
-        warn!(
-            "continuation bridge reasoning effort `{requested_reasoning_effort}` is unsupported for model `{requested_model}`; falling back to resident model `{}`",
-            turn_context.model_info.slug
-        );
-        return resident_context();
-    }
-
+    let ContextMaintenanceRequestContext {
+        model_info,
+        session_telemetry,
+        reasoning_effort,
+    } = resolve_context_maintenance_request_context(sess, turn_context).await;
     ContinuationBridgeRequestContext {
         variant,
-        model_info: bridge_turn.model_info,
-        session_telemetry: bridge_turn.session_telemetry,
-        reasoning_effort: Some(requested_reasoning_effort),
+        model_info,
+        session_telemetry,
+        reasoning_effort,
     }
 }
 

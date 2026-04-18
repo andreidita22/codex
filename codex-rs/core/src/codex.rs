@@ -7015,7 +7015,7 @@ async fn run_auto_compact(
     reason: CompactionReason,
     phase: CompactionPhase,
 ) -> CodexResult<()> {
-    if should_use_remote_compact_task(&turn_context.provider) {
+    if should_use_remote_compact_task(turn_context) {
         run_inline_remote_auto_compact_task(
             Arc::clone(sess),
             Arc::clone(turn_context),

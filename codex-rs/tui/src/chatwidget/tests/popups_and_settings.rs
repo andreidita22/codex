@@ -1553,6 +1553,8 @@ async fn memories_reset_confirmation_snapshot() {
     chat.open_memories_popup();
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
     let popup = render_bottom_popup(&chat, /*width*/ 80);
@@ -1590,10 +1592,42 @@ async fn memories_reset_confirmation_sends_event_on_confirm() {
     chat.open_memories_popup();
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
     assert_matches!(rx.try_recv(), Ok(AppEvent::ResetMemories));
+}
+
+#[tokio::test]
+async fn memories_settings_selecting_compaction_model_opens_picker() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::MemoryTool, /*enabled*/ true);
+
+    chat.open_memories_popup();
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::OpenContextMaintenanceModelPicker)
+    );
+}
+
+#[tokio::test]
+async fn memories_settings_selecting_compaction_engine_opens_picker() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::MemoryTool, /*enabled*/ true);
+
+    chat.open_memories_popup();
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    assert_matches!(rx.try_recv(), Ok(AppEvent::OpenCompactionEnginePicker));
 }
 
 #[tokio::test]

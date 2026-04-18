@@ -1,5 +1,6 @@
 use super::*;
 use pretty_assertions::assert_eq;
+use std::sync::Arc;
 
 async fn process_compacted_history_with_test_session(
     compacted_history: Vec<ResponseItem>,
@@ -18,6 +19,31 @@ async fn process_compacted_history_with_test_session(
     )
     .await;
     (refreshed, initial_context)
+}
+
+#[tokio::test]
+async fn compaction_engine_defaults_to_remote_hybrid() {
+    let (_session, turn_context) = crate::codex::make_session_and_context().await;
+
+    assert_eq!(
+        compaction_engine(&turn_context),
+        CompactionEngine::RemoteHybrid
+    );
+    assert!(should_use_remote_compact_task(&turn_context));
+}
+
+#[tokio::test]
+async fn local_pure_compaction_engine_uses_local_compaction_path() {
+    let (_session, mut turn_context) = crate::codex::make_session_and_context().await;
+    let mut config = (*turn_context.config).clone();
+    config.compaction_engine = Some(CompactionEngine::LocalPure);
+    turn_context.config = Arc::new(config);
+
+    assert_eq!(
+        compaction_engine(&turn_context),
+        CompactionEngine::LocalPure
+    );
+    assert!(!should_use_remote_compact_task(&turn_context));
 }
 
 #[test]

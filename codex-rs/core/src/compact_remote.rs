@@ -8,11 +8,13 @@ use crate::codex::built_tools;
 use crate::compact::COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES;
 use crate::compact::CompactionAnalyticsAttempt;
 use crate::compact::InitialContextInjection;
+use crate::compact::compaction_engine;
 use crate::compact::compaction_status_from_result;
 use crate::compact::insert_initial_context_before_last_real_user_or_summary;
 use crate::compact::insert_items_before_last_summary_or_compaction;
 use crate::compact::retain_recent_raw_conversation_messages;
 use crate::compact::should_regenerate_thread_memory;
+use crate::config::CompactionEngine;
 use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
 use crate::context_manager::estimate_response_item_model_visible_bytes;
@@ -165,10 +167,13 @@ async fn run_remote_compact_task_inner_impl(
         output_schema: None,
     };
     let governance_path_variant = turn_context.governance_path_variant();
-    let thread_memory_item = if should_regenerate_thread_memory(
-        governance_path_variant,
-        initial_context_injection,
-    ) {
+    let inject_authoritative_items = !matches!(
+        compaction_engine(turn_context),
+        CompactionEngine::RemoteVanilla
+    );
+    let thread_memory_item = if inject_authoritative_items
+        && should_regenerate_thread_memory(governance_path_variant, initial_context_injection)
+    {
         match generate_thread_memory_item(
             sess.as_ref(),
             turn_context.as_ref(),
@@ -192,18 +197,22 @@ async fn run_remote_compact_task_inner_impl(
         None
     };
     let thread_memory_present = thread_memory_item.is_some();
-    let continuation_bridge_item = match generate_continuation_bridge_item(
-        sess.as_ref(),
-        turn_context.as_ref(),
-        prompt.input.clone(),
-    )
-    .await
-    {
-        Ok(item) => item,
-        Err(err) => {
-            warn!("failed generating continuation bridge before remote compaction: {err}");
-            None
+    let continuation_bridge_item = if inject_authoritative_items {
+        match generate_continuation_bridge_item(
+            sess.as_ref(),
+            turn_context.as_ref(),
+            prompt.input.clone(),
+        )
+        .await
+        {
+            Ok(item) => item,
+            Err(err) => {
+                warn!("failed generating continuation bridge before remote compaction: {err}");
+                None
+            }
         }
+    } else {
+        None
     };
 
     let mut new_history = sess
@@ -236,15 +245,17 @@ async fn run_remote_compact_task_inner_impl(
         initial_context_injection,
     )
     .await;
-    let authoritative_items: Vec<_> = thread_memory_item
-        .into_iter()
-        .chain(continuation_bridge_item)
-        .collect();
-    if !authoritative_items.is_empty() {
-        new_history =
-            insert_items_before_last_summary_or_compaction(new_history, authoritative_items);
+    if inject_authoritative_items {
+        let authoritative_items: Vec<_> = thread_memory_item
+            .into_iter()
+            .chain(continuation_bridge_item)
+            .collect();
+        if !authoritative_items.is_empty() {
+            new_history =
+                insert_items_before_last_summary_or_compaction(new_history, authoritative_items);
+        }
     }
-    if thread_memory_present {
+    if inject_authoritative_items && thread_memory_present {
         new_history = retain_recent_raw_conversation_messages(
             new_history,
             COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES,

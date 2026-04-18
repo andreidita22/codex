@@ -2,16 +2,21 @@
 source: tui/src/chatwidget/tests/popups_and_settings.rs
 expression: popup
 ---
-  Memories
-  Choose how Codex uses and creates memories. Changes are saved to config.toml
+  Memories and Compaction
+  Configure shared memory and compaction defaults. Changes are saved to config
 
-› [x] Use memories       Use memories in the following threads. Applied at
-                         next thread.
-  [ ] Generate memories  Generate memories from the following threads. Current
-                         thread included.
-  Reset all memories     Clear local memory files and summaries. Existing
-                         threads stay intact.
+› [x] Use memories             Use memories in the following threads. Applied
+                               at next thread.
+  [ ] Generate memories        Generate memories from the following threads.
+                               Current thread included.
+  Compaction model and effort  Choose the shared model and reasoning used for
+                               compact/refresh artifacts. Current: Current
+                               thread model · current thread reasoning.
+  Default compaction engine    Choose how /compact runs for all threads.
+                               Current: Remote hybrid.
+  Reset all memories           Clear local memory files and summaries.
+                               Existing threads stay intact.
 
   Learn more: https://developers.openai.com/codex/memories
 
-  Press space to toggle; enter to save or select
+  Press enter to change or select

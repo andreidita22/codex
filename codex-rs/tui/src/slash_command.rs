@@ -114,7 +114,7 @@ impl SlashCommand {
                 "let sandbox read a directory: /sandbox-add-read-dir <absolute_path>"
             }
             SlashCommand::Experimental => "toggle experimental features",
-            SlashCommand::Memories => "configure memory use and generation",
+            SlashCommand::Memories => "configure memory and compaction defaults",
             SlashCommand::Mcp => "list configured MCP tools",
             SlashCommand::Apps => "manage apps",
             SlashCommand::Plugins => "browse plugins",
@@ -201,7 +201,6 @@ impl SlashCommand {
             SlashCommand::SandboxReadRoot => cfg!(target_os = "windows"),
             SlashCommand::Copy => !cfg!(target_os = "android"),
             SlashCommand::Rollout | SlashCommand::TestApproval => cfg!(debug_assertions),
-            SlashCommand::Memories => false,
             _ => true,
         }
     }

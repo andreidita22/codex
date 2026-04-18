@@ -38,6 +38,8 @@ enum MemoriesSetting {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MemoriesAction {
+    CompactionSelection,
+    CompactionEngine,
     Reset,
 }
 
@@ -45,13 +47,13 @@ enum MemoriesMenuItem {
     Setting {
         setting: MemoriesSetting,
         name: &'static str,
-        description: &'static str,
+        description: String,
         enabled: bool,
     },
     Action {
         action: MemoriesAction,
         name: &'static str,
-        description: &'static str,
+        description: String,
     },
 }
 
@@ -68,6 +70,8 @@ impl MemoriesSettingsView {
     pub(crate) fn new(
         use_memories: bool,
         generate_memories: bool,
+        compaction_selection_label: String,
+        compaction_engine_label: String,
         app_event_tx: AppEventSender,
     ) -> Self {
         let mut view = Self {
@@ -75,19 +79,38 @@ impl MemoriesSettingsView {
                 MemoriesMenuItem::Setting {
                     setting: MemoriesSetting::Use,
                     name: "Use memories",
-                    description: "Use memories in the following threads. Applied at next thread.",
+                    description: "Use memories in the following threads. Applied at next thread."
+                        .to_string(),
                     enabled: use_memories,
                 },
                 MemoriesMenuItem::Setting {
                     setting: MemoriesSetting::Generate,
                     name: "Generate memories",
-                    description: "Generate memories from the following threads. Current thread included.",
+                    description:
+                        "Generate memories from the following threads. Current thread included."
+                            .to_string(),
                     enabled: generate_memories,
+                },
+                MemoriesMenuItem::Action {
+                    action: MemoriesAction::CompactionSelection,
+                    name: "Compaction model and effort",
+                    description: format!(
+                        "Choose the shared model and reasoning used for compact/refresh artifacts. Current: {compaction_selection_label}."
+                    ),
+                },
+                MemoriesMenuItem::Action {
+                    action: MemoriesAction::CompactionEngine,
+                    name: "Default compaction engine",
+                    description: format!(
+                        "Choose how /compact runs for all threads. Current: {compaction_engine_label}."
+                    ),
                 },
                 MemoriesMenuItem::Action {
                     action: MemoriesAction::Reset,
                     name: "Reset all memories",
-                    description: "Clear local memory files and summaries. Existing threads stay intact.",
+                    description:
+                        "Clear local memory files and summaries. Existing threads stay intact."
+                            .to_string(),
                 },
             ],
             state: ScrollState::new(),
@@ -109,9 +132,10 @@ impl MemoriesSettingsView {
 
     fn settings_header(&self) -> ColumnRenderable<'_> {
         let mut header = ColumnRenderable::new();
-        header.push(Line::from("Memories".bold()));
+        header.push(Line::from("Memories and Compaction".bold()));
         header.push(Line::from(
-            "Choose how Codex uses and creates memories. Changes are saved to config.toml".dim(),
+            "Configure shared memory and compaction defaults. Changes are saved to config.toml"
+                .dim(),
         ));
         header
     }
@@ -181,11 +205,11 @@ impl MemoriesSettingsView {
                         ..
                     } => (
                         format!("{prefix} [{}] {name}", if *enabled { 'x' } else { ' ' }),
-                        description,
+                        description.as_str(),
                     ),
                     MemoriesMenuItem::Action {
                         name, description, ..
-                    } => (format!("{prefix} {name}"), description),
+                    } => (format!("{prefix} {name}"), description.as_str()),
                 };
                 GenericDisplayRow {
                     name,
@@ -312,7 +336,7 @@ impl BottomPaneView for MemoriesSettingsView {
                 code: KeyCode::Char(' '),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => self.toggle_selected(),
+            } => self.save(),
             KeyEvent {
                 code: KeyCode::Enter,
                 modifiers: KeyModifiers::NONE,
@@ -350,17 +374,33 @@ impl MemoriesSettingsView {
         }
 
         match self.state.selected_idx.and_then(|idx| self.items.get(idx)) {
-            Some(MemoriesMenuItem::Action {
-                action: MemoriesAction::Reset,
-                ..
-            }) => self.open_reset_confirmation(),
-            _ => {
+            Some(MemoriesMenuItem::Setting { .. }) => {
+                self.toggle_selected();
                 self.app_event_tx.send(AppEvent::UpdateMemorySettings {
                     use_memories: self.current_setting(MemoriesSetting::Use),
                     generate_memories: self.current_setting(MemoriesSetting::Generate),
                 });
+            }
+            Some(MemoriesMenuItem::Action {
+                action: MemoriesAction::CompactionSelection,
+                ..
+            }) => {
+                self.app_event_tx
+                    .send(AppEvent::OpenContextMaintenanceModelPicker);
                 self.complete = true;
             }
+            Some(MemoriesMenuItem::Action {
+                action: MemoriesAction::CompactionEngine,
+                ..
+            }) => {
+                self.app_event_tx.send(AppEvent::OpenCompactionEnginePicker);
+                self.complete = true;
+            }
+            Some(MemoriesMenuItem::Action {
+                action: MemoriesAction::Reset,
+                ..
+            }) => self.open_reset_confirmation(),
+            None => {}
         }
     }
 
@@ -469,9 +509,7 @@ impl Renderable for MemoriesSettingsView {
 fn memories_settings_hint_line() -> Line<'static> {
     Line::from(vec![
         "Press ".into(),
-        key_hint::plain(KeyCode::Char(' ')).into(),
-        " to toggle; ".into(),
         key_hint::plain(KeyCode::Enter).into(),
-        " to save or select".into(),
+        " to change or select".into(),
     ])
 }

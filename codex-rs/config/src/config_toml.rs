@@ -79,6 +79,28 @@ pub enum GovernancePathVariant {
     StrictV1Enforce,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionEngine {
+    RemoteVanilla,
+    #[default]
+    RemoteHybrid,
+    LocalPure,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextMaintenanceReasoningEffort {
+    #[default]
+    CurrentThread,
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    XHigh,
+}
+
 /// Base config deserialized from ~/.codex/config.toml.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -178,6 +200,19 @@ pub struct ConfigToml {
 
     /// Optional strict-governance variant.
     pub governance_path_variant: Option<GovernancePathVariant>,
+
+    /// Default `/compact` implementation used for future compactions.
+    pub compaction_engine: Option<CompactionEngine>,
+
+    /// Model selector used by local context-maintenance work such as compact
+    /// summaries, continuation bridges, and thread memory updates.
+    ///
+    /// Set to `"current_thread"` to use the active thread's model.
+    pub context_maintenance_model: Option<String>,
+
+    /// Reasoning selector used by local context-maintenance work such as
+    /// compact summaries, continuation bridges, and thread memory updates.
+    pub context_maintenance_reasoning_effort: Option<ContextMaintenanceReasoningEffort>,
 
     /// Optional commit attribution text for commit message co-author trailers.
     ///
