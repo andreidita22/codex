@@ -174,7 +174,16 @@ fn limit_source_items(source_items: Vec<ResponseItem>) -> (Vec<ResponseItem>, us
     }
 
     let start = source_items_len - MAX_SOURCE_ITEMS;
-    (source_items.into_iter().skip(start).collect(), start)
+    let mut source_items = source_items;
+    let trimmed_items: Vec<_> = source_items.drain(..start).collect();
+    let pre_cleanup_len = source_items.len();
+    for item in &trimmed_items {
+        crate::context_manager::remove_corresponding_for(&mut source_items, item);
+    }
+    let trimmed_source_count =
+        start.saturating_add(pre_cleanup_len.saturating_sub(source_items.len()));
+
+    (source_items, trimmed_source_count)
 }
 
 fn build_update_message(
@@ -310,6 +319,7 @@ mod tests {
     use super::split_previous_memory_and_source_items;
     use super::thread_memory_response_item;
     use codex_protocol::models::ContentItem;
+    use codex_protocol::models::FunctionCallOutputPayload;
     use codex_protocol::models::ResponseItem;
     use pretty_assertions::assert_eq;
 
@@ -348,6 +358,23 @@ mod tests {
             }],
             end_turn: None,
             phase: None,
+        }
+    }
+
+    fn function_call(call_id: &str) -> ResponseItem {
+        ResponseItem::FunctionCall {
+            id: None,
+            name: "shell".to_string(),
+            namespace: None,
+            arguments: "{}".to_string(),
+            call_id: call_id.to_string(),
+        }
+    }
+
+    fn function_call_output(call_id: &str) -> ResponseItem {
+        ResponseItem::FunctionCallOutput {
+            call_id: call_id.to_string(),
+            output: FunctionCallOutputPayload::from_text("done".to_string()),
         }
     }
 
@@ -513,6 +540,24 @@ mod tests {
         assert!(should_include_delta_source_item(&user_message(
             "actual delta"
         )));
+    }
+
+    #[test]
+    fn limit_source_items_removes_orphaned_function_call_outputs_after_tail_trim() {
+        let mut source_items = vec![user_message("older"), function_call("call_1")];
+        source_items.push(function_call_output("call_1"));
+        source_items.extend((0..159).map(|index| user_message(&format!("tail {index}"))));
+
+        let (source_items, trimmed_source_count) = super::limit_source_items(source_items);
+
+        assert_eq!(trimmed_source_count, 3);
+        assert_eq!(source_items.len(), 159);
+        assert_eq!(
+            source_items
+                .iter()
+                .any(|item| matches!(item, ResponseItem::FunctionCallOutput { .. })),
+            false
+        );
     }
 
     #[test]
