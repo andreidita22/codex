@@ -13,6 +13,7 @@ pub use artifact_codecs::has_tagged_block;
 pub use artifact_codecs::prune_superseded_artifacts;
 pub use artifact_codecs::remove_artifact_kind;
 pub use artifact_codecs::tagged_artifact_kind;
+pub use artifact_codecs::tagged_artifact_kind_from_text;
 pub use continuation_bridge::BridgeVariant;
 pub use continuation_bridge::ContinuationBridgeModelInput;
 pub use continuation_bridge::ContinuationBridgePayload;

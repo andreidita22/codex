@@ -8,6 +8,7 @@ use tracing::warn;
 
 use crate::content_items_to_text;
 use crate::extract_tagged_payload;
+use crate::tagged_artifact_kind_from_text;
 
 pub const THREAD_MEMORY_SCHEMA: &str = "odeu_thread_memory_v1";
 pub const THREAD_MEMORY_PROMPT: &str = include_str!("../templates/thread_memory/prompt.md");
@@ -168,8 +169,7 @@ fn should_include_delta_source_item(item: &ResponseItem, summary_prefix: &str) -
                 return true;
             };
 
-            extract_tagged_payload(&text, THREAD_MEMORY_TAG).is_none()
-                && extract_tagged_payload(&text, "continuation_bridge").is_none()
+            tagged_artifact_kind_from_text(&text).is_none()
         }
         ResponseItem::Message { role, content, .. } if role == "user" => {
             let Some(text) = content_items_to_text(content) else {
@@ -364,6 +364,19 @@ mod tests {
         }
     }
 
+    fn prune_manifest_item() -> ResponseItem {
+        ResponseItem::Message {
+            id: None,
+            role: "developer".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "<prune_manifest schema=\"prune_manifest_v1\">\n{}\n</prune_manifest>"
+                    .to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        }
+    }
+
     fn function_call(call_id: &str) -> ResponseItem {
         ResponseItem::FunctionCall {
             id: None,
@@ -537,6 +550,37 @@ mod tests {
                     phase: None,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn split_previous_memory_excludes_prune_manifest_from_delta_source() {
+        let prior_memory = serde_json::json!({
+            "schema": THREAD_MEMORY_SCHEMA,
+            "thread": { "compaction_epoch": 4 }
+        })
+        .to_string();
+        let input = vec![
+            thread_memory_item(&prior_memory),
+            prune_manifest_item(),
+            user_message("new user request"),
+        ];
+
+        let selection = split_previous_memory_and_source_items(
+            &input,
+            "Compact this conversation by preserving the most important context.",
+        );
+
+        assert_eq!(
+            selection.previous_memory,
+            Some(serde_json::json!({
+                "schema": THREAD_MEMORY_SCHEMA,
+                "thread": { "compaction_epoch": 4 }
+            }))
+        );
+        assert_eq!(
+            selection.source_items,
+            vec![user_message("new user request")]
         );
     }
 

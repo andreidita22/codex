@@ -30,26 +30,40 @@ pub fn content_items_to_text(content: &[ContentItem]) -> Option<String> {
 }
 
 pub fn extract_tagged_payload<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
-    let open_tag_prefix = format!("<{tag}");
     let close_tag = format!("</{tag}>");
-    let open_index = text.find(&open_tag_prefix)?;
-    let open_tag_end = text[open_index..].find('>')? + open_index + 1;
-    let close_index = text[open_tag_end..].find(&close_tag)? + open_tag_end;
-    let payload = text[open_tag_end..close_index].trim();
-    if payload.is_empty() {
-        None
-    } else {
-        Some(payload)
+    let mut search_start = 0usize;
+
+    while let Some(open_index) = find_open_tag_start(&text[search_start..], tag) {
+        let open_index = search_start + open_index;
+        let open_tag_end = text[open_index..].find('>')? + open_index + 1;
+        if let Some(close_index) = text[open_tag_end..].find(&close_tag) {
+            let close_index = open_tag_end + close_index;
+            let payload = text[open_tag_end..close_index].trim();
+            if !payload.is_empty() {
+                return Some(payload);
+            }
+        }
+        search_start = open_index.saturating_add(1);
     }
+
+    None
 }
 
 pub fn has_tagged_block(text: &str, tag: &str) -> bool {
-    has_tagged_block_prefix(text, "<", tag) && has_tagged_block_prefix(text, "</", tag)
+    find_open_tag_start(text, tag).is_some() && find_close_tag_start(text, tag).is_some()
 }
 
-fn has_tagged_block_prefix(text: &str, prefix: &str, tag: &str) -> bool {
-    text.match_indices(prefix)
-        .any(|(idx, _)| text[idx + prefix.len()..].starts_with(tag))
+pub fn tagged_artifact_kind_from_text(text: &str) -> Option<ArtifactKind> {
+    if has_tagged_block(text, CONTINUATION_BRIDGE_TAG) {
+        return Some(ArtifactKind::ContinuationBridge);
+    }
+    if has_tagged_block(text, THREAD_MEMORY_TAG) {
+        return Some(ArtifactKind::ThreadMemory);
+    }
+    if has_tagged_block(text, PRUNE_MANIFEST_TAG) {
+        return Some(ArtifactKind::PruneManifest);
+    }
+    None
 }
 
 pub fn tagged_artifact_kind(item: &ResponseItem) -> Option<ArtifactKind> {
@@ -60,16 +74,41 @@ pub fn tagged_artifact_kind(item: &ResponseItem) -> Option<ArtifactKind> {
         return None;
     }
     let text = content_items_to_text(content)?;
-    if has_tagged_block(&text, CONTINUATION_BRIDGE_TAG) {
-        return Some(ArtifactKind::ContinuationBridge);
-    }
-    if has_tagged_block(&text, THREAD_MEMORY_TAG) {
-        return Some(ArtifactKind::ThreadMemory);
-    }
-    if has_tagged_block(&text, PRUNE_MANIFEST_TAG) {
-        return Some(ArtifactKind::PruneManifest);
-    }
-    None
+    tagged_artifact_kind_from_text(&text)
+}
+
+fn find_open_tag_start(text: &str, tag: &str) -> Option<usize> {
+    find_tag_start(text, "<", tag, is_open_tag_boundary)
+}
+
+fn find_close_tag_start(text: &str, tag: &str) -> Option<usize> {
+    find_tag_start(text, "</", tag, is_close_tag_boundary)
+}
+
+fn find_tag_start(
+    text: &str,
+    prefix: &str,
+    tag: &str,
+    is_valid_boundary: fn(&str) -> bool,
+) -> Option<usize> {
+    text.match_indices(prefix).find_map(|(idx, _)| {
+        let rest = &text[idx + prefix.len()..];
+        let after_tag = rest.strip_prefix(tag)?;
+        if is_valid_boundary(after_tag) {
+            Some(idx)
+        } else {
+            None
+        }
+    })
+}
+
+fn is_open_tag_boundary(after_tag: &str) -> bool {
+    matches!(after_tag.chars().next(), Some('>'))
+        || after_tag.chars().next().is_some_and(char::is_whitespace)
+}
+
+fn is_close_tag_boundary(after_tag: &str) -> bool {
+    matches!(after_tag.chars().next(), Some('>'))
 }
 
 pub fn remove_artifact_kind(
@@ -170,6 +209,7 @@ mod tests {
     use super::prune_superseded_artifacts;
     use super::remove_artifact_kind;
     use super::tagged_artifact_kind;
+    use super::tagged_artifact_kind_from_text;
     use crate::ArtifactKind;
 
     #[test]
@@ -203,6 +243,17 @@ mod tests {
     }
 
     #[test]
+    fn extract_tagged_payload_ignores_prefix_sharing_tags_and_finds_later_valid_tag() {
+        let tagged =
+            "<thread_memory_v2>wrong</thread_memory_v2>\n<thread_memory>right</thread_memory>";
+
+        assert_eq!(
+            extract_tagged_payload(tagged, "thread_memory"),
+            Some("right")
+        );
+    }
+
+    #[test]
     fn tagged_block_detection_matches_open_and_close_tags() {
         assert_eq!(
             has_tagged_block(
@@ -218,6 +269,21 @@ mod tests {
         assert_eq!(
             has_tagged_block("payload</thread_memory>", "thread_memory"),
             false
+        );
+        assert_eq!(
+            has_tagged_block(
+                "<thread_memory_v2>payload</thread_memory_v2>",
+                "thread_memory",
+            ),
+            false
+        );
+    }
+
+    #[test]
+    fn tagged_artifact_kind_from_text_ignores_prefix_sharing_tags() {
+        assert_eq!(
+            tagged_artifact_kind_from_text("<thread_memory_v2>payload</thread_memory_v2>",),
+            None
         );
     }
 
