@@ -30,6 +30,8 @@ use crate::bottom_pane::ApprovalRequest;
 use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::history_cell::HistoryCell;
+use crate::legacy_core::config::CompactionEngine;
+use crate::legacy_core::config::ContextMaintenanceReasoningEffort;
 use crate::legacy_core::plugins::PluginCapabilitySummary;
 
 use codex_config::types::ApprovalsReviewer;
@@ -336,6 +338,28 @@ pub(crate) enum AppEvent {
     /// Persist the selected service tier to the appropriate config.
     PersistServiceTierSelection {
         service_tier: Option<ServiceTier>,
+    },
+
+    /// Open the compaction model/reasoning picker.
+    OpenContextMaintenanceModelPicker,
+
+    /// Open the compaction engine picker.
+    OpenCompactionEnginePicker,
+
+    /// Open the compaction reasoning picker after picking a maintenance model.
+    OpenContextMaintenanceReasoningPicker {
+        model: ModelPreset,
+    },
+
+    /// Persist the shared context-maintenance model/reasoning selection.
+    PersistContextMaintenanceSelection {
+        model_selector: String,
+        reasoning_effort: ContextMaintenanceReasoningEffort,
+    },
+
+    /// Persist the default compaction engine.
+    PersistCompactionEngineSelection {
+        engine: CompactionEngine,
     },
 
     /// Open the device picker for a realtime microphone or speaker.

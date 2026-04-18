@@ -151,6 +151,8 @@ use codex_app_server_protocol::ThreadMetadataGitInfoUpdateParams;
 use codex_app_server_protocol::ThreadMetadataUpdateParams;
 use codex_app_server_protocol::ThreadMetadataUpdateResponse;
 use codex_app_server_protocol::ThreadNameUpdatedNotification;
+use codex_app_server_protocol::ThreadPruneStartParams;
+use codex_app_server_protocol::ThreadPruneStartResponse;
 use codex_app_server_protocol::ThreadReadParams;
 use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadRealtimeAppendAudioParams;
@@ -164,6 +166,8 @@ use codex_app_server_protocol::ThreadRealtimeStartResponse;
 use codex_app_server_protocol::ThreadRealtimeStartTransport;
 use codex_app_server_protocol::ThreadRealtimeStopParams;
 use codex_app_server_protocol::ThreadRealtimeStopResponse;
+use codex_app_server_protocol::ThreadRefreshStartParams;
+use codex_app_server_protocol::ThreadRefreshStartResponse;
 use codex_app_server_protocol::ThreadResumeParams;
 use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadRollbackParams;
@@ -922,6 +926,14 @@ impl CodexMessageProcessor {
             }
             ClientRequest::ThreadCompactStart { request_id, params } => {
                 self.thread_compact_start(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::ThreadRefreshStart { request_id, params } => {
+                self.thread_refresh_start(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::ThreadPruneStart { request_id, params } => {
+                self.thread_prune_start(to_connection_request_id(request_id), params)
                     .await;
             }
             ClientRequest::ThreadBackgroundTerminalsClean { request_id, params } => {
@@ -3708,6 +3720,68 @@ impl CodexMessageProcessor {
             }
             Err(err) => {
                 self.send_internal_error(request_id, format!("failed to start compaction: {err}"))
+                    .await;
+            }
+        }
+    }
+
+    async fn thread_refresh_start(
+        &self,
+        request_id: ConnectionRequestId,
+        params: ThreadRefreshStartParams,
+    ) {
+        let ThreadRefreshStartParams { thread_id } = params;
+
+        let (_, thread) = match self.load_thread(&thread_id).await {
+            Ok(v) => v,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+
+        match self
+            .submit_core_op(&request_id, thread.as_ref(), Op::RefreshContext)
+            .await
+        {
+            Ok(_) => {
+                self.outgoing
+                    .send_response(request_id, ThreadRefreshStartResponse {})
+                    .await;
+            }
+            Err(err) => {
+                self.send_internal_error(request_id, format!("failed to start refresh: {err}"))
+                    .await;
+            }
+        }
+    }
+
+    async fn thread_prune_start(
+        &self,
+        request_id: ConnectionRequestId,
+        params: ThreadPruneStartParams,
+    ) {
+        let ThreadPruneStartParams { thread_id } = params;
+
+        let (_, thread) = match self.load_thread(&thread_id).await {
+            Ok(v) => v,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+
+        match self
+            .submit_core_op(&request_id, thread.as_ref(), Op::PruneContext)
+            .await
+        {
+            Ok(_) => {
+                self.outgoing
+                    .send_response(request_id, ThreadPruneStartResponse {})
+                    .await;
+            }
+            Err(err) => {
+                self.send_internal_error(request_id, format!("failed to start prune: {err}"))
                     .await;
             }
         }

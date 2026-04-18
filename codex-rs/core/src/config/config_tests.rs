@@ -7,7 +7,9 @@ use assert_matches::assert_matches;
 use codex_config::CONFIG_TOML_FILE;
 use codex_config::config_toml::AgentRoleToml;
 use codex_config::config_toml::AgentsToml;
+use codex_config::config_toml::CompactionEngine as CompactionEngineToml;
 use codex_config::config_toml::ConfigToml;
+use codex_config::config_toml::ContextMaintenanceReasoningEffort as ContextMaintenanceReasoningEffortToml;
 use codex_config::config_toml::ContinuationBridgeVariant as ContinuationBridgeVariantToml;
 use codex_config::config_toml::GovernancePathVariant as GovernancePathVariantToml;
 use codex_config::config_toml::ProjectConfig;
@@ -3498,6 +3500,37 @@ fn loads_governance_path_variant() -> std::io::Result<()> {
 }
 
 #[test]
+fn loads_compaction_engine_and_context_maintenance_settings() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cfg = ConfigToml {
+        compaction_engine: Some(CompactionEngineToml::LocalPure),
+        context_maintenance_model: Some("  current_thread  ".to_string()),
+        context_maintenance_reasoning_effort: Some(
+            ContextMaintenanceReasoningEffortToml::CurrentThread,
+        ),
+        ..Default::default()
+    };
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )?;
+
+    assert_eq!(config.compaction_engine, Some(CompactionEngine::LocalPure));
+    assert_eq!(
+        config.context_maintenance_model.as_deref(),
+        Some(CURRENT_THREAD_MODEL_SELECTOR)
+    );
+    assert_eq!(
+        config.context_maintenance_reasoning_effort,
+        Some(ContextMaintenanceReasoningEffort::CurrentThread)
+    );
+
+    Ok(())
+}
+
+#[test]
 fn load_config_rejects_missing_agent_role_config_file() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let missing_path = codex_home.path().join("agents").join("researcher.toml");
@@ -4777,6 +4810,9 @@ fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             continuation_bridge_model: None,
             continuation_bridge_reasoning_effort: None,
             governance_path_variant: None,
+            compaction_engine: None,
+            context_maintenance_model: None,
+            context_maintenance_reasoning_effort: None,
             commit_attribution: None,
             forced_chatgpt_workspace_id: None,
             forced_login_method: None,
@@ -4931,6 +4967,9 @@ fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         continuation_bridge_model: None,
         continuation_bridge_reasoning_effort: None,
         governance_path_variant: None,
+        compaction_engine: None,
+        context_maintenance_model: None,
+        context_maintenance_reasoning_effort: None,
         commit_attribution: None,
         forced_chatgpt_workspace_id: None,
         forced_login_method: None,
@@ -5083,6 +5122,9 @@ fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         continuation_bridge_model: None,
         continuation_bridge_reasoning_effort: None,
         governance_path_variant: None,
+        compaction_engine: None,
+        context_maintenance_model: None,
+        context_maintenance_reasoning_effort: None,
         commit_attribution: None,
         forced_chatgpt_workspace_id: None,
         forced_login_method: None,
@@ -5221,6 +5263,9 @@ fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         continuation_bridge_model: None,
         continuation_bridge_reasoning_effort: None,
         governance_path_variant: None,
+        compaction_engine: None,
+        context_maintenance_model: None,
+        context_maintenance_reasoning_effort: None,
         commit_attribution: None,
         forced_chatgpt_workspace_id: None,
         forced_login_method: None,

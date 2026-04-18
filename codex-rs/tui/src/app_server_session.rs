@@ -42,6 +42,8 @@ use codex_app_server_protocol::ThreadLoadedListResponse;
 use codex_app_server_protocol::ThreadMemoryMode;
 use codex_app_server_protocol::ThreadMemoryModeSetParams;
 use codex_app_server_protocol::ThreadMemoryModeSetResponse;
+use codex_app_server_protocol::ThreadPruneStartParams;
+use codex_app_server_protocol::ThreadPruneStartResponse;
 use codex_app_server_protocol::ThreadReadParams;
 use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadRealtimeAppendAudioParams;
@@ -53,6 +55,8 @@ use codex_app_server_protocol::ThreadRealtimeStartResponse;
 use codex_app_server_protocol::ThreadRealtimeStartTransport;
 use codex_app_server_protocol::ThreadRealtimeStopParams;
 use codex_app_server_protocol::ThreadRealtimeStopResponse;
+use codex_app_server_protocol::ThreadRefreshStartParams;
+use codex_app_server_protocol::ThreadRefreshStartResponse;
 use codex_app_server_protocol::ThreadResumeParams;
 use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadRollbackParams;
@@ -576,6 +580,36 @@ impl AppServerSession {
             })
             .await
             .wrap_err("thread/compact/start failed in TUI")?;
+        Ok(())
+    }
+
+    pub(crate) async fn thread_refresh_start(&mut self, thread_id: ThreadId) -> Result<()> {
+        let request_id = self.next_request_id();
+        let _: ThreadRefreshStartResponse = self
+            .client
+            .request_typed(ClientRequest::ThreadRefreshStart {
+                request_id,
+                params: ThreadRefreshStartParams {
+                    thread_id: thread_id.to_string(),
+                },
+            })
+            .await
+            .wrap_err("thread/refresh/start failed in TUI")?;
+        Ok(())
+    }
+
+    pub(crate) async fn thread_prune_start(&mut self, thread_id: ThreadId) -> Result<()> {
+        let request_id = self.next_request_id();
+        let _: ThreadPruneStartResponse = self
+            .client
+            .request_typed(ClientRequest::ThreadPruneStart {
+                request_id,
+                params: ThreadPruneStartParams {
+                    thread_id: thread_id.to_string(),
+                },
+            })
+            .await
+            .wrap_err("thread/prune/start failed in TUI")?;
         Ok(())
     }
 

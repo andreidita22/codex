@@ -55,9 +55,12 @@ use crate::bottom_pane::StatusLineSetupView;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::bottom_pane::TerminalTitleSetupView;
 use crate::legacy_core::DEFAULT_PROJECT_DOC_FILENAME;
+use crate::legacy_core::config::CURRENT_THREAD_MODEL_SELECTOR;
+use crate::legacy_core::config::CompactionEngine;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::config::Constrained;
 use crate::legacy_core::config::ConstraintResult;
+use crate::legacy_core::config::ContextMaintenanceReasoningEffort;
 use crate::legacy_core::config_loader::ConfigLayerStackOrdering;
 use crate::legacy_core::find_thread_name_by_id;
 use crate::legacy_core::skills::model::SkillMetadata;
@@ -2603,6 +2606,8 @@ impl ChatWidget {
         let view = MemoriesSettingsView::new(
             self.config.memories.use_memories,
             self.config.memories.generate_memories,
+            self.context_maintenance_selection_label(),
+            self.compaction_engine_label().to_string(),
             self.app_event_tx.clone(),
         );
         self.bottom_pane.show_view(Box::new(view));
@@ -2647,6 +2652,17 @@ impl ChatWidget {
     pub(crate) fn set_memory_settings(&mut self, use_memories: bool, generate_memories: bool) {
         self.config.memories.use_memories = use_memories;
         self.config.memories.generate_memories = generate_memories;
+    }
+
+    pub(crate) fn set_context_maintenance_settings(
+        &mut self,
+        model_selector: Option<String>,
+        reasoning_effort: Option<ContextMaintenanceReasoningEffort>,
+        compaction_engine: Option<CompactionEngine>,
+    ) {
+        self.config.context_maintenance_model = model_selector;
+        self.config.context_maintenance_reasoning_effort = reasoning_effort;
+        self.config.compaction_engine = compaction_engine;
     }
 
     pub(crate) fn set_token_info(&mut self, info: Option<TokenUsageInfo>) {
@@ -7807,6 +7823,237 @@ impl ChatWidget {
         }
 
         Some(trimmed.to_string())
+    }
+
+    fn compaction_engine_label(&self) -> &'static str {
+        match self.config.compaction_engine.unwrap_or_default() {
+            CompactionEngine::RemoteVanilla => "Remote vanilla",
+            CompactionEngine::RemoteHybrid => "Remote hybrid",
+            CompactionEngine::LocalPure => "Local pure",
+        }
+    }
+
+    fn context_maintenance_selection_label(&self) -> String {
+        let model_label = match self.config.context_maintenance_model.as_deref() {
+            Some(selector) if selector.eq_ignore_ascii_case(CURRENT_THREAD_MODEL_SELECTOR) => {
+                "Current thread model".to_string()
+            }
+            Some(selector) => selector.to_string(),
+            None => "Current thread model".to_string(),
+        };
+        let effort_label = match self
+            .config
+            .context_maintenance_reasoning_effort
+            .unwrap_or(ContextMaintenanceReasoningEffort::CurrentThread)
+        {
+            ContextMaintenanceReasoningEffort::CurrentThread => {
+                "current thread reasoning".to_string()
+            }
+            ContextMaintenanceReasoningEffort::None => "no reasoning".to_string(),
+            ContextMaintenanceReasoningEffort::Minimal => "minimal".to_string(),
+            ContextMaintenanceReasoningEffort::Low => "low".to_string(),
+            ContextMaintenanceReasoningEffort::Medium => "medium".to_string(),
+            ContextMaintenanceReasoningEffort::High => "high".to_string(),
+            ContextMaintenanceReasoningEffort::XHigh => "extra high".to_string(),
+        };
+        format!("{model_label} · {effort_label}")
+    }
+
+    pub(crate) fn open_context_maintenance_model_popup(&mut self) {
+        let presets: Vec<ModelPreset> = match self.model_catalog.try_list_models() {
+            Ok(models) => models
+                .into_iter()
+                .filter(|preset| preset.show_in_picker)
+                .collect(),
+            Err(err) => match err {},
+        };
+        if presets.is_empty() {
+            self.add_info_message(
+                "Models are being updated; please try compaction settings again in a moment."
+                    .to_string(),
+                /*hint*/ None,
+            );
+            return;
+        }
+
+        let current_selector = self
+            .config
+            .context_maintenance_model
+            .as_deref()
+            .unwrap_or(CURRENT_THREAD_MODEL_SELECTOR);
+        let current_reasoning = self
+            .config
+            .context_maintenance_reasoning_effort
+            .unwrap_or(ContextMaintenanceReasoningEffort::CurrentThread);
+        let mut items = vec![SelectionItem {
+            name: "Current thread model and reasoning".to_string(),
+            description: Some(
+                "Use the active thread model and reasoning at compaction time.".to_string(),
+            ),
+            is_current: current_selector.eq_ignore_ascii_case(CURRENT_THREAD_MODEL_SELECTOR)
+                && current_reasoning == ContextMaintenanceReasoningEffort::CurrentThread,
+            actions: vec![Box::new(|tx| {
+                tx.send(AppEvent::PersistContextMaintenanceSelection {
+                    model_selector: CURRENT_THREAD_MODEL_SELECTOR.to_string(),
+                    reasoning_effort: ContextMaintenanceReasoningEffort::CurrentThread,
+                });
+            })],
+            dismiss_on_select: true,
+            ..Default::default()
+        }];
+
+        for preset in presets {
+            let description =
+                (!preset.description.is_empty()).then_some(preset.description.to_string());
+            let is_current = current_selector == preset.model;
+            let preset_for_action = preset.clone();
+            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                tx.send(AppEvent::OpenContextMaintenanceReasoningPicker {
+                    model: preset_for_action.clone(),
+                });
+            })];
+            items.push(SelectionItem {
+                name: preset.model.clone(),
+                description,
+                is_current,
+                actions,
+                dismiss_on_select: true,
+                ..Default::default()
+            });
+        }
+
+        let header = self.model_menu_header(
+            "Compaction Model and Effort",
+            "Choose the shared model and reasoning used for compact and refresh artifact generation.",
+        );
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            header,
+            ..Default::default()
+        });
+    }
+
+    pub(crate) fn open_context_maintenance_reasoning_popup(&mut self, preset: ModelPreset) {
+        let current_selector = self
+            .config
+            .context_maintenance_model
+            .as_deref()
+            .unwrap_or(CURRENT_THREAD_MODEL_SELECTOR);
+        let current_reasoning = self
+            .config
+            .context_maintenance_reasoning_effort
+            .unwrap_or(ContextMaintenanceReasoningEffort::CurrentThread);
+        let model_slug = preset.model.clone();
+        let mut items = vec![SelectionItem {
+            name: "Current thread reasoning".to_string(),
+            description: Some(
+                "Use the active thread reasoning level, adapting to the chosen maintenance model when needed."
+                    .to_string(),
+            ),
+            is_current: current_selector == model_slug
+                && current_reasoning == ContextMaintenanceReasoningEffort::CurrentThread,
+            actions: vec![Box::new({
+                let model_slug = model_slug.clone();
+                move |tx| {
+                    tx.send(AppEvent::PersistContextMaintenanceSelection {
+                        model_selector: model_slug.clone(),
+                        reasoning_effort: ContextMaintenanceReasoningEffort::CurrentThread,
+                    });
+                }
+            })],
+            dismiss_on_select: true,
+            ..Default::default()
+        }];
+
+        for option in &preset.supported_reasoning_efforts {
+            let effort = option.effort;
+            let effort_label = if option.effort == preset.default_reasoning_effort {
+                format!("{} (default)", Self::reasoning_effort_label(effort))
+            } else {
+                Self::reasoning_effort_label(effort).to_string()
+            };
+            let reasoning_setting = match effort {
+                ReasoningEffortConfig::None => ContextMaintenanceReasoningEffort::None,
+                ReasoningEffortConfig::Minimal => ContextMaintenanceReasoningEffort::Minimal,
+                ReasoningEffortConfig::Low => ContextMaintenanceReasoningEffort::Low,
+                ReasoningEffortConfig::Medium => ContextMaintenanceReasoningEffort::Medium,
+                ReasoningEffortConfig::High => ContextMaintenanceReasoningEffort::High,
+                ReasoningEffortConfig::XHigh => ContextMaintenanceReasoningEffort::XHigh,
+            };
+            items.push(SelectionItem {
+                name: effort_label,
+                description: (!option.description.is_empty()).then_some(option.description.clone()),
+                is_current: current_selector == model_slug
+                    && current_reasoning == reasoning_setting,
+                actions: vec![Box::new({
+                    let model_slug = model_slug.clone();
+                    move |tx| {
+                        tx.send(AppEvent::PersistContextMaintenanceSelection {
+                            model_selector: model_slug.clone(),
+                            reasoning_effort: reasoning_setting,
+                        });
+                    }
+                })],
+                dismiss_on_select: true,
+                ..Default::default()
+            });
+        }
+
+        let mut header = ColumnRenderable::new();
+        header.push(Line::from(
+            format!("Compaction Reasoning for {model_slug}").bold(),
+        ));
+        header.push(Line::from(
+            "Pick the reasoning level used by compact and refresh maintenance runs.".dim(),
+        ));
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            header: Box::new(header),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            ..Default::default()
+        });
+    }
+
+    pub(crate) fn open_compaction_engine_popup(&mut self) {
+        let current_engine = self.config.compaction_engine.unwrap_or_default();
+        let items = vec![
+            (
+                CompactionEngine::RemoteVanilla,
+                "Remote vanilla",
+                "Use upstream remote compaction without local thread-memory or continuation-bridge reinsertion.",
+            ),
+            (
+                CompactionEngine::RemoteHybrid,
+                "Remote hybrid",
+                "Use remote compaction plus the fork's local continuation bridge and thread memory artifacts.",
+            ),
+            (
+                CompactionEngine::LocalPure,
+                "Local pure",
+                "Run the entire compact operation locally without the remote /responses/compact path.",
+            ),
+        ]
+        .into_iter()
+        .map(|(engine, name, description)| SelectionItem {
+            name: name.to_string(),
+            description: Some(description.to_string()),
+            is_current: current_engine == engine,
+            actions: vec![Box::new(move |tx| {
+                tx.send(AppEvent::PersistCompactionEngineSelection { engine });
+            })],
+            dismiss_on_select: true,
+            ..Default::default()
+        })
+        .collect();
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Default Compaction Engine".to_string()),
+            subtitle: Some("Choose how future /compact runs are executed.".to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            ..Default::default()
+        });
     }
 
     pub(crate) fn open_model_popup_with_presets(&mut self, presets: Vec<ModelPreset>) {

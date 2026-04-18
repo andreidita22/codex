@@ -22,7 +22,9 @@ use crate::unified_exec::MIN_EMPTY_YIELD_TIME_MS;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
 use crate::windows_sandbox::resolve_windows_sandbox_mode;
 use crate::windows_sandbox::resolve_windows_sandbox_private_desktop;
+use codex_config::config_toml::CompactionEngine as CompactionEngineToml;
 use codex_config::config_toml::ConfigToml;
+use codex_config::config_toml::ContextMaintenanceReasoningEffort as ContextMaintenanceReasoningEffortToml;
 use codex_config::config_toml::ContinuationBridgeVariant as ContinuationBridgeVariantToml;
 use codex_config::config_toml::GovernancePathVariant as GovernancePathVariantToml;
 use codex_config::config_toml::ProjectConfig;
@@ -141,6 +143,66 @@ pub enum GovernancePathVariant {
     StrictV1Shadow,
     StrictV1Enforce,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionEngine {
+    RemoteVanilla,
+    #[default]
+    RemoteHybrid,
+    LocalPure,
+}
+
+impl CompactionEngine {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::RemoteVanilla => "remote_vanilla",
+            Self::RemoteHybrid => "remote_hybrid",
+            Self::LocalPure => "local_pure",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextMaintenanceReasoningEffort {
+    #[default]
+    CurrentThread,
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    XHigh,
+}
+
+impl ContextMaintenanceReasoningEffort {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::CurrentThread => "current_thread",
+            Self::None => "none",
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::XHigh => "xhigh",
+        }
+    }
+
+    pub fn resolve(self, current: Option<ReasoningEffort>) -> Option<ReasoningEffort> {
+        match self {
+            Self::CurrentThread => current,
+            Self::None => Some(ReasoningEffort::None),
+            Self::Minimal => Some(ReasoningEffort::Minimal),
+            Self::Low => Some(ReasoningEffort::Low),
+            Self::Medium => Some(ReasoningEffort::Medium),
+            Self::High => Some(ReasoningEffort::High),
+            Self::XHigh => Some(ReasoningEffort::XHigh),
+        }
+    }
+}
+
+pub const CURRENT_THREAD_MODEL_SELECTOR: &str = "current_thread";
 pub(crate) use permissions::resolve_permission_profile;
 pub use service::ConfigService;
 pub use service::ConfigServiceError;
@@ -342,6 +404,19 @@ pub struct Config {
 
     /// Optional strict-governance variant used by typed packet scaffolding.
     pub governance_path_variant: Option<GovernancePathVariant>,
+
+    /// Default `/compact` implementation used for future compactions.
+    pub compaction_engine: Option<CompactionEngine>,
+
+    /// Model selector used by local context-maintenance work such as compact
+    /// summaries, continuation bridges, and thread memory updates.
+    ///
+    /// Set to `"current_thread"` to follow the active thread's model.
+    pub context_maintenance_model: Option<String>,
+
+    /// Reasoning selector used by local context-maintenance work such as
+    /// compact summaries, continuation bridges, and thread memory updates.
+    pub context_maintenance_reasoning_effort: Option<ContextMaintenanceReasoningEffort>,
 
     /// Optional commit attribution text for commit message co-author trailers.
     ///
@@ -1922,6 +1997,44 @@ impl Config {
             GovernancePathVariantToml::StrictV1Shadow => GovernancePathVariant::StrictV1Shadow,
             GovernancePathVariantToml::StrictV1Enforce => GovernancePathVariant::StrictV1Enforce,
         });
+        let compaction_engine = cfg.compaction_engine.map(|engine| match engine {
+            CompactionEngineToml::RemoteVanilla => CompactionEngine::RemoteVanilla,
+            CompactionEngineToml::RemoteHybrid => CompactionEngine::RemoteHybrid,
+            CompactionEngineToml::LocalPure => CompactionEngine::LocalPure,
+        });
+        let context_maintenance_model = cfg.context_maintenance_model.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+        let context_maintenance_reasoning_effort =
+            cfg.context_maintenance_reasoning_effort
+                .map(|value| match value {
+                    ContextMaintenanceReasoningEffortToml::CurrentThread => {
+                        ContextMaintenanceReasoningEffort::CurrentThread
+                    }
+                    ContextMaintenanceReasoningEffortToml::None => {
+                        ContextMaintenanceReasoningEffort::None
+                    }
+                    ContextMaintenanceReasoningEffortToml::Minimal => {
+                        ContextMaintenanceReasoningEffort::Minimal
+                    }
+                    ContextMaintenanceReasoningEffortToml::Low => {
+                        ContextMaintenanceReasoningEffort::Low
+                    }
+                    ContextMaintenanceReasoningEffortToml::Medium => {
+                        ContextMaintenanceReasoningEffort::Medium
+                    }
+                    ContextMaintenanceReasoningEffortToml::High => {
+                        ContextMaintenanceReasoningEffort::High
+                    }
+                    ContextMaintenanceReasoningEffortToml::XHigh => {
+                        ContextMaintenanceReasoningEffort::XHigh
+                    }
+                });
 
         let commit_attribution = cfg.commit_attribution;
 
@@ -2126,6 +2239,9 @@ impl Config {
             continuation_bridge_model,
             continuation_bridge_reasoning_effort,
             governance_path_variant,
+            compaction_engine,
+            context_maintenance_model,
+            context_maintenance_reasoning_effort,
             commit_attribution,
             include_permissions_instructions,
             include_apps_instructions,

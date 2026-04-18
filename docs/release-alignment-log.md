@@ -32,6 +32,9 @@ For each upstream release ingest:
    - `defer`
 5. Record the rationale in terms of fork-owned behavior, not just merge mechanics.
 6. Append validation notes once the ingest is complete.
+7. If a later PR branch adds fork-only follow-up commits, record those as a
+   separate post-ingest alignment note instead of mixing them into the raw
+   upstream-ingest seam table.
 
 ## Decision taxonomy
 

@@ -1,6 +1,7 @@
 use crate::Prompt;
 use crate::codex::Session;
 use crate::codex::TurnContext;
+use crate::context_maintenance_config::resolve_context_maintenance_request_context;
 use codex_api::ResponseEvent;
 use codex_protocol::error::Result;
 use codex_protocol::models::BaseInstructions;
@@ -59,6 +60,7 @@ pub(crate) async fn generate_thread_memory_item(
         end_turn: None,
         phase: None,
     });
+    let request_context = resolve_context_maintenance_request_context(sess, turn_context).await;
 
     let prompt = Prompt {
         input: source_items,
@@ -75,9 +77,9 @@ pub(crate) async fn generate_thread_memory_item(
     let mut stream = client_session
         .stream(
             &prompt,
-            &turn_context.model_info,
-            &turn_context.session_telemetry,
-            turn_context.reasoning_effort,
+            &request_context.model_info,
+            &request_context.session_telemetry,
+            request_context.reasoning_effort,
             turn_context.reasoning_summary,
             turn_context.config.service_tier,
             turn_metadata_header.as_deref(),
@@ -538,23 +540,38 @@ mod tests {
             "thread": {}
         }))
         .expect("thread memory item");
-        let expected = ResponseItem::Message {
-            id: None,
-            role: "developer".to_string(),
-            content: vec![ContentItem::InputText {
-                text: format!(
-                    "<{THREAD_MEMORY_TAG} schema=\"{SCHEMA}\">\n{}\n</{THREAD_MEMORY_TAG}>",
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "schema": SCHEMA,
-                        "thread": {}
-                    }))
-                    .expect("json")
-                ),
-            }],
-            end_turn: None,
-            phase: None,
-        };
 
-        assert_eq!(item, expected);
+        let ResponseItem::Message {
+            role,
+            content,
+            end_turn,
+            phase,
+            ..
+        } = item
+        else {
+            panic!("expected developer message item");
+        };
+        assert_eq!(role, "developer");
+        assert_eq!(end_turn, None);
+        assert_eq!(phase, None);
+        assert_eq!(content.len(), 1);
+        let ContentItem::InputText { text } = &content[0] else {
+            panic!("expected input_text content");
+        };
+        let prefix = format!("<{THREAD_MEMORY_TAG} schema=\"{SCHEMA}\">\n");
+        let suffix = format!("\n</{THREAD_MEMORY_TAG}>");
+        assert!(text.starts_with(&prefix));
+        assert!(text.ends_with(&suffix));
+        let payload = text
+            .strip_prefix(&prefix)
+            .and_then(|value| value.strip_suffix(&suffix))
+            .expect("wrapped thread memory payload");
+        let parsed: serde_json::Value = serde_json::from_str(payload).expect("valid json payload");
+        let expected_payload = serde_json::json!({
+            "schema": SCHEMA,
+            "thread": {}
+        });
+
+        assert_eq!(parsed, expected_payload);
     }
 }

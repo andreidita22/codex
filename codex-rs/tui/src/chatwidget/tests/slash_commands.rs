@@ -52,6 +52,32 @@ async fn slash_compact_eagerly_queues_follow_up_before_turn_start() {
 }
 
 #[tokio::test]
+async fn slash_refresh_dispatches_refresh_context_op() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.dispatch_command(SlashCommand::Refresh);
+
+    assert!(chat.bottom_pane.is_task_running());
+    match rx.try_recv() {
+        Ok(AppEvent::CodexOp(Op::RefreshContext)) => {}
+        other => panic!("expected refresh context op to be submitted, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn slash_prune_dispatches_prune_context_op() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.dispatch_command(SlashCommand::Prune);
+
+    assert!(chat.bottom_pane.is_task_running());
+    match rx.try_recv() {
+        Ok(AppEvent::CodexOp(Op::PruneContext)) => {}
+        other => panic!("expected prune context op to be submitted, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn ctrl_d_quits_without_prompt() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

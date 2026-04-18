@@ -9,7 +9,9 @@ use crate::codex::PreviousTurnSettings;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::codex::get_last_assistant_message_from_turn;
+use crate::config::CompactionEngine;
 use crate::config::GovernancePathVariant;
+use crate::context_maintenance_config::resolve_context_maintenance_request_context;
 use crate::continuation_bridge::generate_continuation_bridge_item;
 use crate::governance::thread_memory::generate_thread_memory_item;
 use crate::util::backoff;
@@ -22,7 +24,6 @@ use codex_analytics::CompactionStrategy;
 use codex_analytics::CompactionTrigger;
 use codex_analytics::now_unix_seconds;
 use codex_features::Feature;
-use codex_model_provider_info::ModelProviderInfo;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::ContextCompactionItem;
@@ -62,12 +63,30 @@ pub(crate) enum InitialContextInjection {
     DoNotInject,
 }
 
-pub(crate) fn should_use_remote_compact_task(provider: &ModelProviderInfo) -> bool {
-    provider.is_openai()
+pub(crate) fn should_use_remote_compact_task(turn_context: &TurnContext) -> bool {
+    !matches!(
+        turn_context.config.compaction_engine.unwrap_or_default(),
+        CompactionEngine::LocalPure
+    )
+}
+
+pub(crate) fn compaction_engine(turn_context: &TurnContext) -> CompactionEngine {
+    turn_context.config.compaction_engine.unwrap_or_default()
 }
 
 pub(crate) fn is_thread_memory_required(path_variant: GovernancePathVariant) -> bool {
     path_variant != GovernancePathVariant::Off
+}
+
+pub(crate) fn should_regenerate_thread_memory(
+    path_variant: GovernancePathVariant,
+    initial_context_injection: InitialContextInjection,
+) -> bool {
+    is_thread_memory_required(path_variant)
+        && matches!(
+            initial_context_injection,
+            InitialContextInjection::DoNotInject
+        )
 }
 
 pub(crate) async fn run_inline_auto_compact_task(
@@ -172,7 +191,10 @@ async fn run_compact_task_inner_impl(
         .clone()
         .for_prompt(&turn_context.model_info.input_modalities);
     let governance_path_variant = turn_context.governance_path_variant();
-    let thread_memory_item = if is_thread_memory_required(governance_path_variant) {
+    let thread_memory_item = if should_regenerate_thread_memory(
+        governance_path_variant,
+        initial_context_injection,
+    ) {
         match generate_thread_memory_item(
             &sess,
             turn_context.as_ref(),
@@ -221,6 +243,8 @@ async fn run_compact_task_inner_impl(
             None
         }
     };
+    let request_context =
+        resolve_context_maintenance_request_context(sess.as_ref(), turn_context.as_ref()).await;
     history.record_items(
         &[initial_input_for_turn.into()],
         turn_context.truncation_policy,
@@ -239,7 +263,7 @@ async fn run_compact_task_inner_impl(
         // Clone is required because of the loop
         let turn_input = history
             .clone()
-            .for_prompt(&turn_context.model_info.input_modalities);
+            .for_prompt(&request_context.model_info.input_modalities);
         let turn_input_len = turn_input.len();
         let prompt = Prompt {
             input: turn_input,
@@ -254,6 +278,7 @@ async fn run_compact_task_inner_impl(
             &mut client_session,
             turn_metadata_header.as_deref(),
             &prompt,
+            &request_context,
         )
         .await;
 
@@ -690,13 +715,14 @@ async fn drain_to_completed(
     client_session: &mut ModelClientSession,
     turn_metadata_header: Option<&str>,
     prompt: &Prompt,
+    request_context: &crate::context_maintenance_config::ContextMaintenanceRequestContext,
 ) -> CodexResult<()> {
     let mut stream = client_session
         .stream(
             prompt,
-            &turn_context.model_info,
-            &turn_context.session_telemetry,
-            turn_context.reasoning_effort,
+            &request_context.model_info,
+            &request_context.session_telemetry,
+            request_context.reasoning_effort,
             turn_context.reasoning_summary,
             turn_context.config.service_tier,
             turn_metadata_header,

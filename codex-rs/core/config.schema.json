@@ -302,6 +302,14 @@
       },
       "type": "object"
     },
+    "CompactionEngine": {
+      "enum": [
+        "remote_vanilla",
+        "remote_hybrid",
+        "local_pure"
+      ],
+      "type": "string"
+    },
     "ConfigProfile": {
       "additionalProperties": false,
       "description": "Collection of common configuration options that a user can define as a unit in `config.toml`.",
@@ -626,6 +634,18 @@
         }
       },
       "type": "object"
+    },
+    "ContextMaintenanceReasoningEffort": {
+      "enum": [
+        "current_thread",
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "x_high"
+      ],
+      "type": "string"
     },
     "ContinuationBridgeVariant": {
       "enum": [
@@ -2159,6 +2179,26 @@
     "compact_prompt": {
       "description": "Compact prompt used for history compaction.",
       "type": "string"
+    },
+    "compaction_engine": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/CompactionEngine"
+        }
+      ],
+      "description": "Default `/compact` implementation used for future compactions."
+    },
+    "context_maintenance_model": {
+      "description": "Model selector used by local context-maintenance work such as compact summaries, continuation bridges, and thread memory updates.\n\nSet to `\"current_thread\"` to use the active thread's model.",
+      "type": "string"
+    },
+    "context_maintenance_reasoning_effort": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ContextMaintenanceReasoningEffort"
+        }
+      ],
+      "description": "Reasoning selector used by local context-maintenance work such as compact summaries, continuation bridges, and thread memory updates."
     },
     "continuation_bridge_model": {
       "description": "Optional model override used only for continuation-bridge generation.",

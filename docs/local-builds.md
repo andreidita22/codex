@@ -1,111 +1,156 @@
 # Local Build Policy
 
-This fork is for local use in VS Code. The goal is:
+This fork is for local use. The main risk is not source size, it is Cargo build
+artifact churn (especially full-workspace `cargo test`).
 
-- keep one stable runnable Codex binary
-- keep enough Cargo build state for warm rebuilds
-- avoid piling up `target/` variants that bloat WSL storage
+Goals:
 
-## Current Disk Picture
+- keep one stable runnable Codex binary for VS Code
+- keep fast local iteration available
+- isolate high-churn Cargo outputs away from repo `target/` when possible
+- make cleanup deterministic
 
-A fresh `cargo build -p codex-cli` in this repo produced roughly:
+## Runtime Binary Path
 
-- `target/debug/deps`: `7.4G`
-- `target/debug/incremental`: `4.4G`
-- `target/debug/build`: `472M`
-- `target/debug/codex`: `1.5G`
-
-By comparison, Cargo download caches were much smaller:
-
-- `~/.cargo`: about `1.1G`
-
-So the main storage problem is `codex-rs/target/`, not Cargo registry downloads.
-
-## Stable VS Code Path
-
-Do not point VS Code at `codex-rs/target/debug/codex` directly. That path disappears after cleanup.
-
-Instead, build and copy the current debug binary to a stable path outside `target/`:
-
-```bash
-/home/rose/work/codex/fork/scripts/build-vscode-binary.sh
-```
-
-That creates:
+Use a stable binary path for IDE integration:
 
 `/home/rose/work/codex/fork/bin/codex-vscode`
 
-Use that path for `chatgpt.cliExecutable`.
+That path currently points to:
 
-## Build Policy
+`/home/rose/work/codex/fork/codex-rs/target/release/codex`
 
-For everyday local use:
+## Cache Root Convention
 
-1. Build debug only.
-2. Do not build `release` unless you explicitly need packaging or perf testing.
-3. Refresh the stable VS Code binary with:
+Preferred cache root:
+
+- `/mnt/rust-build` (dedicated ext4 VHD mounted in WSL)
+
+`cargo-workflow.sh` now treats this as required by default.
+If `/mnt/rust-build` is not mounted, it auto-attaches it by default.
+
+You can still override the root explicitly for all helper commands:
 
 ```bash
-/home/rose/work/codex/fork/scripts/build-vscode-binary.sh
+export CODEX_RUST_CACHE_ROOT=/path/to/cache-root
 ```
 
-The script:
+Auto-attach is on by default. To disable it for a run:
 
-- builds `codex-cli` in debug mode
-- copies the current binary to `bin/codex-vscode`
-- strips debug symbols from the copied runtime binary when `strip` is available
+```bash
+CODEX_AUTO_ATTACH_RUST_DISK=0 /home/rose/work/codex/fork/scripts/cargo-workflow.sh full-test
+```
 
-The copy keeps VS Code working even if `target/` is cleaned later.
+## Cargo Modes
 
-## Cleanup Policy
+Use the helper:
 
-Use the repo helper:
+```bash
+/home/rose/work/codex/fork/scripts/cargo-workflow.sh
+```
+
+Plain `cargo` is also intercepted now for repos that expose
+`scripts/cargo-workflow.sh`.
+The shell shim ensures `/mnt/rust-build` is mounted before delegating to the
+real Cargo, and the shim is responsible for exporting the dedicated target path
+for local fork sessions.
+
+### `fast` mode
+
+Use for compile-validation and short loops.
+
+- target dir: `<cache-root>/cargo-target/codex-rs/fast`
+- keeps incremental enabled
+- uses lighter dev debug settings
+- default command: `cargo check -p codex-cli`
+
+Examples:
+
+```bash
+/home/rose/work/codex/fork/scripts/cargo-workflow.sh fast
+/home/rose/work/codex/fork/scripts/cargo-workflow.sh fast test -p codex-core compact
+```
+
+### `full-test` mode
+
+Use for full workspace runs.
+
+- target dir: `<cache-root>/cargo-target/codex-rs/full-test`
+- disables incremental
+- disables debug info for dev/test to reduce disk growth
+- default command: `cargo test`
+
+Examples:
+
+```bash
+/home/rose/work/codex/fork/scripts/cargo-workflow.sh full-test
+/home/rose/work/codex/fork/scripts/cargo-workflow.sh full-test test -p codex-app-server --test all
+```
+
+## Size and Prune Operations
+
+Show isolated cache sizes:
+
+```bash
+/home/rose/work/codex/fork/scripts/cargo-workflow.sh sizes
+```
+
+Prune one lane:
+
+```bash
+/home/rose/work/codex/fork/scripts/cargo-workflow.sh prune-fast
+/home/rose/work/codex/fork/scripts/cargo-workflow.sh prune-full-test
+```
+
+Prune all isolated codex-rs caches:
+
+```bash
+/home/rose/work/codex/fork/scripts/cargo-workflow.sh prune-all
+```
+
+## Repo-Local `target/` Prune
+
+Use existing helper when repo-local `codex-rs/target` has accumulated artifacts:
 
 ```bash
 /home/rose/work/codex/fork/scripts/prune-build-artifacts.sh sizes
+/home/rose/work/codex/fork/scripts/prune-build-artifacts.sh medium
 ```
-
-Modes:
-
-- `light`
-  - remove `target/release`
-  - remove `target/rust-analyzer`
-  - remove stale `target/debug/incremental/*` older than 7 days
-- `medium`
-  - do `light`
-  - remove all `target/debug/incremental`
-- `deep`
-  - do `medium`
-  - run `cargo clean`
 
 ## Recommended Routine
 
-Normal iteration:
+### Operator Session Start (every new fork work session)
 
-1. Build with `scripts/build-vscode-binary.sh`
-2. Keep `target/debug/deps` and `target/debug/build`
-3. Run `scripts/prune-build-artifacts.sh light` after release builds or after big update/rebase work
+1. Check cache root/mount:
 
-When `target/` starts getting too large:
+```bash
+/home/rose/work/codex/fork/scripts/cargo-workflow.sh root
+```
 
-- If `target/` is above roughly `15G`, run `medium`
-- If you want to reclaim most space and accept a colder next rebuild, run `deep`
+2. The helper will reattach the VHD automatically when needed.
+Manual Windows fallback remains:
 
-## What To Keep
+```powershell
+wsl --mount --vhd C:\WSL\rust-build.vhdx --bare
+```
 
-Keep:
+Alternative helper (auto-elevates):
 
-- `bin/codex-vscode`
-- `~/.cargo/registry`
-- `~/.cargo/git`
-- `~/.rustup/toolchains`
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\Desktop\reattach-rust-disk.ps1"
+```
 
-These are reusable and much smaller than repeated `target/` growth.
+3. Run start-of-session prune (clears old full-test cache lane):
 
-Do not keep:
+```bash
+/home/rose/work/codex/fork/scripts/cargo-workflow.sh session-start
+```
 
-- old `target/release`
-- old `target/rust-analyzer`
-- stale `target/debug/incremental`
+4. Use `fast` for iteration and `full-test` only when needed:
 
-Those are the least valuable bytes.
+```bash
+/home/rose/work/codex/fork/scripts/cargo-workflow.sh fast
+/home/rose/work/codex/fork/scripts/cargo-workflow.sh full-test
+```
+
+5. Keep VS Code pointed at `bin/codex-vscode`.

@@ -1047,6 +1047,54 @@
             },
             "method": {
               "enum": [
+                "thread/refresh/start"
+              ],
+              "title": "Thread/refresh/startRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ThreadRefreshStartParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/refresh/startRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "thread/prune/start"
+              ],
+              "title": "Thread/prune/startRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ThreadPruneStartParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/prune/startRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
                 "thread/shellCommand"
               ],
               "title": "Thread/shellCommandRequestMethod",
@@ -11795,6 +11843,24 @@
       "title": "ThreadNameUpdatedNotification",
       "type": "object"
     },
+    "ThreadPruneStartParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "title": "ThreadPruneStartParams",
+      "type": "object"
+    },
+    "ThreadPruneStartResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ThreadPruneStartResponse",
+      "type": "object"
+    },
     "ThreadReadParams": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -12064,6 +12130,24 @@
         "threadId"
       ],
       "title": "ThreadRealtimeTranscriptDoneNotification",
+      "type": "object"
+    },
+    "ThreadRefreshStartParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "title": "ThreadRefreshStartParams",
+      "type": "object"
+    },
+    "ThreadRefreshStartResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ThreadRefreshStartResponse",
       "type": "object"
     },
     "ThreadResumeParams": {

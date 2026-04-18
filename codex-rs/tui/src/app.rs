@@ -35,9 +35,11 @@ use crate::history_cell::HistoryCell;
 #[cfg(not(debug_assertions))]
 use crate::history_cell::UpdateAvailableHistoryCell;
 use crate::legacy_core::append_message_history_entry;
+use crate::legacy_core::config::CURRENT_THREAD_MODEL_SELECTOR;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::config::ConfigBuilder;
 use crate::legacy_core::config::ConfigOverrides;
+use crate::legacy_core::config::ContextMaintenanceReasoningEffort;
 use crate::legacy_core::config::edit::ConfigEdit;
 use crate::legacy_core::config::edit::ConfigEditsBuilder;
 use crate::legacy_core::config_loader::ConfigLayerStackOrdering;
@@ -2499,6 +2501,14 @@ impl App {
                 app_server.thread_compact_start(thread_id).await?;
                 Ok(true)
             }
+            AppCommandView::RefreshContext => {
+                app_server.thread_refresh_start(thread_id).await?;
+                Ok(true)
+            }
+            AppCommandView::PruneContext => {
+                app_server.thread_prune_start(thread_id).await?;
+                Ok(true)
+            }
             AppCommandView::SetThreadName { name } => {
                 app_server
                     .thread_set_name(thread_id, name.to_string())
@@ -4739,6 +4749,16 @@ impl App {
             AppEvent::OpenAllModelsPopup { models } => {
                 self.chat_widget.open_all_models_popup(models);
             }
+            AppEvent::OpenContextMaintenanceModelPicker => {
+                self.chat_widget.open_context_maintenance_model_popup();
+            }
+            AppEvent::OpenContextMaintenanceReasoningPicker { model } => {
+                self.chat_widget
+                    .open_context_maintenance_reasoning_popup(model);
+            }
+            AppEvent::OpenCompactionEnginePicker => {
+                self.chat_widget.open_compaction_engine_popup();
+            }
             AppEvent::OpenFullAccessConfirmation {
                 preset,
                 return_to_permissions,
@@ -5149,6 +5169,127 @@ impl App {
                             self.chat_widget
                                 .add_error_message(format!("Failed to save default model: {err}"));
                         }
+                    }
+                }
+            }
+            AppEvent::PersistContextMaintenanceSelection {
+                model_selector,
+                reasoning_effort,
+            } => {
+                let profile = self.active_profile.as_deref();
+                let scoped_segments = |key: &str| {
+                    if let Some(profile) = profile {
+                        vec!["profiles".to_string(), profile.to_string(), key.to_string()]
+                    } else {
+                        vec![key.to_string()]
+                    }
+                };
+                let edits = [
+                    ConfigEdit::SetPath {
+                        segments: scoped_segments("context_maintenance_model"),
+                        value: model_selector.clone().into(),
+                    },
+                    ConfigEdit::SetPath {
+                        segments: scoped_segments("context_maintenance_reasoning_effort"),
+                        value: reasoning_effort.label().into(),
+                    },
+                ];
+                match ConfigEditsBuilder::new(&self.config.codex_home)
+                    .with_edits(edits)
+                    .apply()
+                    .await
+                {
+                    Ok(()) => {
+                        let model_value = Some(model_selector.clone());
+                        let reasoning_value = Some(reasoning_effort);
+                        self.config.context_maintenance_model = model_value.clone();
+                        self.config.context_maintenance_reasoning_effort = reasoning_value;
+                        self.chat_widget.set_context_maintenance_settings(
+                            model_value,
+                            reasoning_value,
+                            self.config.compaction_engine,
+                        );
+                        let model_label =
+                            if model_selector.eq_ignore_ascii_case(CURRENT_THREAD_MODEL_SELECTOR) {
+                                "current thread model".to_string()
+                            } else {
+                                model_selector
+                            };
+                        let reasoning_label = match reasoning_effort {
+                            ContextMaintenanceReasoningEffort::CurrentThread => {
+                                "current thread reasoning".to_string()
+                            }
+                            ContextMaintenanceReasoningEffort::None => "no reasoning".to_string(),
+                            ContextMaintenanceReasoningEffort::Minimal => "minimal".to_string(),
+                            ContextMaintenanceReasoningEffort::Low => "low".to_string(),
+                            ContextMaintenanceReasoningEffort::Medium => "medium".to_string(),
+                            ContextMaintenanceReasoningEffort::High => "high".to_string(),
+                            ContextMaintenanceReasoningEffort::XHigh => "extra high".to_string(),
+                        };
+                        let mut message = format!(
+                            "Compaction model and effort set to {model_label} · {reasoning_label}"
+                        );
+                        if let Some(profile) = profile {
+                            message.push_str(" for ");
+                            message.push_str(profile);
+                            message.push_str(" profile");
+                        }
+                        self.chat_widget.add_info_message(message, /*hint*/ None);
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            error = %err,
+                            "failed to persist context maintenance selection"
+                        );
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to save compaction model and effort: {err}"
+                        ));
+                    }
+                }
+            }
+            AppEvent::PersistCompactionEngineSelection { engine } => {
+                let profile = self.active_profile.as_deref();
+                let scoped_segments = if let Some(profile) = profile {
+                    vec![
+                        "profiles".to_string(),
+                        profile.to_string(),
+                        "compaction_engine".to_string(),
+                    ]
+                } else {
+                    vec!["compaction_engine".to_string()]
+                };
+                match ConfigEditsBuilder::new(&self.config.codex_home)
+                    .with_edits([ConfigEdit::SetPath {
+                        segments: scoped_segments,
+                        value: engine.label().into(),
+                    }])
+                    .apply()
+                    .await
+                {
+                    Ok(()) => {
+                        self.config.compaction_engine = Some(engine);
+                        self.chat_widget.set_context_maintenance_settings(
+                            self.config.context_maintenance_model.clone(),
+                            self.config.context_maintenance_reasoning_effort,
+                            Some(engine),
+                        );
+                        let mut message =
+                            format!("Default compaction engine set to {}", engine.label());
+                        if let Some(profile) = profile {
+                            message.push_str(" for ");
+                            message.push_str(profile);
+                            message.push_str(" profile");
+                        }
+                        self.chat_widget.add_info_message(message, /*hint*/ None);
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            error = %err,
+                            "failed to persist compaction engine selection"
+                        );
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to save default compaction engine: {err}"
+                        ));
                     }
                 }
             }
