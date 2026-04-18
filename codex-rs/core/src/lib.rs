@@ -24,11 +24,14 @@ mod agent;
 mod codex_delegate;
 mod command_canonicalization;
 mod commit_attribution;
+#[cfg(test)]
+mod compaction_policy_matrix_tests;
 pub mod config;
 pub mod config_loader;
 pub mod connectors;
 mod context_maintenance;
 mod context_maintenance_config;
+mod context_maintenance_runtime;
 mod context_manager;
 mod contextual_user_message;
 mod continuation_bridge;

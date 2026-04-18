@@ -6,28 +6,30 @@ use crate::compact::COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES;
 use crate::compact::insert_items_before_last_summary_or_compaction;
 use crate::compact::is_summary_message;
 use crate::compact::retain_recent_raw_conversation_messages;
-use crate::continuation_bridge::generate_continuation_bridge_item;
+use crate::context_maintenance_runtime::runtime_plan_for_turn_boundary_maintenance;
 use crate::governance::thread_memory::generate_thread_memory_item;
+use codex_context_maintenance_policy::ArtifactKind;
+use codex_context_maintenance_policy::MaintenanceAction;
+use codex_context_maintenance_policy::build_prune_manifest_item;
+use codex_context_maintenance_policy::prune_superseded_artifacts;
+use codex_context_maintenance_policy::remove_artifact_kind;
+use codex_context_maintenance_policy::tagged_artifact_kind;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::ContextCompactionItem;
 use codex_protocol::items::TurnItem;
-use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::WarningEvent;
-use serde_json::json;
-use tracing::warn;
-
-const PRUNE_MANIFEST_TAG: &str = "prune_manifest";
-const CONTINUATION_BRIDGE_TAG: &str = "continuation_bridge";
-const THREAD_MEMORY_TAG: &str = "thread_memory";
-
 pub(crate) async fn run_refresh(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
 ) -> CodexResult<()> {
+    let runtime_plan = runtime_plan_for_turn_boundary_maintenance(
+        turn_context.as_ref(),
+        MaintenanceAction::Refresh,
+    )?;
     send_turn_started_event(sess.as_ref(), turn_context.as_ref()).await;
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(turn_context.as_ref(), &compaction_item)
@@ -38,8 +40,7 @@ pub(crate) async fn run_refresh(
     let prompt_history = history_snapshot
         .clone()
         .for_prompt(&turn_context.model_info.input_modalities);
-    let governance_path_variant = turn_context.governance_path_variant();
-    let thread_memory_item = if crate::compact::is_thread_memory_required(governance_path_variant) {
+    let thread_memory_item = if runtime_plan.requests_artifact(ArtifactKind::ThreadMemory) {
         match generate_thread_memory_item(
             sess.as_ref(),
             turn_context.as_ref(),
@@ -49,13 +50,14 @@ pub(crate) async fn run_refresh(
         {
             Ok(Some(item)) => Some(item),
             Ok(None) => {
-                return Err(CodexErr::Fatal(format!(
-                    "required thread memory generation returned empty output during /refresh (path_variant={governance_path_variant:?})"
-                )));
+                return Err(CodexErr::Fatal(
+                    "required thread memory generation returned empty output during /refresh"
+                        .to_string(),
+                ));
             }
             Err(err) => {
                 return Err(CodexErr::Fatal(format!(
-                    "failed generating required thread memory during /refresh (path_variant={governance_path_variant:?}): {err}"
+                    "failed generating required thread memory during /refresh: {err}"
                 )));
             }
         }
@@ -63,37 +65,14 @@ pub(crate) async fn run_refresh(
         None
     };
 
-    let continuation_bridge_item = match generate_continuation_bridge_item(
-        sess.as_ref(),
-        turn_context.as_ref(),
-        prompt_history,
-    )
-    .await
-    {
-        Ok(item) => item,
-        Err(err) => {
-            warn!("failed generating continuation bridge during /refresh: {err}");
-            None
-        }
-    };
-
     let (mut new_history, mut removed_count) = prune_superseded_artifacts(raw_history);
-    if thread_memory_item.is_some() {
-        let (next_history, removed) = remove_artifact_kind(new_history, ArtifactKind::ThreadMemory);
-        new_history = next_history;
-        removed_count = removed_count.saturating_add(removed);
-    }
-    if continuation_bridge_item.is_some() {
-        let (next_history, removed) =
-            remove_artifact_kind(new_history, ArtifactKind::ContinuationBridge);
+    for artifact_kind in runtime_plan.drop_prior_artifact_kinds() {
+        let (next_history, removed) = remove_artifact_kind(new_history, *artifact_kind);
         new_history = next_history;
         removed_count = removed_count.saturating_add(removed);
     }
 
-    let authoritative_items: Vec<_> = thread_memory_item
-        .into_iter()
-        .chain(continuation_bridge_item)
-        .collect();
+    let authoritative_items: Vec<_> = thread_memory_item.into_iter().collect();
     if !authoritative_items.is_empty() {
         new_history =
             insert_items_before_last_summary_or_compaction(new_history, authoritative_items);
@@ -131,6 +110,10 @@ pub(crate) async fn run_prune(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
 ) -> CodexResult<()> {
+    let runtime_plan = runtime_plan_for_turn_boundary_maintenance(
+        turn_context.as_ref(),
+        MaintenanceAction::Prune,
+    )?;
     send_turn_started_event(sess.as_ref(), turn_context.as_ref()).await;
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(turn_context.as_ref(), &compaction_item)
@@ -141,10 +124,11 @@ pub(crate) async fn run_prune(
 
     let original_len = raw_history.len();
     let (mut pruned_history, mut removed_count) = prune_superseded_artifacts(raw_history);
-    let (next_history, manifest_removed) =
-        remove_artifact_kind(pruned_history, ArtifactKind::PruneManifest);
-    pruned_history = next_history;
-    removed_count = removed_count.saturating_add(manifest_removed);
+    for artifact_kind in runtime_plan.drop_prior_artifact_kinds() {
+        let (next_history, removed) = remove_artifact_kind(pruned_history, *artifact_kind);
+        pruned_history = next_history;
+        removed_count = removed_count.saturating_add(removed);
+    }
     let (next_history, summary_removed) = retain_latest_summary_message(pruned_history);
     pruned_history = next_history;
     removed_count = removed_count.saturating_add(summary_removed);
@@ -181,73 +165,6 @@ pub(crate) async fn run_prune(
     sess.emit_turn_item_completed(turn_context.as_ref(), compaction_item)
         .await;
     Ok(())
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ArtifactKind {
-    ContinuationBridge,
-    ThreadMemory,
-    PruneManifest,
-}
-
-fn prune_superseded_artifacts(items: Vec<ResponseItem>) -> (Vec<ResponseItem>, usize) {
-    let mut last_continuation_bridge = None;
-    let mut last_thread_memory = None;
-    let mut last_prune_manifest = None;
-    for (idx, item) in items.iter().enumerate().rev() {
-        match tagged_artifact_kind(item) {
-            Some(ArtifactKind::ContinuationBridge) if last_continuation_bridge.is_none() => {
-                last_continuation_bridge = Some(idx);
-            }
-            Some(ArtifactKind::ThreadMemory) if last_thread_memory.is_none() => {
-                last_thread_memory = Some(idx);
-            }
-            Some(ArtifactKind::PruneManifest) if last_prune_manifest.is_none() => {
-                last_prune_manifest = Some(idx);
-            }
-            _ => {}
-        }
-    }
-
-    let mut removed = 0usize;
-    let items = items
-        .into_iter()
-        .enumerate()
-        .filter_map(|(idx, item)| {
-            let keep = match tagged_artifact_kind(&item) {
-                Some(ArtifactKind::ContinuationBridge) => Some(idx) == last_continuation_bridge,
-                Some(ArtifactKind::ThreadMemory) => Some(idx) == last_thread_memory,
-                Some(ArtifactKind::PruneManifest) => Some(idx) == last_prune_manifest,
-                None => true,
-            };
-            if keep {
-                Some(item)
-            } else {
-                removed = removed.saturating_add(1);
-                None
-            }
-        })
-        .collect();
-    (items, removed)
-}
-
-fn remove_artifact_kind(
-    items: Vec<ResponseItem>,
-    kind: ArtifactKind,
-) -> (Vec<ResponseItem>, usize) {
-    let mut removed = 0usize;
-    let items = items
-        .into_iter()
-        .filter_map(|item| {
-            if tagged_artifact_kind(&item) == Some(kind) {
-                removed = removed.saturating_add(1);
-                None
-            } else {
-                Some(item)
-            }
-        })
-        .collect();
-    (items, removed)
 }
 
 fn retain_latest_summary_message(items: Vec<ResponseItem>) -> (Vec<ResponseItem>, usize) {
@@ -288,60 +205,6 @@ fn is_compaction_summary_message(item: &ResponseItem) -> bool {
     is_summary_message(&text)
 }
 
-fn tagged_artifact_kind(item: &ResponseItem) -> Option<ArtifactKind> {
-    let ResponseItem::Message { role, content, .. } = item else {
-        return None;
-    };
-    if role != "developer" {
-        return None;
-    }
-    let text = crate::compact::content_items_to_text(content)?;
-    if has_tagged_block(&text, CONTINUATION_BRIDGE_TAG) {
-        return Some(ArtifactKind::ContinuationBridge);
-    }
-    if has_tagged_block(&text, THREAD_MEMORY_TAG) {
-        return Some(ArtifactKind::ThreadMemory);
-    }
-    if has_tagged_block(&text, PRUNE_MANIFEST_TAG) {
-        return Some(ArtifactKind::PruneManifest);
-    }
-    None
-}
-
-fn has_tagged_block(text: &str, tag: &str) -> bool {
-    has_tagged_block_prefix(text, "<", tag) && has_tagged_block_prefix(text, "</", tag)
-}
-
-fn has_tagged_block_prefix(text: &str, prefix: &str, tag: &str) -> bool {
-    text.match_indices(prefix)
-        .any(|(idx, _)| text[idx + prefix.len()..].starts_with(tag))
-}
-
-fn build_prune_manifest_item(
-    original_len: usize,
-    final_len: usize,
-    removed_count: usize,
-) -> CodexResult<ResponseItem> {
-    let manifest = json!({
-        "schema": "prune_manifest_v1",
-        "removed_item_count": removed_count,
-        "original_history_len": original_len,
-        "final_history_len": final_len,
-    });
-    let manifest_json = serde_json::to_string_pretty(&manifest)?;
-    Ok(ResponseItem::Message {
-        id: None,
-        role: "developer".to_string(),
-        content: vec![ContentItem::InputText {
-            text: format!(
-                "<{PRUNE_MANIFEST_TAG} schema=\"prune_manifest_v1\">\n{manifest_json}\n</{PRUNE_MANIFEST_TAG}>"
-            ),
-        }],
-        end_turn: None,
-        phase: None,
-    })
-}
-
 async fn send_turn_started_event(sess: &Session, turn_context: &TurnContext) {
     let start_event = EventMsg::TurnStarted(TurnStartedEvent {
         turn_id: turn_context.sub_id.clone(),
@@ -355,6 +218,7 @@ async fn send_turn_started_event(sess: &Session, turn_context: &TurnContext) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_protocol::models::ContentItem;
     use pretty_assertions::assert_eq;
 
     fn developer_message(text: &str) -> ResponseItem {
@@ -385,21 +249,53 @@ mod tests {
     }
 
     #[test]
-    fn tagged_block_detection_does_not_require_allocated_tag_strings() {
+    fn prune_flow_preserves_ordering_between_artifacts_and_latest_summary() {
+        let raw_history = vec![
+            developer_message("<thread_memory>old memory</thread_memory>"),
+            developer_message("<thread_memory>new memory</thread_memory>"),
+            developer_message("<prune_manifest>old prune</prune_manifest>"),
+            user_summary_message("older summary"),
+            user_summary_message("latest summary"),
+        ];
+
+        let (pruned_history, removed) = prune_superseded_artifacts(raw_history);
+        assert_eq!(removed, 1);
+
+        let (pruned_history, removed_manifests) =
+            remove_artifact_kind(pruned_history, ArtifactKind::PruneManifest);
+        assert_eq!(removed_manifests, 1);
+
+        let (pruned_history, removed_summaries) = retain_latest_summary_message(pruned_history);
+        assert_eq!(removed_summaries, 1);
+
+        let manifest = build_prune_manifest_item(
+            /*original_len*/ 5, /*final_len*/ 2, /*removed_count*/ 2,
+        )
+        .expect("prune manifest should serialize");
+        let pruned_history =
+            insert_items_before_last_summary_or_compaction(pruned_history, vec![manifest]);
+
         assert_eq!(
-            has_tagged_block(
-                "<thread_memory schema=\"x\">payload</thread_memory>",
-                THREAD_MEMORY_TAG,
-            ),
-            true
+            pruned_history,
+            vec![
+                developer_message("<thread_memory>new memory</thread_memory>"),
+                developer_message(
+                    "<prune_manifest schema=\"prune_manifest_v1\">\n{\n  \"final_history_len\": 2,\n  \"original_history_len\": 5,\n  \"removed_item_count\": 2,\n  \"schema\": \"prune_manifest_v1\"\n}\n</prune_manifest>"
+                ),
+                user_summary_message("latest summary"),
+            ]
         );
-        assert_eq!(
-            has_tagged_block("<thread_memory>payload", THREAD_MEMORY_TAG),
-            false
-        );
-        assert_eq!(
-            has_tagged_block("payload</thread_memory>", THREAD_MEMORY_TAG),
-            false
-        );
+    }
+
+    fn user_summary_message(text: &str) -> ResponseItem {
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![codex_protocol::models::ContentItem::InputText {
+                text: format!("{}\n{text}", crate::compact::SUMMARY_PREFIX.trim_end()),
+            }],
+            end_turn: None,
+            phase: None,
+        }
     }
 }

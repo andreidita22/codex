@@ -8,25 +8,25 @@ pub(crate) const OUTPUT_SCHEMA: &str =
     include_str!("../../templates/continuation_bridge/variants/baton/schema.json");
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct BatonBridge {
+pub struct BatonBridge {
     #[serde(default = "default_schema")]
-    pub(crate) schema: String,
+    pub schema: String,
     #[serde(default)]
-    pub(crate) task: BatonTask,
+    pub task: BatonTask,
     #[serde(default)]
-    pub(crate) repo_identity: BatonRepoIdentity,
+    pub repo_identity: BatonRepoIdentity,
     #[serde(default)]
-    pub(crate) state: BatonState,
+    pub state: BatonState,
     #[serde(default)]
-    pub(crate) blocking_state: BatonBlockingState,
+    pub blocking_state: BatonBlockingState,
     #[serde(default)]
-    pub(crate) artifacts: BatonArtifacts,
+    pub artifacts: BatonArtifacts,
     #[serde(default)]
-    pub(crate) active_subagents: Vec<BatonSubagent>,
+    pub active_subagents: Vec<BatonSubagent>,
     #[serde(default)]
-    pub(crate) working_thesis: BatonWorkingThesis,
+    pub working_thesis: BatonWorkingThesis,
     #[serde(default)]
-    pub(crate) next: BatonNext,
+    pub next: BatonNext,
 }
 
 impl Default for BatonBridge {
@@ -46,109 +46,109 @@ impl Default for BatonBridge {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct BatonTask {
+pub struct BatonTask {
     #[serde(default)]
-    pub(crate) objective: String,
+    pub objective: String,
     #[serde(default)]
-    pub(crate) current_phase: String,
+    pub current_phase: String,
     #[serde(default)]
-    pub(crate) success_condition: String,
+    pub success_condition: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct BatonRepoIdentity {
+pub struct BatonRepoIdentity {
     #[serde(default)]
-    pub(crate) repo_root: String,
+    pub repo_root: String,
     #[serde(default)]
-    pub(crate) branch: String,
+    pub branch: String,
     #[serde(default)]
-    pub(crate) head_commit: String,
+    pub head_commit: String,
     #[serde(default)]
-    pub(crate) worktree_dirty: bool,
+    pub worktree_dirty: bool,
     #[serde(default)]
-    pub(crate) dirty_files: Vec<String>,
+    pub dirty_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct BatonState {
+pub struct BatonState {
     #[serde(default)]
-    pub(crate) completed: Vec<String>,
+    pub completed: Vec<String>,
     #[serde(default)]
-    pub(crate) in_progress: Vec<String>,
+    pub in_progress: Vec<String>,
     #[serde(default)]
-    pub(crate) remaining: Vec<String>,
+    pub remaining: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct BatonBlockingState {
+pub struct BatonBlockingState {
     #[serde(default)]
-    pub(crate) blocking: Vec<BatonBlocker>,
+    pub blocking: Vec<BatonBlocker>,
     #[serde(default)]
-    pub(crate) human_actions_pending: Vec<BatonHumanAction>,
+    pub human_actions_pending: Vec<BatonHumanAction>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct BatonBlocker {
+pub struct BatonBlocker {
     #[serde(default)]
-    pub(crate) kind: String,
+    pub kind: String,
     #[serde(default)]
-    pub(crate) reason: String,
+    pub reason: String,
     #[serde(default)]
-    pub(crate) owner: String,
+    pub owner: String,
     #[serde(default)]
-    pub(crate) unblocks: String,
+    pub unblocks: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct BatonHumanAction {
+pub struct BatonHumanAction {
     #[serde(default)]
-    pub(crate) action: String,
+    pub action: String,
     #[serde(default)]
-    pub(crate) context: String,
+    pub context: String,
     #[serde(default)]
-    pub(crate) blocking: bool,
+    pub blocking: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct BatonArtifacts {
+pub struct BatonArtifacts {
     #[serde(default)]
-    pub(crate) authoritative_files: Vec<String>,
+    pub authoritative_files: Vec<String>,
     #[serde(default)]
-    pub(crate) partial_implementations: Vec<String>,
+    pub partial_implementations: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct BatonSubagent {
+pub struct BatonSubagent {
     #[serde(default)]
-    pub(crate) agent_id: String,
+    pub agent_id: String,
     #[serde(default)]
-    pub(crate) thread_id: String,
+    pub thread_id: String,
     #[serde(default)]
-    pub(crate) nickname: String,
+    pub nickname: String,
     #[serde(default)]
-    pub(crate) role: String,
+    pub role: String,
     #[serde(default)]
-    pub(crate) status: String,
+    pub status: String,
     #[serde(default)]
-    pub(crate) blocking: bool,
+    pub blocking: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct BatonWorkingThesis {
+pub struct BatonWorkingThesis {
     #[serde(default)]
-    pub(crate) current_best_answer: String,
+    pub current_best_answer: String,
     #[serde(default)]
-    pub(crate) main_caveats: Vec<String>,
+    pub main_caveats: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct BatonNext {
+pub struct BatonNext {
     #[serde(default)]
-    pub(crate) immediate_next_action: String,
+    pub immediate_next_action: String,
     #[serde(default)]
-    pub(crate) fallback_if_blocked: String,
+    pub fallback_if_blocked: String,
     #[serde(default)]
-    pub(crate) validation_step: String,
+    pub validation_step: String,
 }
 
 pub(crate) fn default_schema() -> String {

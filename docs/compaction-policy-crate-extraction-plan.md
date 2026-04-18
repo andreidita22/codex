@@ -17,6 +17,12 @@ It complements:
 
 - [docs/compaction-refresh-prune-concept-spec.md](compaction-refresh-prune-concept-spec.md)
 - [docs/compaction-refresh-prune-implementation-spec.md](compaction-refresh-prune-implementation-spec.md)
+- [docs/compaction-policy-p0-route-matrix-implementation-spec.md](compaction-policy-p0-route-matrix-implementation-spec.md)
+- [docs/compaction-policy-p1-scaffold-implementation-spec.md](compaction-policy-p1-scaffold-implementation-spec.md)
+- [docs/compaction-policy-p2-history-shaping-implementation-spec.md](compaction-policy-p2-history-shaping-implementation-spec.md)
+- [docs/compaction-policy-p3-artifact-codecs-implementation-spec.md](compaction-policy-p3-artifact-codecs-implementation-spec.md)
+- [docs/compaction-policy-p4-timing-law-implementation-spec.md](compaction-policy-p4-timing-law-implementation-spec.md)
+- [docs/compaction-policy-route-matrix.md](compaction-policy-route-matrix.md)
 - [docs/custom-fork-module-inventory.md](custom-fork-module-inventory.md)
 
 ## Problem Statement
@@ -41,7 +47,7 @@ This has three concrete costs:
 2. Upstream ingestion sees fork behavior smeared across hot upstream files.
 3. App-layer experimentation behaves like kernel surgery.
 
-The recurring example is introducing an explicit compaction-mode split:
+The recurring example is introducing an explicit compaction-timing split:
 
 - `TurnBoundary`
 - `IntraTurn`
@@ -73,8 +79,8 @@ Owned by a new fork crate.
 
 Responsibilities:
 
-- compaction mode semantics
-- engine/profile selection semantics
+- compaction timing semantics
+- engine selection semantics
 - between-turn vs intra-turn rules
 - artifact family selection
 - continuation-bridge shaping
@@ -85,7 +91,7 @@ Responsibilities:
 
 The kernel asks policy:
 
-- what mode is this maintenance action?
+- what timing is this maintenance action?
 - which artifacts should be generated?
 - how should rebuilt history be shaped?
 
@@ -107,7 +113,7 @@ It gives us:
 - a smaller rebuild surface for compaction experiments
 - a stable fork-owned home for policy logic
 - a cleaner upstream ingest story
-- a path to add more profiles/engines without rewriting `codex-core`
+- a path to add more engines without rewriting `codex-core`
 
 ## What Stays In `codex-core`
 
@@ -130,9 +136,9 @@ In other words: `codex-core` remains the executor and persistence engine.
 
 The new policy crate should own the following logic.
 
-### 1. Maintenance mode semantics
+### 1. Maintenance timing semantics
 
-Define explicit maintenance mode:
+Define explicit maintenance timing:
 
 - `TurnBoundary`
 - `IntraTurn`
@@ -144,6 +150,11 @@ And action kind:
 - `Prune`
 
 This is the main policy axis missing today.
+
+Use names that do not overload existing "mode" terminology:
+
+- `MaintenanceAction`
+- `MaintenanceTiming`
 
 ### 2. Engine semantics
 
@@ -158,7 +169,7 @@ instead follow policy selection.
 
 ### 3. Artifact policy
 
-The crate decides, by mode and engine:
+The crate decides, by timing and engine:
 
 - whether to generate `thread_memory`
 - whether to generate `continuation_bridge`
@@ -183,7 +194,7 @@ The crate should own the artifact request specs for:
 - continuation bridge prompt building
 - thread memory prompt building
 - schema/variant selection
-- mode-specific prompt envelopes
+- timing-specific prompt envelopes
 
 This keeps prompt experimentation in the fork crate instead of `core`.
 
@@ -196,6 +207,20 @@ The crate should own the deterministic logic for:
 - when initial context should appear
 - what to drop in local-pure mode vs hybrid mode
 
+### 7. Artifact codecs
+
+The crate should own full artifact-family logic, not only prompt builders:
+
+- request spec
+- output schema
+- parse/normalize
+- tagged-block encoding/decoding
+- `typed artifact <-> ResponseItem` codecs
+- latest-artifact extraction helpers
+
+`codex-core` should execute model requests and hand back strings/JSON. The new
+crate should define what those strings/JSON mean.
+
 ## First-Class Policy Contract
 
 The new crate should be built around a small typed contract.
@@ -207,19 +232,46 @@ The new crate should be built around a small typed contract.
 ```rust
 pub struct MaintenancePolicyRequest {
     pub action: MaintenanceAction,
-    pub mode: MaintenanceMode,
+    pub timing: MaintenanceTiming,
     pub engine: CompactionEngine,
     pub governance_variant: GovernancePathVariant,
-    pub profile: MaintenanceProfile,
     pub prior_history: Vec<ResponseItem>,
-    pub prior_thread_memory: Option<String>,
-    pub prior_bridge: Option<String>,
+    pub prior_artifacts: PriorArtifactInventory,
     pub initial_context: Vec<ResponseItem>,
+    pub enrichments: PolicyInputEnrichments,
 }
 ```
 
 This type should stay free of `Session`, `TurnContext`, and model-client
 objects.
+
+`prior_history` is the canonical source of truth. `prior_artifacts` is a typed
+derived inventory/cache that exists to avoid rediscovering the same tagged
+artifacts repeatedly during policy evaluation. If inventory and history ever
+disagree, history wins and the inventory must be recomputed or rejected.
+
+Do not pass raw history together with ad hoc raw artifact strings. That creates
+two unconstrained sources of truth. If the seam carries both history and
+artifact state, the artifact state must remain typed and explicitly subordinate
+to the canonical history:
+
+```rust
+pub struct PriorArtifactInventory {
+    pub latest_thread_memory: Option<ThreadMemoryArtifact>,
+    pub latest_bridge: Option<ContinuationBridgeArtifact>,
+    pub latest_prune_manifest: Option<PruneManifestArtifact>,
+    pub has_legacy_compaction_marker: bool,
+}
+```
+
+Runtime-derived enrichments that are not just static prompt text should also be
+typed, for example subagent continuity metadata:
+
+```rust
+pub struct PolicyInputEnrichments {
+    pub subagent_context: Option<SubagentContextSnapshot>,
+}
+```
 
 ### Output side
 
@@ -230,8 +282,34 @@ pub struct MaintenancePolicyPlan {
     pub artifact_requests: Vec<ArtifactRequest>,
     pub history_shape: HistoryShapePlan,
     pub carry_forward_rules: CarryForwardPlan,
+    pub context_injection: ContextInjectionPolicy,
 }
 ```
+
+Artifact lifetime should be executable through the plan, not only explained in
+prose. Each requested/generated artifact should carry lifetime semantics, for
+example:
+
+```rust
+pub struct ArtifactRequest {
+    pub kind: ArtifactKind,
+    pub lifetime: ArtifactLifetime,
+    pub request_spec: ArtifactRequestSpec,
+}
+```
+
+and likewise for generated/placed artifacts:
+
+```rust
+pub struct GeneratedArtifact {
+    pub kind: ArtifactKind,
+    pub lifetime: ArtifactLifetime,
+    pub payload: GeneratedArtifactPayload,
+}
+```
+
+That makes the bridge-vs-thread-memory law enforceable by data rather than by
+commentary alone.
 
 After model-backed artifacts are generated by `codex-core`, policy gets a second
 pure pass:
@@ -256,18 +334,67 @@ pub struct MaintenanceAssemblyResult {
 This two-stage design is important because it keeps prompt/artifact decisions in
 the policy crate while leaving model execution in `codex-core`.
 
+## First-Class Policy Types
+
+Three policy concepts should be explicit and typed.
+
+### 1. Context injection policy
+
+Initial-context placement is not just an assembly detail. It is one of the
+current hidden invariants that distinguishes mid-turn survival from turn-boundary
+commit.
+
+```rust
+pub enum ContextInjectionPolicy {
+    None,
+    BeforeLastRealUserOrSummary,
+}
+```
+
+This should be part of the policy plan, not a leftover conditional in `core`.
+
+### 2. Artifact lifetime
+
+Artifact lifetime is the core semantic split we are trying to enforce.
+
+```rust
+pub enum ArtifactLifetime {
+    TurnScoped,
+    DurableAcrossTurns,
+    MarkerOnly,
+}
+```
+
+Expected defaults:
+
+- `continuation_bridge` -> `TurnScoped`
+- `thread_memory` -> `DurableAcrossTurns`
+- prune manifest / compaction marker -> `MarkerOnly`
+
+### 3. Maintenance timing
+
+Use `MaintenanceTiming` rather than another overloaded `Mode` name:
+
+```rust
+pub enum MaintenanceTiming {
+    TurnBoundary,
+    IntraTurn,
+}
+```
+
 ## Proposed Module Layout
 
 Inside `codex-context-maintenance-policy`:
 
 - `mode.rs`
-  - `MaintenanceMode`
   - `MaintenanceAction`
-  - `MaintenanceProfile`
+  - `MaintenanceTiming`
 - `engine.rs`
   - engine semantics
 - `artifacts.rs`
   - artifact selection rules
+- `artifact_codecs.rs`
+  - tagged payload parsing/normalization and `ResponseItem` codecs
 - `bridge.rs`
   - continuation bridge prompt/spec builders
 - `thread_memory.rs`
@@ -288,6 +415,36 @@ The crate should depend on:
 - small utility crates as needed
 
 It should not depend on `codex-core`.
+
+## Route Matrix
+
+Before extraction work starts, we should treat the action x timing x engine
+matrix as an explicit doctrine artifact and fixture source.
+
+### Default matrix
+
+| Action | Timing | Engine | Generate `thread_memory` | Generate `continuation_bridge` | Inject initial context | Preserve prior bridge | Durable result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `Compact` | `IntraTurn` | `LocalPure` | no | yes | before last real user or summary | no | bridge only |
+| `Compact` | `IntraTurn` | `RemoteHybrid` | no | yes | before last real user or summary | no | bridge only |
+| `Compact` | `IntraTurn` | `RemoteVanilla` | no | no | before last real user or summary | no | upstream compaction marker only |
+| `Compact` | `TurnBoundary` | `LocalPure` | yes | no durable carry-forward | none | no | updated durable memory |
+| `Compact` | `TurnBoundary` | `RemoteHybrid` | yes | no durable carry-forward | none | no | updated durable memory + upstream summary |
+| `Compact` | `TurnBoundary` | `RemoteVanilla` | no | no | none | no | upstream summary only |
+| `Refresh` | `TurnBoundary` | `LocalPure` | yes | no | none | no | updated durable memory |
+| `Refresh` | `TurnBoundary` | `RemoteHybrid` | yes | no | none | no | updated durable memory |
+| `Refresh` | `TurnBoundary` | `RemoteVanilla` | no | no | none | no | unsupported route |
+| `Prune` | `TurnBoundary` | `LocalPure` | no | no | none | no | prune manifest only |
+| `Prune` | `TurnBoundary` | `RemoteHybrid` | no | no | none | no | prune manifest only |
+| `Prune` | `TurnBoundary` | `RemoteVanilla` | no | no | none | no | prune manifest only |
+
+This table should exist as:
+
+- a maintainer doc
+- fixture coverage
+- policy crate tests
+
+It is the main guard against rediscovering semantics while refactoring.
 
 ## Minimal Seams Required In Upstream-Shaped Code
 
@@ -373,17 +530,43 @@ Rules:
 This split should live in the policy crate, not as scattered conditionals in
 `core`.
 
+## Scope Clarification
+
+`governance::prompt_layers` is part of the broader fork surface, but it is not
+the primary target of this extraction. The focus here is context-maintenance
+policy:
+
+- compaction
+- refresh
+- prune
+- continuation bridge
+- thread memory
+
+If `prompt_layers` later needs a similar isolation pass, that should be a
+follow-on extraction rather than being widened into this one.
+
 ## Migration Strategy
 
 Do this in phases so the system stays runnable throughout.
+
+### Phase 0: route matrix and fixtures
+
+Write the action x timing x engine table as a stable maintainer artifact and add
+golden expected replacement-history fixtures.
+
+Goal:
+
+- lock semantics before moving code
 
 ### Phase 1: create the crate and move pure policy types
 
 Move only:
 
-- `MaintenanceMode`
 - `MaintenanceAction`
-- engine/profile enums and policy plan/result types
+- `MaintenanceTiming`
+- `ContextInjectionPolicy`
+- `ArtifactLifetime`
+- engine enums and policy plan/result types
 - retention and insertion rules that can already be pure
 
 Keep existing generators in `core`.
@@ -405,10 +588,11 @@ This should pull logic out of:
 
 - `codex-rs/core/src/compact.rs`
 - `codex-rs/core/src/context_maintenance.rs`
+- `codex-rs/core/src/compact_remote.rs`
 
 ### Phase 3: move bridge/thread-memory prompt assembly
 
-Move prompt/spec construction for:
+Move full artifact-family logic for:
 
 - `continuation_bridge`
 - `thread_memory`
@@ -420,8 +604,9 @@ Keep model execution in `core`.
 Goal:
 
 - prompt experiments stop requiring direct edits in `codex-core`
+- parsing/tagging/normalization no longer remain smeared across hot core files
 
-### Phase 4: make mode split authoritative
+### Phase 4: make timing split authoritative
 
 Implement the actual semantic split:
 
@@ -458,6 +643,7 @@ compaction” artifacts in pure-local runs.
 - `codex-rs/context-maintenance-policy/src/plan.rs`
 - `codex-rs/context-maintenance-policy/src/history_shape.rs`
 - `codex-rs/context-maintenance-policy/src/retention.rs`
+- `codex-rs/context-maintenance-policy/src/artifact_codecs.rs`
 
 ### Existing files to touch minimally
 
@@ -492,8 +678,11 @@ That is much more predictable than the current model.
 
 The new crate should have dense unit coverage for:
 
-- mode semantics
+- timing semantics
+- route matrix semantics
 - artifact selection
+- artifact lifetime rules
+- context injection policy
 - history insertion ordering
 - prune and retention rules
 - local-pure vs hybrid shaping
@@ -507,7 +696,7 @@ Keep a smaller set of integration tests in `codex-core` for:
 - task dispatch still works
 - model-backed artifact requests still round-trip
 - replacement history is applied correctly
-- app-server/TUI settings still drive the selected engine/profile
+- app-server/TUI settings still drive the selected engine
 
 This shifts most compaction testing away from heavy `core` integration tests and
 into a faster policy crate.
@@ -534,20 +723,26 @@ This extraction is successful when:
 
 ## Recommended First PR Sequence
 
-1. `codex/context-maintenance-policy-p1-scaffold`
+1. `codex/context-maintenance-policy-p0-route-matrix`
+   - write the route matrix
+   - add golden replacement-history fixtures
+
+2. `codex/context-maintenance-policy-p1-scaffold`
    - add crate
    - add request/plan/result types
    - move pure insertion/retention helpers
 
-2. `codex/context-maintenance-policy-p2-history-shaping`
+3. `codex/context-maintenance-policy-p2-history-shaping`
    - route local compaction and refresh/prune history assembly through the crate
+   - include remote-path pure helpers too
 
-3. `codex/context-maintenance-policy-p3-artifact-prompts`
+4. `codex/context-maintenance-policy-p3-artifact-prompts`
    - move bridge/thread-memory prompt/spec assembly
+   - move artifact codecs and tagged payload helpers
 
-4. `codex/context-maintenance-policy-p4-mode-split`
+5. `codex/context-maintenance-policy-p4-timing-split`
    - make `TurnBoundary` vs `IntraTurn` authoritative
 
-5. `codex/context-maintenance-policy-p5-local-cleanup`
+6. `codex/context-maintenance-policy-p5-local-cleanup`
    - strip legacy carried compaction markers in local-pure mode
    - tighten post-turn vs intra-turn artifact lifetimes

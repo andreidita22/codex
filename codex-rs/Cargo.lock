@@ -1891,6 +1891,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-context-maintenance-policy"
+version = "0.121.0"
+dependencies = [
+ "codex-config",
+ "codex-protocol",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "codex-core"
 version = "0.121.0"
 dependencies = [
@@ -1913,6 +1926,7 @@ dependencies = [
  "codex-code-mode",
  "codex-config",
  "codex-connectors",
+ "codex-context-maintenance-policy",
  "codex-core-skills",
  "codex-exec-server",
  "codex-execpolicy",

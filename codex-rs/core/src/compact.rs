@@ -10,8 +10,9 @@ use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::codex::get_last_assistant_message_from_turn;
 use crate::config::CompactionEngine;
-use crate::config::GovernancePathVariant;
 use crate::context_maintenance_config::resolve_context_maintenance_request_context;
+use crate::context_maintenance_runtime::compact_timing_from_initial_context_injection;
+use crate::context_maintenance_runtime::runtime_plan_for_compact;
 use crate::continuation_bridge::generate_continuation_bridge_item;
 use crate::governance::thread_memory::generate_thread_memory_item;
 use crate::util::backoff;
@@ -23,6 +24,10 @@ use codex_analytics::CompactionStatus;
 use codex_analytics::CompactionStrategy;
 use codex_analytics::CompactionTrigger;
 use codex_analytics::now_unix_seconds;
+use codex_context_maintenance_policy::ArtifactKind;
+use codex_context_maintenance_policy::insert_initial_context_before_last_real_user_or_summary as insert_initial_context_before_last_real_user_or_summary_impl;
+use codex_context_maintenance_policy::insert_items_before_last_summary_or_compaction as insert_items_before_last_summary_or_compaction_impl;
+use codex_context_maintenance_policy::retain_recent_raw_conversation_messages as retain_recent_raw_conversation_messages_impl;
 use codex_features::Feature;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
@@ -68,25 +73,6 @@ pub(crate) fn should_use_remote_compact_task(turn_context: &TurnContext) -> bool
         turn_context.config.compaction_engine.unwrap_or_default(),
         CompactionEngine::LocalPure
     )
-}
-
-pub(crate) fn compaction_engine(turn_context: &TurnContext) -> CompactionEngine {
-    turn_context.config.compaction_engine.unwrap_or_default()
-}
-
-pub(crate) fn is_thread_memory_required(path_variant: GovernancePathVariant) -> bool {
-    path_variant != GovernancePathVariant::Off
-}
-
-pub(crate) fn should_regenerate_thread_memory(
-    path_variant: GovernancePathVariant,
-    initial_context_injection: InitialContextInjection,
-) -> bool {
-    is_thread_memory_required(path_variant)
-        && matches!(
-            initial_context_injection,
-            InitialContextInjection::DoNotInject
-        )
 }
 
 pub(crate) async fn run_inline_auto_compact_task(
@@ -181,6 +167,9 @@ async fn run_compact_task_inner_impl(
     input: Vec<UserInput>,
     initial_context_injection: InitialContextInjection,
 ) -> CodexResult<()> {
+    let timing = compact_timing_from_initial_context_injection(initial_context_injection);
+    let runtime_plan = runtime_plan_for_compact(turn_context.as_ref(), timing)?;
+    let initial_context_injection = runtime_plan.initial_context_injection();
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(&turn_context, &compaction_item)
         .await;
@@ -190,11 +179,7 @@ async fn run_compact_task_inner_impl(
     let history_for_artifacts = history
         .clone()
         .for_prompt(&turn_context.model_info.input_modalities);
-    let governance_path_variant = turn_context.governance_path_variant();
-    let thread_memory_item = if should_regenerate_thread_memory(
-        governance_path_variant,
-        initial_context_injection,
-    ) {
+    let thread_memory_item = if runtime_plan.requests_artifact(ArtifactKind::ThreadMemory) {
         match generate_thread_memory_item(
             &sess,
             turn_context.as_ref(),
@@ -204,9 +189,7 @@ async fn run_compact_task_inner_impl(
         {
             Ok(Some(item)) => Some(item),
             Ok(None) => {
-                let err = CodexErr::Fatal(format!(
-                    "required thread memory generation returned empty output before local compaction (path_variant={governance_path_variant:?})"
-                ));
+                let err = CodexErr::Fatal("required thread memory generation returned empty output before local compaction".to_string());
                 sess.send_event(
                     &turn_context,
                     EventMsg::Error(err.to_error_event(/*message_prefix*/ None)),
@@ -216,7 +199,7 @@ async fn run_compact_task_inner_impl(
             }
             Err(err) => {
                 let err = CodexErr::Fatal(format!(
-                    "failed generating required thread memory before local compaction (path_variant={governance_path_variant:?}): {err}"
+                    "failed generating required thread memory before local compaction: {err}"
                 ));
                 sess.send_event(
                     &turn_context,
@@ -230,19 +213,25 @@ async fn run_compact_task_inner_impl(
         None
     };
     let thread_memory_present = thread_memory_item.is_some();
-    let continuation_bridge_item = match generate_continuation_bridge_item(
-        &sess,
-        turn_context.as_ref(),
-        history_for_artifacts,
-    )
-    .await
+    let continuation_bridge_item = if runtime_plan
+        .requests_artifact(ArtifactKind::ContinuationBridge)
     {
-        Ok(item) => item,
-        Err(err) => {
-            warn!("failed generating continuation bridge before local compaction: {err}");
-            None
+        match generate_continuation_bridge_item(&sess, turn_context.as_ref(), history_for_artifacts)
+            .await
+        {
+            Ok(item) => item,
+            Err(err) => {
+                warn!("failed generating continuation bridge before local compaction: {err}");
+                None
+            }
         }
+    } else {
+        None
     };
+    let authoritative_items: Vec<_> = thread_memory_item
+        .into_iter()
+        .chain(continuation_bridge_item)
+        .collect();
     let request_context =
         resolve_context_maintenance_request_context(sess.as_ref(), turn_context.as_ref()).await;
     history.record_items(
@@ -351,10 +340,6 @@ async fn run_compact_task_inner_impl(
         new_history =
             insert_initial_context_before_last_real_user_or_summary(new_history, initial_context);
     }
-    let authoritative_items: Vec<_> = thread_memory_item
-        .into_iter()
-        .chain(continuation_bridge_item)
-        .collect();
     if !authoritative_items.is_empty() {
         new_history =
             insert_items_before_last_summary_or_compaction(new_history, authoritative_items);
@@ -507,45 +492,37 @@ pub(crate) fn collect_user_messages(items: &[ResponseItem]) -> Vec<String> {
         .collect()
 }
 
-fn is_raw_conversation_message(item: &ResponseItem) -> bool {
+pub(crate) fn is_raw_conversation_message(item: &ResponseItem) -> bool {
     match item {
         ResponseItem::Message { role, .. } if role == "assistant" => true,
-        ResponseItem::Message { role, .. } if role == "user" => {
-            matches!(
-                crate::event_mapping::parse_turn_item(item),
-                Some(TurnItem::UserMessage(user)) if !is_summary_message(&user.message())
-            )
-        }
+        ResponseItem::Message { role, .. } if role == "user" => is_real_user_message(item),
         _ => false,
     }
+}
+
+pub(crate) fn is_real_user_message(item: &ResponseItem) -> bool {
+    matches!(
+        crate::event_mapping::parse_turn_item(item),
+        Some(TurnItem::UserMessage(user)) if !is_summary_message(&user.message())
+    )
+}
+
+pub(crate) fn is_user_or_summary_message(item: &ResponseItem) -> bool {
+    matches!(
+        crate::event_mapping::parse_turn_item(item),
+        Some(TurnItem::UserMessage(_))
+    )
 }
 
 pub(crate) fn retain_recent_raw_conversation_messages(
     compacted_history: Vec<ResponseItem>,
     max_messages: usize,
 ) -> Vec<ResponseItem> {
-    if compacted_history.is_empty() {
-        return compacted_history;
-    }
-
-    let mut retained = vec![true; compacted_history.len()];
-    let mut remaining = max_messages;
-    for (index, item) in compacted_history.iter().enumerate().rev() {
-        if !is_raw_conversation_message(item) {
-            continue;
-        }
-        if remaining > 0 {
-            remaining -= 1;
-            continue;
-        }
-        retained[index] = false;
-    }
-
-    compacted_history
-        .into_iter()
-        .enumerate()
-        .filter_map(|(index, item)| retained[index].then_some(item))
-        .collect()
+    retain_recent_raw_conversation_messages_impl(
+        compacted_history,
+        max_messages,
+        is_raw_conversation_message,
+    )
 }
 
 pub(crate) fn is_summary_message(message: &str) -> bool {
@@ -563,44 +540,15 @@ pub(crate) fn is_summary_message(message: &str) -> bool {
 ///   that item remains last (remote compaction may return only compaction items).
 /// - If there are no user messages or compaction items, append the context.
 pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
-    mut compacted_history: Vec<ResponseItem>,
+    compacted_history: Vec<ResponseItem>,
     initial_context: Vec<ResponseItem>,
 ) -> Vec<ResponseItem> {
-    let mut last_user_or_summary_index = None;
-    let mut last_real_user_index = None;
-    for (i, item) in compacted_history.iter().enumerate().rev() {
-        let Some(TurnItem::UserMessage(user)) = crate::event_mapping::parse_turn_item(item) else {
-            continue;
-        };
-        // Compaction summaries are encoded as user messages, so track both:
-        // the last real user message (preferred insertion point) and the last
-        // user-message-like item (fallback summary insertion point).
-        last_user_or_summary_index.get_or_insert(i);
-        if !is_summary_message(&user.message()) {
-            last_real_user_index = Some(i);
-            break;
-        }
-    }
-    let last_compaction_index = compacted_history
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(i, item)| matches!(item, ResponseItem::Compaction { .. }).then_some(i));
-    let insertion_index = last_real_user_index
-        .or(last_user_or_summary_index)
-        .or(last_compaction_index);
-
-    // Re-inject canonical context from the current session since we stripped it
-    // from the pre-compaction history. Prefer placing it before the last real
-    // user message; if there is no real user message left, place it before the
-    // summary or compaction item so the compaction item remains last.
-    if let Some(insertion_index) = insertion_index {
-        compacted_history.splice(insertion_index..insertion_index, initial_context);
-    } else {
-        compacted_history.extend(initial_context);
-    }
-
-    compacted_history
+    insert_initial_context_before_last_real_user_or_summary_impl(
+        compacted_history,
+        initial_context,
+        is_real_user_message,
+        is_user_or_summary_message,
+    )
 }
 
 /// Inserts authoritative post-compaction artifacts before the last summary or compaction marker.
@@ -610,35 +558,14 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
 /// - Otherwise, insert before the last user-message-like item (including summaries).
 /// - If neither exists, append the items.
 pub(crate) fn insert_items_before_last_summary_or_compaction(
-    mut compacted_history: Vec<ResponseItem>,
+    compacted_history: Vec<ResponseItem>,
     items: Vec<ResponseItem>,
 ) -> Vec<ResponseItem> {
-    let last_user_or_summary_index =
-        compacted_history
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(|(i, item)| {
-                matches!(
-                    crate::event_mapping::parse_turn_item(item),
-                    Some(TurnItem::UserMessage(_))
-                )
-                .then_some(i)
-            });
-    let last_compaction_index = compacted_history
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(i, item)| matches!(item, ResponseItem::Compaction { .. }).then_some(i));
-    let insertion_index = last_compaction_index.or(last_user_or_summary_index);
-
-    if let Some(insertion_index) = insertion_index {
-        compacted_history.splice(insertion_index..insertion_index, items);
-    } else {
-        compacted_history.extend(items);
-    }
-
-    compacted_history
+    insert_items_before_last_summary_or_compaction_impl(
+        compacted_history,
+        items,
+        is_user_or_summary_message,
+    )
 }
 
 pub(crate) fn build_compacted_history(

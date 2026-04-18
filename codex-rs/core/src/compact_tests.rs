@@ -1,4 +1,5 @@
 use super::*;
+use crate::context_maintenance_runtime::compaction_engine;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 
@@ -15,7 +16,10 @@ async fn process_compacted_history_with_test_session(
         &session,
         &turn_context,
         compacted_history,
-        InitialContextInjection::BeforeLastUserMessage,
+        Vec::new(),
+        false,
+        codex_context_maintenance_policy::ContextInjectionPolicy::BeforeLastRealUserOrSummary,
+        /*preserve_legacy_compaction_marker*/ true,
     )
     .await;
     (refreshed, initial_context)

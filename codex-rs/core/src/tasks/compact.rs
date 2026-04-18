@@ -3,6 +3,7 @@ use std::sync::Arc;
 use super::SessionTask;
 use super::SessionTaskContext;
 use crate::codex::TurnContext;
+use crate::context_maintenance_runtime::compaction_engine;
 use crate::state::TaskKind;
 use codex_protocol::user_input::UserInput;
 use tokio_util::sync::CancellationToken;
@@ -27,7 +28,7 @@ impl SessionTask for CompactTask {
         _cancellation_token: CancellationToken,
     ) -> Option<String> {
         let session = session.clone_session();
-        let engine = crate::compact::compaction_engine(&ctx);
+        let engine = compaction_engine(&ctx);
         let _ = if crate::compact::should_use_remote_compact_task(&ctx) {
             session.services.session_telemetry.counter(
                 "codex.task.compact",

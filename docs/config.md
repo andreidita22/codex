@@ -64,8 +64,8 @@ Inline text wins over the file setting when both are present.
 
 The built-in bridge artifacts now live under:
 
-- `codex-rs/core/templates/continuation_bridge/variants/baton/`
-- `codex-rs/core/templates/continuation_bridge/variants/rich_review/`
+- `codex-rs/context-maintenance-policy/templates/continuation_bridge/variants/baton/`
+- `codex-rs/context-maintenance-policy/templates/continuation_bridge/variants/rich_review/`
 
 The default runtime variant is `baton`, and bridge generation defaults to `gpt-5-codex-mini` with `high` reasoning unless you override those settings.
 

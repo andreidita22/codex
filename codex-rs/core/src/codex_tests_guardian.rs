@@ -1,5 +1,4 @@
 use super::*;
-use crate::compact::InitialContextInjection;
 use crate::config_loader::ConfigLayerEntry;
 use crate::config_loader::ConfigRequirements;
 use crate::config_loader::ConfigRequirementsToml;
@@ -269,7 +268,10 @@ async fn process_compacted_history_preserves_separate_guardian_developer_message
                 phase: None,
             },
         ],
-        InitialContextInjection::BeforeLastUserMessage,
+        Vec::new(),
+        false,
+        codex_context_maintenance_policy::ContextInjectionPolicy::BeforeLastRealUserOrSummary,
+        /*preserve_legacy_compaction_marker*/ true,
     )
     .await;
 

@@ -71,9 +71,10 @@ release-merge artifact.
 ### Runtime hot files
 
 - [codex-rs/core/src/continuation_bridge.rs](../codex-rs/core/src/continuation_bridge.rs)
-- [codex-rs/core/src/continuation_bridge/baton.rs](../codex-rs/core/src/continuation_bridge/baton.rs)
-- [codex-rs/core/src/continuation_bridge/rich_review.rs](../codex-rs/core/src/continuation_bridge/rich_review.rs)
 - [codex-rs/core/src/continuation_bridge/subagent_context.rs](../codex-rs/core/src/continuation_bridge/subagent_context.rs)
+- [codex-rs/context-maintenance-policy/src/continuation_bridge/mod.rs](../codex-rs/context-maintenance-policy/src/continuation_bridge/mod.rs)
+- [codex-rs/context-maintenance-policy/src/continuation_bridge/baton.rs](../codex-rs/context-maintenance-policy/src/continuation_bridge/baton.rs)
+- [codex-rs/context-maintenance-policy/src/continuation_bridge/rich_review.rs](../codex-rs/context-maintenance-policy/src/continuation_bridge/rich_review.rs)
 - [codex-rs/core/src/compact.rs](../codex-rs/core/src/compact.rs)
 - [codex-rs/core/src/compact_remote.rs](../codex-rs/core/src/compact_remote.rs)
 - [codex-rs/core/src/codex.rs](../codex-rs/core/src/codex.rs)
@@ -82,10 +83,10 @@ release-merge artifact.
 
 ### Templates and schema artifacts
 
-- [codex-rs/core/templates/continuation_bridge/variants/baton/prompt.md](../codex-rs/core/templates/continuation_bridge/variants/baton/prompt.md)
-- [codex-rs/core/templates/continuation_bridge/variants/baton/schema.json](../codex-rs/core/templates/continuation_bridge/variants/baton/schema.json)
-- [codex-rs/core/templates/continuation_bridge/variants/rich_review/prompt.md](../codex-rs/core/templates/continuation_bridge/variants/rich_review/prompt.md)
-- [codex-rs/core/templates/continuation_bridge/variants/rich_review/schema.json](../codex-rs/core/templates/continuation_bridge/variants/rich_review/schema.json)
+- [codex-rs/context-maintenance-policy/templates/continuation_bridge/variants/baton/prompt.md](../codex-rs/context-maintenance-policy/templates/continuation_bridge/variants/baton/prompt.md)
+- [codex-rs/context-maintenance-policy/templates/continuation_bridge/variants/baton/schema.json](../codex-rs/context-maintenance-policy/templates/continuation_bridge/variants/baton/schema.json)
+- [codex-rs/context-maintenance-policy/templates/continuation_bridge/variants/rich_review/prompt.md](../codex-rs/context-maintenance-policy/templates/continuation_bridge/variants/rich_review/prompt.md)
+- [codex-rs/context-maintenance-policy/templates/continuation_bridge/variants/rich_review/schema.json](../codex-rs/context-maintenance-policy/templates/continuation_bridge/variants/rich_review/schema.json)
 
 ### Config surface
 
@@ -270,11 +271,12 @@ release-merge artifact.
 ### Runtime hot files
 
 - [codex-rs/core/src/governance/thread_memory.rs](../codex-rs/core/src/governance/thread_memory.rs)
+- [codex-rs/context-maintenance-policy/src/thread_memory.rs](../codex-rs/context-maintenance-policy/src/thread_memory.rs)
 - [codex-rs/core/src/compact.rs](../codex-rs/core/src/compact.rs)
 - [codex-rs/core/src/compact_remote.rs](../codex-rs/core/src/compact_remote.rs)
 - [codex-rs/core/src/codex.rs](../codex-rs/core/src/codex.rs)
-- [codex-rs/core/templates/thread_memory/prompt.md](../codex-rs/core/templates/thread_memory/prompt.md)
-- [codex-rs/core/templates/thread_memory/schema.json](../codex-rs/core/templates/thread_memory/schema.json)
+- [codex-rs/context-maintenance-policy/templates/thread_memory/prompt.md](../codex-rs/context-maintenance-policy/templates/thread_memory/prompt.md)
+- [codex-rs/context-maintenance-policy/templates/thread_memory/schema.json](../codex-rs/context-maintenance-policy/templates/thread_memory/schema.json)
 
 ### Upstream conflict risk
 
