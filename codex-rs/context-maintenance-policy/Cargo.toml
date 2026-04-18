@@ -9,6 +9,7 @@ workspace = true
 
 [dependencies]
 codex-config = { workspace = true }
+codex-protocol = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

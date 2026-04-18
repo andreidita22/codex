@@ -16,6 +16,8 @@ async fn process_compacted_history_with_test_session(
         &turn_context,
         compacted_history,
         InitialContextInjection::BeforeLastUserMessage,
+        Vec::new(),
+        false,
     )
     .await;
     (refreshed, initial_context)

@@ -270,6 +270,8 @@ async fn process_compacted_history_preserves_separate_guardian_developer_message
             },
         ],
         InitialContextInjection::BeforeLastUserMessage,
+        Vec::new(),
+        false,
     )
     .await;
 

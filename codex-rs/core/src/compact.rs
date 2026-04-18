@@ -23,6 +23,9 @@ use codex_analytics::CompactionStatus;
 use codex_analytics::CompactionStrategy;
 use codex_analytics::CompactionTrigger;
 use codex_analytics::now_unix_seconds;
+use codex_context_maintenance_policy::insert_initial_context_before_last_real_user_or_summary as insert_initial_context_before_last_real_user_or_summary_impl;
+use codex_context_maintenance_policy::insert_items_before_last_summary_or_compaction as insert_items_before_last_summary_or_compaction_impl;
+use codex_context_maintenance_policy::retain_recent_raw_conversation_messages as retain_recent_raw_conversation_messages_impl;
 use codex_features::Feature;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
@@ -539,45 +542,37 @@ pub(crate) fn collect_user_messages(items: &[ResponseItem]) -> Vec<String> {
         .collect()
 }
 
-fn is_raw_conversation_message(item: &ResponseItem) -> bool {
+pub(crate) fn is_raw_conversation_message(item: &ResponseItem) -> bool {
     match item {
         ResponseItem::Message { role, .. } if role == "assistant" => true,
-        ResponseItem::Message { role, .. } if role == "user" => {
-            matches!(
-                crate::event_mapping::parse_turn_item(item),
-                Some(TurnItem::UserMessage(user)) if !is_summary_message(&user.message())
-            )
-        }
+        ResponseItem::Message { role, .. } if role == "user" => is_real_user_message(item),
         _ => false,
     }
+}
+
+pub(crate) fn is_real_user_message(item: &ResponseItem) -> bool {
+    matches!(
+        crate::event_mapping::parse_turn_item(item),
+        Some(TurnItem::UserMessage(user)) if !is_summary_message(&user.message())
+    )
+}
+
+pub(crate) fn is_user_or_summary_message(item: &ResponseItem) -> bool {
+    matches!(
+        crate::event_mapping::parse_turn_item(item),
+        Some(TurnItem::UserMessage(_))
+    )
 }
 
 pub(crate) fn retain_recent_raw_conversation_messages(
     compacted_history: Vec<ResponseItem>,
     max_messages: usize,
 ) -> Vec<ResponseItem> {
-    if compacted_history.is_empty() {
-        return compacted_history;
-    }
-
-    let mut retained = vec![true; compacted_history.len()];
-    let mut remaining = max_messages;
-    for (index, item) in compacted_history.iter().enumerate().rev() {
-        if !is_raw_conversation_message(item) {
-            continue;
-        }
-        if remaining > 0 {
-            remaining -= 1;
-            continue;
-        }
-        retained[index] = false;
-    }
-
-    compacted_history
-        .into_iter()
-        .enumerate()
-        .filter_map(|(index, item)| retained[index].then_some(item))
-        .collect()
+    retain_recent_raw_conversation_messages_impl(
+        compacted_history,
+        max_messages,
+        is_raw_conversation_message,
+    )
 }
 
 pub(crate) fn is_summary_message(message: &str) -> bool {
@@ -595,44 +590,15 @@ pub(crate) fn is_summary_message(message: &str) -> bool {
 ///   that item remains last (remote compaction may return only compaction items).
 /// - If there are no user messages or compaction items, append the context.
 pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
-    mut compacted_history: Vec<ResponseItem>,
+    compacted_history: Vec<ResponseItem>,
     initial_context: Vec<ResponseItem>,
 ) -> Vec<ResponseItem> {
-    let mut last_user_or_summary_index = None;
-    let mut last_real_user_index = None;
-    for (i, item) in compacted_history.iter().enumerate().rev() {
-        let Some(TurnItem::UserMessage(user)) = crate::event_mapping::parse_turn_item(item) else {
-            continue;
-        };
-        // Compaction summaries are encoded as user messages, so track both:
-        // the last real user message (preferred insertion point) and the last
-        // user-message-like item (fallback summary insertion point).
-        last_user_or_summary_index.get_or_insert(i);
-        if !is_summary_message(&user.message()) {
-            last_real_user_index = Some(i);
-            break;
-        }
-    }
-    let last_compaction_index = compacted_history
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(i, item)| matches!(item, ResponseItem::Compaction { .. }).then_some(i));
-    let insertion_index = last_real_user_index
-        .or(last_user_or_summary_index)
-        .or(last_compaction_index);
-
-    // Re-inject canonical context from the current session since we stripped it
-    // from the pre-compaction history. Prefer placing it before the last real
-    // user message; if there is no real user message left, place it before the
-    // summary or compaction item so the compaction item remains last.
-    if let Some(insertion_index) = insertion_index {
-        compacted_history.splice(insertion_index..insertion_index, initial_context);
-    } else {
-        compacted_history.extend(initial_context);
-    }
-
-    compacted_history
+    insert_initial_context_before_last_real_user_or_summary_impl(
+        compacted_history,
+        initial_context,
+        is_real_user_message,
+        is_user_or_summary_message,
+    )
 }
 
 /// Inserts authoritative post-compaction artifacts before the last summary or compaction marker.
@@ -642,35 +608,14 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
 /// - Otherwise, insert before the last user-message-like item (including summaries).
 /// - If neither exists, append the items.
 pub(crate) fn insert_items_before_last_summary_or_compaction(
-    mut compacted_history: Vec<ResponseItem>,
+    compacted_history: Vec<ResponseItem>,
     items: Vec<ResponseItem>,
 ) -> Vec<ResponseItem> {
-    let last_user_or_summary_index =
-        compacted_history
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(|(i, item)| {
-                matches!(
-                    crate::event_mapping::parse_turn_item(item),
-                    Some(TurnItem::UserMessage(_))
-                )
-                .then_some(i)
-            });
-    let last_compaction_index = compacted_history
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(i, item)| matches!(item, ResponseItem::Compaction { .. }).then_some(i));
-    let insertion_index = last_compaction_index.or(last_user_or_summary_index);
-
-    if let Some(insertion_index) = insertion_index {
-        compacted_history.splice(insertion_index..insertion_index, items);
-    } else {
-        compacted_history.extend(items);
-    }
-
-    compacted_history
+    insert_items_before_last_summary_or_compaction_impl(
+        compacted_history,
+        items,
+        is_user_or_summary_message,
+    )
 }
 
 pub(crate) fn build_compacted_history(

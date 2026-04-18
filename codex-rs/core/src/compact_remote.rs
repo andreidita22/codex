@@ -10,9 +10,9 @@ use crate::compact::CompactionAnalyticsAttempt;
 use crate::compact::InitialContextInjection;
 use crate::compact::compaction_engine;
 use crate::compact::compaction_status_from_result;
-use crate::compact::insert_initial_context_before_last_real_user_or_summary;
-use crate::compact::insert_items_before_last_summary_or_compaction;
-use crate::compact::retain_recent_raw_conversation_messages;
+use crate::compact::is_raw_conversation_message;
+use crate::compact::is_real_user_message;
+use crate::compact::is_user_or_summary_message;
 use crate::compact::should_regenerate_thread_memory;
 use crate::config::CompactionEngine;
 use crate::context_manager::ContextManager;
@@ -25,6 +25,9 @@ use codex_analytics::CompactionImplementation;
 use codex_analytics::CompactionPhase;
 use codex_analytics::CompactionReason;
 use codex_analytics::CompactionTrigger;
+use codex_context_maintenance_policy::ContextInjectionPolicy;
+use codex_context_maintenance_policy::RemoteCompactedHistoryShapeRequest;
+use codex_context_maintenance_policy::shape_remote_compacted_history;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::ContextCompactionItem;
@@ -238,29 +241,24 @@ async fn run_remote_compact_task_inner_impl(
             Err(err)
         })
         .await?;
+    let authoritative_items: Vec<_> = if inject_authoritative_items {
+        thread_memory_item
+            .iter()
+            .cloned()
+            .chain(continuation_bridge_item.iter().cloned())
+            .collect()
+    } else {
+        Vec::new()
+    };
     new_history = process_compacted_history(
         sess.as_ref(),
         turn_context.as_ref(),
         new_history,
         initial_context_injection,
+        authoritative_items,
+        inject_authoritative_items && thread_memory_present,
     )
     .await;
-    if inject_authoritative_items {
-        let authoritative_items: Vec<_> = thread_memory_item
-            .into_iter()
-            .chain(continuation_bridge_item)
-            .collect();
-        if !authoritative_items.is_empty() {
-            new_history =
-                insert_items_before_last_summary_or_compaction(new_history, authoritative_items);
-        }
-    }
-    if inject_authoritative_items && thread_memory_present {
-        new_history = retain_recent_raw_conversation_messages(
-            new_history,
-            COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES,
-        );
-    }
 
     if !ghost_snapshots.is_empty() {
         new_history.extend(ghost_snapshots);
@@ -285,8 +283,10 @@ async fn run_remote_compact_task_inner_impl(
 pub(crate) async fn process_compacted_history(
     sess: &Session,
     turn_context: &TurnContext,
-    mut compacted_history: Vec<ResponseItem>,
+    compacted_history: Vec<ResponseItem>,
     initial_context_injection: InitialContextInjection,
+    authoritative_items: Vec<ResponseItem>,
+    retain_recent_raw_messages: bool,
 ) -> Vec<ResponseItem> {
     // Mid-turn compaction is the only path that must inject initial context above the last user
     // message in the replacement history. Pre-turn compaction instead injects context after the
@@ -300,8 +300,25 @@ pub(crate) async fn process_compacted_history(
         Vec::new()
     };
 
-    compacted_history.retain(should_keep_compacted_history_item);
-    insert_initial_context_before_last_real_user_or_summary(compacted_history, initial_context)
+    shape_remote_compacted_history(
+        RemoteCompactedHistoryShapeRequest {
+            compacted_history,
+            initial_context,
+            authoritative_items,
+            raw_message_retention_limit: COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES,
+            context_injection: match initial_context_injection {
+                InitialContextInjection::BeforeLastUserMessage => {
+                    ContextInjectionPolicy::BeforeLastRealUserOrSummary
+                }
+                InitialContextInjection::DoNotInject => ContextInjectionPolicy::None,
+            },
+            retain_recent_raw_messages,
+        },
+        should_keep_compacted_history_item,
+        is_real_user_message,
+        is_user_or_summary_message,
+        is_raw_conversation_message,
+    )
 }
 
 /// Returns whether an item from remote compaction output should be preserved.

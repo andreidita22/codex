@@ -1895,6 +1895,7 @@ name = "codex-context-maintenance-policy"
 version = "0.121.0"
 dependencies = [
  "codex-config",
+ "codex-protocol",
  "pretty_assertions",
  "thiserror 2.0.18",
 ]
@@ -1922,6 +1923,7 @@ dependencies = [
  "codex-code-mode",
  "codex-config",
  "codex-connectors",
+ "codex-context-maintenance-policy",
  "codex-core-skills",
  "codex-exec-server",
  "codex-execpolicy",
