@@ -18,6 +18,7 @@ It complements:
 - [docs/compaction-refresh-prune-concept-spec.md](compaction-refresh-prune-concept-spec.md)
 - [docs/compaction-refresh-prune-implementation-spec.md](compaction-refresh-prune-implementation-spec.md)
 - [docs/compaction-policy-p0-route-matrix-implementation-spec.md](compaction-policy-p0-route-matrix-implementation-spec.md)
+- [docs/compaction-policy-p1-scaffold-implementation-spec.md](compaction-policy-p1-scaffold-implementation-spec.md)
 - [docs/compaction-policy-route-matrix.md](compaction-policy-route-matrix.md)
 - [docs/custom-fork-module-inventory.md](custom-fork-module-inventory.md)
 

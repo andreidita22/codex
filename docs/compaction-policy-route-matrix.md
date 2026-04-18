@@ -79,7 +79,7 @@ Default rule:
 | `Compact` | `TurnBoundary` | `RemoteVanilla` | no | no | `None` | no | yes, upstream-owned | upstream summary/marker only |
 | `Refresh` | `TurnBoundary` | `LocalPure` | yes | no | `None` | no | no | updated durable `thread_memory` |
 | `Refresh` | `TurnBoundary` | `RemoteHybrid` | yes | no | `None` | no | no | updated durable `thread_memory` |
-| `Refresh` | `TurnBoundary` | `RemoteVanilla` | no | no | `None` | no | no | no semantic regeneration; route invalid unless engine selection is switched to a fork-owned path |
+| `Refresh` | `TurnBoundary` | `RemoteVanilla` | no | no | `None` | no | no | unsupported route |
 | `Prune` | `TurnBoundary` | `LocalPure` | no | no | `None` | no | no | prune manifest only |
 | `Prune` | `TurnBoundary` | `RemoteHybrid` | no | no | `None` | no | no | prune manifest only |
 | `Prune` | `TurnBoundary` | `RemoteVanilla` | no | no | `None` | no | no | prune manifest only |
