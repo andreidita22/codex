@@ -24,6 +24,44 @@ const PRUNE_MANIFEST_TAG: &str = "prune_manifest";
 const CONTINUATION_BRIDGE_TAG: &str = "continuation_bridge";
 const THREAD_MEMORY_TAG: &str = "thread_memory";
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TurnBoundaryMaintenanceActionForTests {
+    Refresh,
+    Prune,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CurrentTurnBoundaryMaintenanceBehaviorForTests {
+    pub(crate) generates_thread_memory: bool,
+    pub(crate) generates_continuation_bridge: bool,
+    pub(crate) emits_prune_manifest: bool,
+}
+
+#[cfg(test)]
+pub(crate) fn current_turn_boundary_maintenance_behavior_for_tests(
+    action: TurnBoundaryMaintenanceActionForTests,
+    path_variant: crate::config::GovernancePathVariant,
+) -> CurrentTurnBoundaryMaintenanceBehaviorForTests {
+    match action {
+        TurnBoundaryMaintenanceActionForTests::Refresh => {
+            CurrentTurnBoundaryMaintenanceBehaviorForTests {
+                generates_thread_memory: crate::compact::is_thread_memory_required(path_variant),
+                generates_continuation_bridge: true,
+                emits_prune_manifest: false,
+            }
+        }
+        TurnBoundaryMaintenanceActionForTests::Prune => {
+            CurrentTurnBoundaryMaintenanceBehaviorForTests {
+                generates_thread_memory: false,
+                generates_continuation_bridge: false,
+                emits_prune_manifest: true,
+            }
+        }
+    }
+}
+
 pub(crate) async fn run_refresh(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,

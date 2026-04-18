@@ -24,6 +24,8 @@ mod agent;
 mod codex_delegate;
 mod command_canonicalization;
 mod commit_attribution;
+#[cfg(test)]
+mod compaction_policy_matrix_tests;
 pub mod config;
 pub mod config_loader;
 pub mod connectors;

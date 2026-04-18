@@ -89,6 +89,38 @@ pub(crate) fn should_regenerate_thread_memory(
         )
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MaintenanceTimingForTests {
+    TurnBoundary,
+    IntraTurn,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CurrentCompactRouteBehaviorForTests {
+    pub(crate) initial_context_injection: InitialContextInjection,
+    pub(crate) regenerates_thread_memory: bool,
+}
+
+#[cfg(test)]
+pub(crate) fn current_compact_route_behavior_for_tests(
+    path_variant: GovernancePathVariant,
+    timing: MaintenanceTimingForTests,
+) -> CurrentCompactRouteBehaviorForTests {
+    let initial_context_injection = match timing {
+        MaintenanceTimingForTests::TurnBoundary => InitialContextInjection::DoNotInject,
+        MaintenanceTimingForTests::IntraTurn => InitialContextInjection::BeforeLastUserMessage,
+    };
+    CurrentCompactRouteBehaviorForTests {
+        initial_context_injection,
+        regenerates_thread_memory: should_regenerate_thread_memory(
+            path_variant,
+            initial_context_injection,
+        ),
+    }
+}
+
 pub(crate) async fn run_inline_auto_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
