@@ -209,18 +209,30 @@ pub fn apply_history_disposition(request: HistoryDispositionRequest) -> HistoryD
         removed_count = removed_count.saturating_add(removed);
     }
 
-    for artifact_kind in request.drop_prior_artifact_kinds {
-        let (next_items, removed) = remove_artifact_kind(items, artifact_kind);
-        items = next_items;
-        removed_count = removed_count.saturating_add(removed);
-    }
-
-    if matches!(
+    let strip_markers = matches!(
         request.legacy_compaction_marker_policy,
         LegacyCompactionMarkerPolicy::Strip
-    ) {
-        let (next_items, removed) = remove_legacy_compaction_markers(items);
-        items = next_items;
+    );
+    if !request.drop_prior_artifact_kinds.is_empty() || strip_markers {
+        let mut removed = 0usize;
+        items = items
+            .into_iter()
+            .filter_map(|item| {
+                if strip_markers && matches!(item, ResponseItem::Compaction { .. }) {
+                    removed = removed.saturating_add(1);
+                    return None;
+                }
+
+                let should_drop_artifact = tagged_artifact_kind(&item)
+                    .is_some_and(|kind| request.drop_prior_artifact_kinds.contains(&kind));
+                if should_drop_artifact {
+                    removed = removed.saturating_add(1);
+                    None
+                } else {
+                    Some(item)
+                }
+            })
+            .collect();
         removed_count = removed_count.saturating_add(removed);
     }
 
@@ -228,22 +240,6 @@ pub fn apply_history_disposition(request: HistoryDispositionRequest) -> HistoryD
         items,
         removed_count,
     }
-}
-
-fn remove_legacy_compaction_markers(items: Vec<ResponseItem>) -> (Vec<ResponseItem>, usize) {
-    let mut removed = 0usize;
-    let items = items
-        .into_iter()
-        .filter_map(|item| {
-            if matches!(item, ResponseItem::Compaction { .. }) {
-                removed = removed.saturating_add(1);
-                None
-            } else {
-                Some(item)
-            }
-        })
-        .collect();
-    (items, removed)
 }
 
 #[cfg(test)]
