@@ -6,6 +6,7 @@ use crate::ArtifactRequest;
 use crate::ArtifactRequiredness;
 use crate::ContextInjectionPolicy;
 use crate::GovernanceEffect;
+use crate::HistoryDispositionPolicy;
 use crate::LegacyCompactionMarkerPolicy;
 use crate::MaintenanceAction;
 use crate::MaintenancePlanningRequest;
@@ -13,8 +14,10 @@ use crate::MaintenancePolicyError;
 use crate::MaintenancePolicyPlan;
 use crate::MaintenanceTiming;
 use crate::PolicyEngine;
+use crate::RemoteCompactedHistoryKeepPolicy;
 use crate::RetentionDirective;
 use crate::RetentionGate;
+use crate::SummaryDispositionPolicy;
 use crate::ThreadMemoryGovernance;
 use crate::plan_route;
 
@@ -37,8 +40,14 @@ fn compact_intra_turn_local_pure_requests_turn_scoped_bridge() {
                 lifetime: ArtifactLifetime::TurnScoped,
                 requiredness: ArtifactRequiredness::BestEffort,
             }],
-            drop_prior_artifact_kinds: vec![ArtifactKind::ContinuationBridge],
-            legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            history_disposition: HistoryDispositionPolicy {
+                prune_superseded_artifacts: false,
+                summary_disposition: SummaryDispositionPolicy::KeepAll,
+                remote_keep_policy:
+                    RemoteCompactedHistoryKeepPolicy::DropDeveloperAndNonTurnUserMessages,
+                drop_prior_artifact_kinds: vec![ArtifactKind::ContinuationBridge],
+                legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            },
             retention_directive: RetentionDirective::None,
             governance_effects: vec![],
         }
@@ -64,11 +73,17 @@ fn compact_turn_boundary_local_pure_requests_durable_thread_memory() {
                 lifetime: ArtifactLifetime::DurableAcrossTurns,
                 requiredness: ArtifactRequiredness::Required,
             }],
-            drop_prior_artifact_kinds: vec![
-                ArtifactKind::ThreadMemory,
-                ArtifactKind::ContinuationBridge,
-            ],
-            legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            history_disposition: HistoryDispositionPolicy {
+                prune_superseded_artifacts: false,
+                summary_disposition: SummaryDispositionPolicy::KeepAll,
+                remote_keep_policy:
+                    RemoteCompactedHistoryKeepPolicy::DropDeveloperAndNonTurnUserMessages,
+                drop_prior_artifact_kinds: vec![
+                    ArtifactKind::ThreadMemory,
+                    ArtifactKind::ContinuationBridge,
+                ],
+                legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            },
             retention_directive: RetentionDirective::KeepRecentRawConversation {
                 max_messages: 5,
                 gate: RetentionGate::FinalHistoryContainsArtifact(ArtifactKind::ThreadMemory),
@@ -93,11 +108,17 @@ fn compact_turn_boundary_governance_off_suppresses_thread_memory() {
         MaintenancePolicyPlan {
             context_injection: ContextInjectionPolicy::None,
             requested_artifacts: vec![],
-            drop_prior_artifact_kinds: vec![
-                ArtifactKind::ThreadMemory,
-                ArtifactKind::ContinuationBridge,
-            ],
-            legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            history_disposition: HistoryDispositionPolicy {
+                prune_superseded_artifacts: false,
+                summary_disposition: SummaryDispositionPolicy::KeepAll,
+                remote_keep_policy:
+                    RemoteCompactedHistoryKeepPolicy::DropDeveloperAndNonTurnUserMessages,
+                drop_prior_artifact_kinds: vec![
+                    ArtifactKind::ThreadMemory,
+                    ArtifactKind::ContinuationBridge,
+                ],
+                legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            },
             retention_directive: RetentionDirective::KeepRecentRawConversation {
                 max_messages: 5,
                 gate: RetentionGate::FinalHistoryContainsArtifact(ArtifactKind::ThreadMemory),
@@ -122,11 +143,17 @@ fn compact_turn_boundary_remote_vanilla_preserves_legacy_marker_without_fork_art
         MaintenancePolicyPlan {
             context_injection: ContextInjectionPolicy::None,
             requested_artifacts: vec![],
-            drop_prior_artifact_kinds: vec![
-                ArtifactKind::ThreadMemory,
-                ArtifactKind::ContinuationBridge,
-            ],
-            legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
+            history_disposition: HistoryDispositionPolicy {
+                prune_superseded_artifacts: false,
+                summary_disposition: SummaryDispositionPolicy::KeepAll,
+                remote_keep_policy:
+                    RemoteCompactedHistoryKeepPolicy::DropDeveloperAndNonTurnUserMessages,
+                drop_prior_artifact_kinds: vec![
+                    ArtifactKind::ThreadMemory,
+                    ArtifactKind::ContinuationBridge,
+                ],
+                legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
+            },
             retention_directive: RetentionDirective::None,
             governance_effects: vec![],
         }
@@ -152,11 +179,16 @@ fn refresh_turn_boundary_local_pure_requests_durable_thread_memory() {
                 lifetime: ArtifactLifetime::DurableAcrossTurns,
                 requiredness: ArtifactRequiredness::Required,
             }],
-            drop_prior_artifact_kinds: vec![
-                ArtifactKind::ThreadMemory,
-                ArtifactKind::ContinuationBridge,
-            ],
-            legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            history_disposition: HistoryDispositionPolicy {
+                prune_superseded_artifacts: true,
+                summary_disposition: SummaryDispositionPolicy::KeepAll,
+                remote_keep_policy: RemoteCompactedHistoryKeepPolicy::KeepAll,
+                drop_prior_artifact_kinds: vec![
+                    ArtifactKind::ThreadMemory,
+                    ArtifactKind::ContinuationBridge,
+                ],
+                legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            },
             retention_directive: RetentionDirective::KeepRecentRawConversation {
                 max_messages: 5,
                 gate: RetentionGate::FinalHistoryContainsArtifact(ArtifactKind::ThreadMemory),
@@ -223,11 +255,16 @@ fn prune_turn_boundary_requests_marker_only_prune_manifest() {
                 lifetime: ArtifactLifetime::MarkerOnly,
                 requiredness: ArtifactRequiredness::Required,
             }],
-            drop_prior_artifact_kinds: vec![
-                ArtifactKind::PruneManifest,
-                ArtifactKind::ContinuationBridge,
-            ],
-            legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            history_disposition: HistoryDispositionPolicy {
+                prune_superseded_artifacts: true,
+                summary_disposition: SummaryDispositionPolicy::KeepLatestCompactionSummary,
+                remote_keep_policy: RemoteCompactedHistoryKeepPolicy::KeepAll,
+                drop_prior_artifact_kinds: vec![
+                    ArtifactKind::PruneManifest,
+                    ArtifactKind::ContinuationBridge,
+                ],
+                legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            },
             retention_directive: RetentionDirective::KeepRecentRawConversation {
                 max_messages: 5,
                 gate: RetentionGate::FinalHistoryContainsArtifact(ArtifactKind::ThreadMemory),

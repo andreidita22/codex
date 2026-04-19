@@ -7,6 +7,7 @@ use crate::ArtifactKind;
 use crate::HistoryDispositionRequest;
 use crate::HistoryDispositionResult;
 use crate::LegacyCompactionMarkerPolicy;
+use crate::SummaryDispositionPolicy;
 
 const CONTINUATION_BRIDGE_TAG: &str = "continuation_bridge";
 const THREAD_MEMORY_TAG: &str = "thread_memory";
@@ -199,21 +200,46 @@ pub fn build_prune_manifest_item(
     })
 }
 
+/// Applies history disposition policies that do not require compaction-summary
+/// classification.
+///
+/// Callers that use [`SummaryDispositionPolicy::KeepLatestCompactionSummary`]
+/// must instead use [`apply_history_disposition_with_summary_classifier`] so
+/// the policy crate can identify summary messages correctly.
 pub fn apply_history_disposition(request: HistoryDispositionRequest) -> HistoryDispositionResult {
+    debug_assert!(
+        !matches!(
+            request.policy.summary_disposition,
+            SummaryDispositionPolicy::KeepLatestCompactionSummary
+        ),
+        "KeepLatestCompactionSummary requires apply_history_disposition_with_summary_classifier"
+    );
+    apply_history_disposition_with_summary_classifier(request, |_| false)
+}
+
+/// Applies history disposition policies, including summary disposition when the
+/// caller provides a compaction-summary classifier.
+pub fn apply_history_disposition_with_summary_classifier<F>(
+    request: HistoryDispositionRequest,
+    is_compaction_summary_message: F,
+) -> HistoryDispositionResult
+where
+    F: Fn(&ResponseItem) -> bool,
+{
     let mut removed_count = 0usize;
     let mut items = request.items;
 
-    if request.prune_superseded_artifacts {
+    if request.policy.prune_superseded_artifacts {
         let (next_items, removed) = prune_superseded_artifacts(items);
         items = next_items;
         removed_count = removed_count.saturating_add(removed);
     }
 
     let strip_markers = matches!(
-        request.legacy_compaction_marker_policy,
+        request.policy.legacy_compaction_marker_policy,
         LegacyCompactionMarkerPolicy::Strip
     );
-    if !request.drop_prior_artifact_kinds.is_empty() || strip_markers {
+    if !request.policy.drop_prior_artifact_kinds.is_empty() || strip_markers {
         let mut removed = 0usize;
         items = items
             .into_iter()
@@ -224,7 +250,7 @@ pub fn apply_history_disposition(request: HistoryDispositionRequest) -> HistoryD
                 }
 
                 let should_drop_artifact = tagged_artifact_kind(&item)
-                    .is_some_and(|kind| request.drop_prior_artifact_kinds.contains(&kind));
+                    .is_some_and(|kind| request.policy.drop_prior_artifact_kinds.contains(&kind));
                 if should_drop_artifact {
                     removed = removed.saturating_add(1);
                     None
@@ -236,10 +262,54 @@ pub fn apply_history_disposition(request: HistoryDispositionRequest) -> HistoryD
         removed_count = removed_count.saturating_add(removed);
     }
 
+    if matches!(
+        request.policy.summary_disposition,
+        SummaryDispositionPolicy::KeepLatestCompactionSummary
+    ) {
+        let (next_items, removed) =
+            keep_latest_compaction_summary(items, is_compaction_summary_message);
+        items = next_items;
+        removed_count = removed_count.saturating_add(removed);
+    }
+
     HistoryDispositionResult {
         items,
         removed_count,
     }
+}
+
+fn keep_latest_compaction_summary<F>(
+    items: Vec<ResponseItem>,
+    is_compaction_summary_message: F,
+) -> (Vec<ResponseItem>, usize)
+where
+    F: Fn(&ResponseItem) -> bool,
+{
+    let latest_summary_index = match items
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(idx, item)| is_compaction_summary_message(item).then_some(idx))
+    {
+        Some(idx) => idx,
+        None => return (items, 0),
+    };
+
+    let mut removed = 0usize;
+    let items = items
+        .into_iter()
+        .enumerate()
+        .filter_map(|(idx, item)| {
+            if is_compaction_summary_message(&item) && idx != latest_summary_index {
+                removed = removed.saturating_add(1);
+                None
+            } else {
+                Some(item)
+            }
+        })
+        .collect();
+
+    (items, removed)
 }
 
 #[cfg(test)]
@@ -249,6 +319,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::apply_history_disposition;
+    use super::apply_history_disposition_with_summary_classifier;
     use super::build_prune_manifest_item;
     use super::content_items_to_text;
     use super::extract_tagged_payload;
@@ -258,9 +329,12 @@ mod tests {
     use super::tagged_artifact_kind;
     use super::tagged_artifact_kind_from_text;
     use crate::ArtifactKind;
+    use crate::HistoryDispositionPolicy;
     use crate::HistoryDispositionRequest;
     use crate::HistoryDispositionResult;
     use crate::LegacyCompactionMarkerPolicy;
+    use crate::RemoteCompactedHistoryKeepPolicy;
+    use crate::SummaryDispositionPolicy;
 
     #[test]
     fn content_items_to_text_joins_text_and_skips_images() {
@@ -431,9 +505,13 @@ mod tests {
                     encrypted_content: "encrypted".to_string(),
                 },
             ],
-            prune_superseded_artifacts: true,
-            drop_prior_artifact_kinds: vec![ArtifactKind::PruneManifest],
-            legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            policy: HistoryDispositionPolicy {
+                prune_superseded_artifacts: true,
+                summary_disposition: SummaryDispositionPolicy::KeepAll,
+                remote_keep_policy: RemoteCompactedHistoryKeepPolicy::KeepAll,
+                drop_prior_artifact_kinds: vec![ArtifactKind::PruneManifest],
+                legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            },
         });
 
         assert_eq!(
@@ -453,10 +531,14 @@ mod tests {
 
         let result = apply_history_disposition(HistoryDispositionRequest {
             items: vec![marker.clone()],
-            prune_superseded_artifacts: false,
-            drop_prior_artifact_kinds: vec![],
-            legacy_compaction_marker_policy:
-                LegacyCompactionMarkerPolicy::PreserveForUpstreamCompatibility,
+            policy: HistoryDispositionPolicy {
+                prune_superseded_artifacts: false,
+                summary_disposition: SummaryDispositionPolicy::KeepAll,
+                remote_keep_policy: RemoteCompactedHistoryKeepPolicy::KeepAll,
+                drop_prior_artifact_kinds: vec![],
+                legacy_compaction_marker_policy:
+                    LegacyCompactionMarkerPolicy::PreserveForUpstreamCompatibility,
+            },
         });
 
         assert_eq!(
@@ -464,6 +546,38 @@ mod tests {
             HistoryDispositionResult {
                 items: vec![marker],
                 removed_count: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn apply_history_disposition_keeps_only_latest_compaction_summary_when_requested() {
+        let result = apply_history_disposition_with_summary_classifier(
+            HistoryDispositionRequest {
+                items: vec![
+                    summary_message("older summary"),
+                    developer_message("<thread_memory>current</thread_memory>"),
+                    summary_message("latest summary"),
+                ],
+                policy: HistoryDispositionPolicy {
+                    prune_superseded_artifacts: false,
+                    summary_disposition: SummaryDispositionPolicy::KeepLatestCompactionSummary,
+                    remote_keep_policy: RemoteCompactedHistoryKeepPolicy::KeepAll,
+                    drop_prior_artifact_kinds: vec![],
+                    legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
+                },
+            },
+            is_summary_message,
+        );
+
+        assert_eq!(
+            result,
+            HistoryDispositionResult {
+                items: vec![
+                    developer_message("<thread_memory>current</thread_memory>"),
+                    summary_message("latest summary"),
+                ],
+                removed_count: 1,
             }
         );
     }
@@ -490,5 +604,21 @@ mod tests {
             end_turn: None,
             phase: None,
         }
+    }
+
+    fn summary_message(text: &str) -> ResponseItem {
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: text.to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        }
+    }
+
+    fn is_summary_message(item: &ResponseItem) -> bool {
+        matches!(item, ResponseItem::Message { role, content, .. } if role == "user" && content_items_to_text(content).is_some_and(|text| text.contains("summary")))
     }
 }

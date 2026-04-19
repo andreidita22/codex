@@ -1,7 +1,10 @@
 use super::*;
 use crate::content_items_to_text;
 use crate::context_maintenance_runtime::compaction_engine;
+use codex_context_maintenance_policy::HistoryDispositionPolicy;
+use codex_context_maintenance_policy::RemoteCompactedHistoryKeepPolicy;
 use codex_context_maintenance_policy::RetentionDirective;
+use codex_context_maintenance_policy::SummaryDispositionPolicy;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 
@@ -24,8 +27,14 @@ async fn process_compacted_history_with_test_session(
             retention_directive: RetentionDirective::None,
             context_injection:
                 codex_context_maintenance_policy::ContextInjectionPolicy::BeforeLastRealUserOrSummary,
-            drop_prior_artifact_kinds: Vec::new(),
-            legacy_compaction_marker_policy,
+            history_disposition: HistoryDispositionPolicy {
+                prune_superseded_artifacts: false,
+                summary_disposition: SummaryDispositionPolicy::KeepAll,
+                remote_keep_policy:
+                    RemoteCompactedHistoryKeepPolicy::DropDeveloperAndNonTurnUserMessages,
+                drop_prior_artifact_kinds: Vec::new(),
+                legacy_compaction_marker_policy,
+            },
         },
     )
     .await;

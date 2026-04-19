@@ -10,6 +10,7 @@ use crate::governance::thread_memory::generate_thread_memory_item;
 use codex_context_maintenance_policy::ArtifactKind;
 use codex_context_maintenance_policy::MaintenanceAction;
 use codex_context_maintenance_policy::apply_history_disposition;
+use codex_context_maintenance_policy::apply_history_disposition_with_summary_classifier;
 use codex_context_maintenance_policy::apply_retention_directive;
 use codex_context_maintenance_policy::build_prune_manifest_item;
 use codex_protocol::error::Result as CodexResult;
@@ -51,10 +52,8 @@ pub(crate) async fn run_refresh(
     )
     .await?;
 
-    let disposition = apply_history_disposition(
-        runtime_plan
-            .history_disposition_request(raw_history, /*prune_superseded_artifacts*/ true),
-    );
+    let disposition =
+        apply_history_disposition(runtime_plan.history_disposition_request(raw_history));
     let mut new_history = disposition.items;
     let mut removed_count = disposition.removed_count;
 
@@ -105,15 +104,12 @@ pub(crate) async fn run_prune(
     let raw_history = history_snapshot.raw_items().to_vec();
 
     let original_len = raw_history.len();
-    let disposition = apply_history_disposition(
-        runtime_plan
-            .history_disposition_request(raw_history, /*prune_superseded_artifacts*/ true),
+    let disposition = apply_history_disposition_with_summary_classifier(
+        runtime_plan.history_disposition_request(raw_history),
+        is_compaction_summary_message,
     );
     let mut pruned_history = disposition.items;
     let mut removed_count = disposition.removed_count;
-    let (next_history, summary_removed) = retain_latest_summary_message(pruned_history);
-    pruned_history = next_history;
-    removed_count = removed_count.saturating_add(summary_removed);
 
     let retention = apply_retention_directive(
         pruned_history,
@@ -145,31 +141,6 @@ pub(crate) async fn run_prune(
     Ok(())
 }
 
-fn retain_latest_summary_message(items: Vec<ResponseItem>) -> (Vec<ResponseItem>, usize) {
-    let mut latest_summary_index = None;
-    for (idx, item) in items.iter().enumerate().rev() {
-        if is_compaction_summary_message(item) {
-            latest_summary_index = Some(idx);
-            break;
-        }
-    }
-
-    let mut removed = 0usize;
-    let items = items
-        .into_iter()
-        .enumerate()
-        .filter_map(|(idx, item)| {
-            if is_compaction_summary_message(&item) && Some(idx) != latest_summary_index {
-                removed = removed.saturating_add(1);
-                None
-            } else {
-                Some(item)
-            }
-        })
-        .collect();
-    (items, removed)
-}
-
 fn is_compaction_summary_message(item: &ResponseItem) -> bool {
     let ResponseItem::Message { role, content, .. } = item else {
         return false;
@@ -196,8 +167,11 @@ async fn send_turn_started_event(sess: &Session, turn_context: &TurnContext) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_context_maintenance_policy::prune_superseded_artifacts;
-    use codex_context_maintenance_policy::remove_artifact_kind;
+    use codex_context_maintenance_policy::HistoryDispositionPolicy;
+    use codex_context_maintenance_policy::HistoryDispositionRequest;
+    use codex_context_maintenance_policy::LegacyCompactionMarkerPolicy;
+    use codex_context_maintenance_policy::RemoteCompactedHistoryKeepPolicy;
+    use codex_context_maintenance_policy::SummaryDispositionPolicy;
     use codex_protocol::models::ContentItem;
     use pretty_assertions::assert_eq;
 
@@ -215,17 +189,28 @@ mod tests {
 
     #[test]
     fn prune_removes_all_but_latest_prune_manifest() {
-        let items = vec![
-            developer_message("<prune_manifest>old</prune_manifest>"),
-            developer_message("<prune_manifest>new</prune_manifest>"),
-        ];
+        let result = apply_history_disposition_with_summary_classifier(
+            HistoryDispositionRequest {
+                items: vec![
+                    developer_message("<prune_manifest>old</prune_manifest>"),
+                    developer_message("<prune_manifest>new</prune_manifest>"),
+                ],
+                policy: HistoryDispositionPolicy {
+                    prune_superseded_artifacts: true,
+                    summary_disposition: SummaryDispositionPolicy::KeepAll,
+                    remote_keep_policy: RemoteCompactedHistoryKeepPolicy::KeepAll,
+                    drop_prior_artifact_kinds: vec![],
+                    legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
+                },
+            },
+            is_compaction_summary_message,
+        );
 
-        let (items, removed) = prune_superseded_artifacts(items);
-        assert_eq!(removed, 1);
         assert_eq!(
-            items,
+            result.items,
             vec![developer_message("<prune_manifest>new</prune_manifest>")]
         );
+        assert_eq!(result.removed_count, 1);
     }
 
     #[test]
@@ -238,18 +223,25 @@ mod tests {
             user_summary_message("latest summary"),
         ];
 
-        let (pruned_history, removed) = prune_superseded_artifacts(raw_history);
-        assert_eq!(removed, 1);
+        let result = apply_history_disposition_with_summary_classifier(
+            HistoryDispositionRequest {
+                items: raw_history,
+                policy: HistoryDispositionPolicy {
+                    prune_superseded_artifacts: true,
+                    summary_disposition: SummaryDispositionPolicy::KeepLatestCompactionSummary,
+                    remote_keep_policy: RemoteCompactedHistoryKeepPolicy::KeepAll,
+                    drop_prior_artifact_kinds: vec![ArtifactKind::PruneManifest],
+                    legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
+                },
+            },
+            is_compaction_summary_message,
+        );
+        assert_eq!(result.removed_count, 3);
 
-        let (pruned_history, removed_manifests) =
-            remove_artifact_kind(pruned_history, ArtifactKind::PruneManifest);
-        assert_eq!(removed_manifests, 1);
-
-        let (pruned_history, removed_summaries) = retain_latest_summary_message(pruned_history);
-        assert_eq!(removed_summaries, 1);
+        let pruned_history = result.items;
 
         let manifest = build_prune_manifest_item(
-            /*original_len*/ 5, /*final_len*/ 2, /*removed_count*/ 2,
+            /*original_len*/ 5, /*final_len*/ 2, /*removed_count*/ 3,
         )
         .expect("prune manifest should serialize");
         let pruned_history =
@@ -260,7 +252,7 @@ mod tests {
             vec![
                 developer_message("<thread_memory>new memory</thread_memory>"),
                 developer_message(
-                    "<prune_manifest schema=\"prune_manifest_v1\">\n{\n  \"final_history_len\": 2,\n  \"original_history_len\": 5,\n  \"removed_item_count\": 2,\n  \"schema\": \"prune_manifest_v1\"\n}\n</prune_manifest>"
+                    "<prune_manifest schema=\"prune_manifest_v1\">\n{\n  \"final_history_len\": 2,\n  \"original_history_len\": 5,\n  \"removed_item_count\": 3,\n  \"schema\": \"prune_manifest_v1\"\n}\n</prune_manifest>"
                 ),
                 user_summary_message("latest summary"),
             ]

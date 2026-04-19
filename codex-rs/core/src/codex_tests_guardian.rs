@@ -273,9 +273,15 @@ async fn process_compacted_history_preserves_separate_guardian_developer_message
             retention_directive: codex_context_maintenance_policy::RetentionDirective::None,
             context_injection:
                 codex_context_maintenance_policy::ContextInjectionPolicy::BeforeLastRealUserOrSummary,
-            drop_prior_artifact_kinds: Vec::new(),
-            legacy_compaction_marker_policy:
-                codex_context_maintenance_policy::LegacyCompactionMarkerPolicy::Preserve,
+            history_disposition: codex_context_maintenance_policy::HistoryDispositionPolicy {
+                prune_superseded_artifacts: false,
+                summary_disposition:
+                    codex_context_maintenance_policy::SummaryDispositionPolicy::KeepAll,
+                remote_keep_policy: codex_context_maintenance_policy::RemoteCompactedHistoryKeepPolicy::DropDeveloperAndNonTurnUserMessages,
+                drop_prior_artifact_kinds: Vec::new(),
+                legacy_compaction_marker_policy:
+                    codex_context_maintenance_policy::LegacyCompactionMarkerPolicy::Preserve,
+            },
         },
     )
     .await;

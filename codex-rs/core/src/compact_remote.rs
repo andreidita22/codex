@@ -26,6 +26,7 @@ use codex_analytics::CompactionReason;
 use codex_analytics::CompactionTrigger;
 use codex_context_maintenance_policy::ArtifactKind;
 use codex_context_maintenance_policy::ContextInjectionPolicy;
+use codex_context_maintenance_policy::HistoryDispositionPolicy;
 use codex_context_maintenance_policy::RemoteCompactedHistoryShapeRequest;
 use codex_context_maintenance_policy::RetentionDirective;
 use codex_context_maintenance_policy::shape_remote_compacted_history;
@@ -48,9 +49,7 @@ pub(crate) struct ProcessCompactedHistoryRequest {
     pub(crate) authoritative_items: Vec<ResponseItem>,
     pub(crate) retention_directive: RetentionDirective,
     pub(crate) context_injection: ContextInjectionPolicy,
-    pub(crate) drop_prior_artifact_kinds: Vec<ArtifactKind>,
-    pub(crate) legacy_compaction_marker_policy:
-        codex_context_maintenance_policy::LegacyCompactionMarkerPolicy,
+    pub(crate) history_disposition: HistoryDispositionPolicy,
 }
 
 pub(crate) async fn run_inline_remote_auto_compact_task(
@@ -236,8 +235,7 @@ async fn run_remote_compact_task_inner_impl(
                 .collect(),
             retention_directive: runtime_plan.retention_directive(),
             context_injection: runtime_plan.context_injection_policy(),
-            drop_prior_artifact_kinds: runtime_plan.drop_prior_artifact_kinds().to_vec(),
-            legacy_compaction_marker_policy: runtime_plan.legacy_compaction_marker_policy(),
+            history_disposition: runtime_plan.history_disposition_policy().clone(),
         },
     )
     .await;
@@ -286,14 +284,14 @@ pub(crate) async fn process_compacted_history(
             compacted_history: request.compacted_history,
             initial_context,
             authoritative_items: request.authoritative_items,
-            drop_prior_artifact_kinds: request.drop_prior_artifact_kinds,
-            legacy_compaction_marker_policy: request.legacy_compaction_marker_policy,
+            history_disposition: request.history_disposition,
             retention_directive: request.retention_directive,
             context_injection: request.context_injection,
         },
-        should_keep_compacted_history_item,
+        should_keep_compacted_history_user_message,
         is_real_user_message,
         is_user_or_summary_message,
+        is_compaction_summary_message,
         is_raw_conversation_message,
     )
 }
@@ -313,31 +311,18 @@ pub(crate) async fn process_compacted_history(
 /// - `assistant` messages (future remote compaction models may emit them)
 /// - `user`-role warnings and compaction-generated summary messages because
 ///   they parse as `TurnItem::UserMessage`.
-fn should_keep_compacted_history_item(item: &ResponseItem) -> bool {
-    match item {
-        ResponseItem::Message { role, .. } if role == "developer" => false,
-        ResponseItem::Message { role, .. } if role == "user" => {
-            matches!(
-                crate::event_mapping::parse_turn_item(item),
-                Some(TurnItem::UserMessage(_) | TurnItem::HookPrompt(_))
-            )
-        }
-        ResponseItem::Message { role, .. } if role == "assistant" => true,
-        ResponseItem::Message { .. } => false,
-        ResponseItem::Compaction { .. } => true,
-        ResponseItem::Reasoning { .. }
-        | ResponseItem::LocalShellCall { .. }
-        | ResponseItem::FunctionCall { .. }
-        | ResponseItem::ToolSearchCall { .. }
-        | ResponseItem::FunctionCallOutput { .. }
-        | ResponseItem::ToolSearchOutput { .. }
-        | ResponseItem::CustomToolCall { .. }
-        | ResponseItem::CustomToolCallOutput { .. }
-        | ResponseItem::WebSearchCall { .. }
-        | ResponseItem::ImageGenerationCall { .. }
-        | ResponseItem::GhostSnapshot { .. }
-        | ResponseItem::Other => false,
-    }
+fn should_keep_compacted_history_user_message(item: &ResponseItem) -> bool {
+    matches!(
+        crate::event_mapping::parse_turn_item(item),
+        Some(TurnItem::UserMessage(_) | TurnItem::HookPrompt(_))
+    )
+}
+
+fn is_compaction_summary_message(item: &ResponseItem) -> bool {
+    matches!(
+        crate::event_mapping::parse_turn_item(item),
+        Some(TurnItem::UserMessage(user)) if crate::compact::is_summary_message(&user.message())
+    )
 }
 
 #[derive(Debug)]
