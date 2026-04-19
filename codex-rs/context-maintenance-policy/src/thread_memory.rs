@@ -3,12 +3,13 @@ use std::io;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::models::content_items_to_text;
+use codex_protocol::models::remove_corresponding_response_item;
 use serde_json::Value;
 use tracing::warn;
 
 use crate::artifact_codecs::extract_tagged_payload;
 use crate::artifact_codecs::tagged_artifact_kind_from_text;
-use crate::content_items_to_text;
 
 const THREAD_MEMORY_SCHEMA: &str = "odeu_thread_memory_v1";
 const THREAD_MEMORY_PROMPT: &str = include_str!("../templates/thread_memory/prompt.md");
@@ -88,7 +89,7 @@ pub fn limit_thread_memory_source_items(source_items: Vec<ResponseItem>) -> Thre
     let trimmed_items: Vec<_> = source_items.drain(..start).collect();
     let pre_cleanup_len = source_items.len();
     for item in &trimmed_items {
-        remove_corresponding_for(&mut source_items, item);
+        remove_corresponding_response_item(&mut source_items, item);
     }
     let trimmed_source_count =
         start.saturating_add(pre_cleanup_len.saturating_sub(source_items.len()));
@@ -223,104 +224,12 @@ fn preview_text(text: &str, max_chars: usize) -> String {
     }
 }
 
-fn remove_corresponding_for(items: &mut Vec<ResponseItem>, item: &ResponseItem) {
-    match item {
-        ResponseItem::FunctionCall { call_id, .. } => {
-            remove_first_matching(items, |i| {
-                matches!(
-                    i,
-                    ResponseItem::FunctionCallOutput {
-                        call_id: existing, ..
-                    } if existing == call_id
-                )
-            });
-        }
-        ResponseItem::FunctionCallOutput { call_id, .. } => {
-            if let Some(pos) = items.iter().position(|i| {
-                matches!(i, ResponseItem::FunctionCall { call_id: existing, .. } if existing == call_id)
-            }) {
-                items.remove(pos);
-            } else if let Some(pos) = items.iter().position(|i| {
-                matches!(i, ResponseItem::LocalShellCall { call_id: Some(existing), .. } if existing == call_id)
-            }) {
-                items.remove(pos);
-            }
-        }
-        ResponseItem::ToolSearchCall {
-            call_id: Some(call_id),
-            ..
-        } => {
-            remove_first_matching(items, |i| {
-                matches!(
-                    i,
-                    ResponseItem::ToolSearchOutput {
-                        call_id: Some(existing),
-                        ..
-                    } if existing == call_id
-                )
-            });
-        }
-        ResponseItem::ToolSearchOutput {
-            call_id: Some(call_id),
-            ..
-        } => {
-            remove_first_matching(items, |i| {
-                matches!(
-                    i,
-                    ResponseItem::ToolSearchCall {
-                        call_id: Some(existing),
-                        ..
-                    } if existing == call_id
-                )
-            });
-        }
-        ResponseItem::CustomToolCall { call_id, .. } => {
-            remove_first_matching(items, |i| {
-                matches!(
-                    i,
-                    ResponseItem::CustomToolCallOutput {
-                        call_id: existing, ..
-                    } if existing == call_id
-                )
-            });
-        }
-        ResponseItem::CustomToolCallOutput { call_id, .. } => {
-            remove_first_matching(
-                items,
-                |i| matches!(i, ResponseItem::CustomToolCall { call_id: existing, .. } if existing == call_id),
-            );
-        }
-        ResponseItem::LocalShellCall {
-            call_id: Some(call_id),
-            ..
-        } => {
-            remove_first_matching(items, |i| {
-                matches!(
-                    i,
-                    ResponseItem::FunctionCallOutput {
-                        call_id: existing, ..
-                    } if existing == call_id
-                )
-            });
-        }
-        _ => {}
-    }
-}
-
-fn remove_first_matching<F>(items: &mut Vec<ResponseItem>, predicate: F)
-where
-    F: Fn(&ResponseItem) -> bool,
-{
-    if let Some(pos) = items.iter().position(predicate) {
-        items.remove(pos);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use codex_protocol::models::ContentItem;
     use codex_protocol::models::FunctionCallOutputPayload;
     use codex_protocol::models::ResponseItem;
+    use codex_protocol::models::content_items_to_text;
     use pretty_assertions::assert_eq;
 
     use super::THREAD_MEMORY_SCHEMA;
@@ -423,7 +332,7 @@ mod tests {
             return false;
         }
 
-        let Some(text) = super::content_items_to_text(content) else {
+        let Some(text) = content_items_to_text(content) else {
             return false;
         };
         text.trim_start()

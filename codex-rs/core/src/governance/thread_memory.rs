@@ -4,7 +4,6 @@ use crate::codex::TurnContext;
 use crate::context_maintenance_config::resolve_context_maintenance_request_context;
 use codex_api::ResponseEvent;
 use codex_context_maintenance_policy::build_thread_memory_update_message;
-use codex_context_maintenance_policy::content_items_to_text;
 use codex_context_maintenance_policy::limit_thread_memory_source_items;
 use codex_context_maintenance_policy::parse_thread_memory_payload;
 use codex_context_maintenance_policy::split_previous_memory_and_source_items;
@@ -14,6 +13,7 @@ use codex_protocol::error::Result;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::models::content_items_to_text;
 use futures::StreamExt;
 
 pub(crate) async fn generate_thread_memory_item(

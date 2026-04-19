@@ -1,6 +1,7 @@
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::models::content_items_to_text;
 use serde_json::json;
 
 use crate::ArtifactKind;
@@ -13,25 +14,6 @@ const CONTINUATION_BRIDGE_TAG: &str = "continuation_bridge";
 const THREAD_MEMORY_TAG: &str = "thread_memory";
 const PRUNE_MANIFEST_TAG: &str = "prune_manifest";
 const PRUNE_MANIFEST_SCHEMA: &str = "prune_manifest_v1";
-
-pub fn content_items_to_text(content: &[ContentItem]) -> Option<String> {
-    let mut pieces = Vec::new();
-    for item in content {
-        match item {
-            ContentItem::InputText { text } | ContentItem::OutputText { text } => {
-                if !text.is_empty() {
-                    pieces.push(text.as_str());
-                }
-            }
-            ContentItem::InputImage { .. } => {}
-        }
-    }
-    if pieces.is_empty() {
-        None
-    } else {
-        Some(pieces.join("\n"))
-    }
-}
 
 pub(crate) fn extract_tagged_payload<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
     let close_tag = format!("</{tag}>");
@@ -321,7 +303,6 @@ mod tests {
     use super::apply_history_disposition;
     use super::apply_history_disposition_with_summary_classifier;
     use super::build_prune_manifest_item;
-    use super::content_items_to_text;
     use super::extract_tagged_payload;
     use super::has_tagged_block;
     use super::prune_superseded_artifacts;
@@ -335,6 +316,7 @@ mod tests {
     use crate::LegacyCompactionMarkerPolicy;
     use crate::RemoteCompactedHistoryKeepPolicy;
     use crate::SummaryDispositionPolicy;
+    use codex_protocol::models::content_items_to_text;
 
     #[test]
     fn content_items_to_text_joins_text_and_skips_images() {
