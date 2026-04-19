@@ -9,6 +9,7 @@ use codex_context_maintenance_policy::ArtifactRequest;
 use codex_context_maintenance_policy::ArtifactRequiredness;
 use codex_context_maintenance_policy::ContextInjectionPolicy;
 use codex_context_maintenance_policy::GovernanceEffect;
+use codex_context_maintenance_policy::HistoryDispositionRequest;
 use codex_context_maintenance_policy::LegacyCompactionMarkerPolicy;
 use codex_context_maintenance_policy::MaintenanceAction;
 use codex_context_maintenance_policy::MaintenancePlanningRequest;
@@ -57,6 +58,19 @@ impl RuntimeMaintenancePlan {
         &self.drop_prior_artifact_kinds
     }
 
+    pub(crate) fn history_disposition_request(
+        &self,
+        items: Vec<codex_protocol::models::ResponseItem>,
+        prune_superseded_artifacts: bool,
+    ) -> HistoryDispositionRequest {
+        HistoryDispositionRequest {
+            items,
+            prune_superseded_artifacts,
+            drop_prior_artifact_kinds: self.drop_prior_artifact_kinds.clone(),
+            legacy_compaction_marker_policy: self.legacy_compaction_marker_policy,
+        }
+    }
+
     pub(crate) fn initial_context_injection(&self) -> InitialContextInjection {
         match self.context_injection {
             ContextInjectionPolicy::None => InitialContextInjection::DoNotInject,
@@ -70,11 +84,8 @@ impl RuntimeMaintenancePlan {
         self.context_injection
     }
 
-    pub(crate) fn preserves_legacy_compaction_marker(&self) -> bool {
-        !matches!(
-            self.legacy_compaction_marker_policy,
-            LegacyCompactionMarkerPolicy::Strip
-        )
+    pub(crate) fn legacy_compaction_marker_policy(&self) -> LegacyCompactionMarkerPolicy {
+        self.legacy_compaction_marker_policy
     }
 
     #[cfg(test)]

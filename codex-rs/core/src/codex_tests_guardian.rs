@@ -248,30 +248,35 @@ async fn process_compacted_history_preserves_separate_guardian_developer_message
     let refreshed = crate::compact_remote::process_compacted_history(
         &session,
         &turn_context,
-        vec![
-            ResponseItem::Message {
-                id: None,
-                role: "developer".to_string(),
-                content: vec![ContentItem::InputText {
-                    text: "stale developer message".to_string(),
-                }],
-                end_turn: None,
-                phase: None,
-            },
-            ResponseItem::Message {
-                id: None,
-                role: "user".to_string(),
-                content: vec![ContentItem::InputText {
-                    text: "summary".to_string(),
-                }],
-                end_turn: None,
-                phase: None,
-            },
-        ],
-        Vec::new(),
-        false,
-        codex_context_maintenance_policy::ContextInjectionPolicy::BeforeLastRealUserOrSummary,
-        /*preserve_legacy_compaction_marker*/ true,
+        crate::compact_remote::ProcessCompactedHistoryRequest {
+            compacted_history: vec![
+                ResponseItem::Message {
+                    id: None,
+                    role: "developer".to_string(),
+                    content: vec![ContentItem::InputText {
+                        text: "stale developer message".to_string(),
+                    }],
+                    end_turn: None,
+                    phase: None,
+                },
+                ResponseItem::Message {
+                    id: None,
+                    role: "user".to_string(),
+                    content: vec![ContentItem::InputText {
+                        text: "summary".to_string(),
+                    }],
+                    end_turn: None,
+                    phase: None,
+                },
+            ],
+            authoritative_items: Vec::new(),
+            retain_recent_raw_messages: false,
+            context_injection:
+                codex_context_maintenance_policy::ContextInjectionPolicy::BeforeLastRealUserOrSummary,
+            drop_prior_artifact_kinds: Vec::new(),
+            legacy_compaction_marker_policy:
+                codex_context_maintenance_policy::LegacyCompactionMarkerPolicy::Preserve,
+        },
     )
     .await;
 

@@ -6,6 +6,7 @@ mod retention;
 mod route_matrix;
 mod thread_memory;
 
+pub use artifact_codecs::apply_history_disposition;
 pub use artifact_codecs::build_prune_manifest_item;
 pub use artifact_codecs::content_items_to_text;
 pub use artifact_codecs::extract_tagged_payload;
@@ -28,6 +29,8 @@ pub use contracts::ArtifactRequest;
 pub use contracts::ArtifactRequiredness;
 pub use contracts::ContextInjectionPolicy;
 pub use contracts::GovernanceEffect;
+pub use contracts::HistoryDispositionRequest;
+pub use contracts::HistoryDispositionResult;
 pub use contracts::LegacyCompactionMarkerPolicy;
 pub use contracts::MaintenanceAction;
 pub use contracts::MaintenancePlanningRequest;

@@ -1,6 +1,10 @@
 use codex_protocol::models::ResponseItem;
 
+use crate::ArtifactKind;
 use crate::ContextInjectionPolicy;
+use crate::HistoryDispositionRequest;
+use crate::LegacyCompactionMarkerPolicy;
+use crate::apply_history_disposition;
 use crate::retain_recent_raw_conversation_messages;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -8,6 +12,8 @@ pub struct RemoteCompactedHistoryShapeRequest {
     pub compacted_history: Vec<ResponseItem>,
     pub initial_context: Vec<ResponseItem>,
     pub authoritative_items: Vec<ResponseItem>,
+    pub drop_prior_artifact_kinds: Vec<ArtifactKind>,
+    pub legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy,
     pub raw_message_retention_limit: usize,
     pub context_injection: ContextInjectionPolicy,
     pub retain_recent_raw_messages: bool,
@@ -95,8 +101,14 @@ where
     FUserOrSummary: Fn(&ResponseItem) -> bool,
     FRawConversation: Fn(&ResponseItem) -> bool,
 {
-    let mut compacted_history: Vec<_> = request
-        .compacted_history
+    let disposition = apply_history_disposition(HistoryDispositionRequest {
+        items: request.compacted_history,
+        prune_superseded_artifacts: false,
+        drop_prior_artifact_kinds: request.drop_prior_artifact_kinds,
+        legacy_compaction_marker_policy: request.legacy_compaction_marker_policy,
+    });
+    let mut compacted_history: Vec<_> = disposition
+        .items
         .into_iter()
         .filter(should_keep_item)
         .collect();
@@ -142,7 +154,9 @@ mod tests {
     use super::insert_initial_context_before_last_real_user_or_summary;
     use super::insert_items_before_last_summary_or_compaction;
     use super::shape_remote_compacted_history;
+    use crate::ArtifactKind;
     use crate::ContextInjectionPolicy;
+    use crate::LegacyCompactionMarkerPolicy;
 
     #[test]
     fn initial_context_insertion_keeps_summary_last_when_no_real_user_remains() {
@@ -205,6 +219,8 @@ mod tests {
             ],
             initial_context: vec![message("developer", "fresh context")],
             authoritative_items: vec![message("developer", "thread memory")],
+            drop_prior_artifact_kinds: vec![],
+            legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
             raw_message_retention_limit: 10,
             context_injection: ContextInjectionPolicy::BeforeLastRealUserOrSummary,
             retain_recent_raw_messages: false,
@@ -226,6 +242,36 @@ mod tests {
                 message("user", "summary"),
             ]
         );
+    }
+
+    #[test]
+    fn remote_history_shaping_applies_marker_policy_and_artifact_drops() {
+        let request = RemoteCompactedHistoryShapeRequest {
+            compacted_history: vec![
+                message("user", "summary"),
+                developer_message("<thread_memory>stale</thread_memory>"),
+                ResponseItem::Compaction {
+                    encrypted_content: "encrypted".to_string(),
+                },
+            ],
+            initial_context: vec![],
+            authoritative_items: vec![],
+            drop_prior_artifact_kinds: vec![ArtifactKind::ThreadMemory],
+            legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            raw_message_retention_limit: 10,
+            context_injection: ContextInjectionPolicy::None,
+            retain_recent_raw_messages: false,
+        };
+
+        let refreshed = shape_remote_compacted_history(
+            request,
+            |_| true,
+            is_real_user_message,
+            is_user_or_summary_message,
+            is_raw_conversation_message,
+        );
+
+        assert_eq!(refreshed, vec![message("user", "summary")]);
     }
 
     fn should_keep_item(item: &ResponseItem) -> bool {
@@ -261,6 +307,10 @@ mod tests {
             end_turn: None,
             phase: None,
         }
+    }
+
+    fn developer_message(text: &str) -> ResponseItem {
+        message("developer", text)
     }
 
     fn summary_message(text: &str) -> ResponseItem {

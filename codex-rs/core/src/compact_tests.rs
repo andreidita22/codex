@@ -6,6 +6,7 @@ use std::sync::Arc;
 async fn process_compacted_history_with_test_session(
     compacted_history: Vec<ResponseItem>,
     previous_turn_settings: Option<&PreviousTurnSettings>,
+    legacy_compaction_marker_policy: codex_context_maintenance_policy::LegacyCompactionMarkerPolicy,
 ) -> (Vec<ResponseItem>, Vec<ResponseItem>) {
     let (session, turn_context) = crate::codex::make_session_and_context().await;
     session
@@ -15,11 +16,15 @@ async fn process_compacted_history_with_test_session(
     let refreshed = crate::compact_remote::process_compacted_history(
         &session,
         &turn_context,
-        compacted_history,
-        Vec::new(),
-        false,
-        codex_context_maintenance_policy::ContextInjectionPolicy::BeforeLastRealUserOrSummary,
-        /*preserve_legacy_compaction_marker*/ true,
+        crate::compact_remote::ProcessCompactedHistoryRequest {
+            compacted_history,
+            authoritative_items: Vec::new(),
+            retain_recent_raw_messages: false,
+            context_injection:
+                codex_context_maintenance_policy::ContextInjectionPolicy::BeforeLastRealUserOrSummary,
+            drop_prior_artifact_kinds: Vec::new(),
+            legacy_compaction_marker_policy,
+        },
     )
     .await;
     (refreshed, initial_context)
@@ -411,6 +416,7 @@ async fn process_compacted_history_replaces_developer_messages() {
     let (refreshed, mut expected) = process_compacted_history_with_test_session(
         compacted_history,
         /*previous_turn_settings*/ None,
+        codex_context_maintenance_policy::LegacyCompactionMarkerPolicy::Preserve,
     )
     .await;
     expected.push(ResponseItem::Message {
@@ -439,6 +445,7 @@ async fn process_compacted_history_reinjects_full_initial_context() {
     let (refreshed, mut expected) = process_compacted_history_with_test_session(
         compacted_history,
         /*previous_turn_settings*/ None,
+        codex_context_maintenance_policy::LegacyCompactionMarkerPolicy::Preserve,
     )
     .await;
     expected.push(ResponseItem::Message {
@@ -518,6 +525,7 @@ keep me updated
     let (refreshed, mut expected) = process_compacted_history_with_test_session(
         compacted_history,
         /*previous_turn_settings*/ None,
+        codex_context_maintenance_policy::LegacyCompactionMarkerPolicy::Preserve,
     )
     .await;
     expected.push(ResponseItem::Message {
@@ -567,6 +575,7 @@ async fn process_compacted_history_inserts_context_before_last_real_user_message
     let (refreshed, initial_context) = process_compacted_history_with_test_session(
         compacted_history,
         /*previous_turn_settings*/ None,
+        codex_context_maintenance_policy::LegacyCompactionMarkerPolicy::Preserve,
     )
     .await;
     let mut expected = vec![
@@ -621,6 +630,7 @@ async fn process_compacted_history_reinjects_model_switch_message() {
     let (refreshed, initial_context) = process_compacted_history_with_test_session(
         compacted_history,
         Some(&previous_turn_settings),
+        codex_context_maintenance_policy::LegacyCompactionMarkerPolicy::Preserve,
     )
     .await;
 
@@ -644,6 +654,83 @@ async fn process_compacted_history_reinjects_model_switch_message() {
         phase: None,
     });
     assert_eq!(refreshed, expected);
+}
+
+#[tokio::test]
+async fn process_compacted_history_strips_legacy_compaction_markers_when_policy_requires_it() {
+    let compacted_history = vec![
+        ResponseItem::Compaction {
+            encrypted_content: "encrypted".to_string(),
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "summary".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+    ];
+
+    let (refreshed, mut expected) = process_compacted_history_with_test_session(
+        compacted_history,
+        /*previous_turn_settings*/ None,
+        codex_context_maintenance_policy::LegacyCompactionMarkerPolicy::Strip,
+    )
+    .await;
+    expected.push(ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "summary".to_string(),
+        }],
+        end_turn: None,
+        phase: None,
+    });
+
+    assert_eq!(refreshed, expected);
+}
+
+#[tokio::test]
+async fn process_compacted_history_preserves_legacy_compaction_markers_for_upstream_compatibility()
+{
+    let compacted_history = vec![
+        ResponseItem::Compaction {
+            encrypted_content: "encrypted".to_string(),
+        },
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "summary".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        },
+    ];
+
+    let (refreshed, mut expected) = process_compacted_history_with_test_session(
+        compacted_history,
+        /*previous_turn_settings*/ None,
+        codex_context_maintenance_policy::LegacyCompactionMarkerPolicy::PreserveForUpstreamCompatibility,
+    )
+    .await;
+    let mut prefixed = vec![ResponseItem::Compaction {
+        encrypted_content: "encrypted".to_string(),
+    }];
+    prefixed.append(&mut expected);
+    prefixed.push(ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "summary".to_string(),
+        }],
+        end_turn: None,
+        phase: None,
+    });
+
+    assert_eq!(refreshed, prefixed);
 }
 
 #[test]
