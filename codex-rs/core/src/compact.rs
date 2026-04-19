@@ -163,7 +163,7 @@ async fn run_compact_task_inner_impl(
     timing: CompactInvocationTiming,
 ) -> CodexResult<()> {
     let runtime_plan = runtime_plan_for_compact(turn_context.as_ref(), timing)?;
-    let initial_context_injection = runtime_plan.context_injection_placement();
+    let injection_placement = runtime_plan.context_injection_placement();
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(&turn_context, &compaction_item)
         .await;
@@ -315,7 +315,7 @@ async fn run_compact_task_inner_impl(
     let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
 
     if matches!(
-        initial_context_injection,
+        injection_placement,
         InitialContextInjection::BeforeLastRealUserOrSummary
     ) {
         let initial_context = sess.build_initial_context(turn_context.as_ref()).await;
@@ -338,7 +338,7 @@ async fn run_compact_task_inner_impl(
         .cloned()
         .collect();
     new_history.extend(ghost_snapshots);
-    let reference_context_item = match initial_context_injection {
+    let reference_context_item = match injection_placement {
         InitialContextInjection::DoNotInject => None,
         InitialContextInjection::BeforeLastRealUserOrSummary => {
             Some(turn_context.to_turn_context_item())
