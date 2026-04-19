@@ -12,6 +12,7 @@ use crate::codex::get_last_assistant_message_from_turn;
 use crate::config::CompactionEngine;
 use crate::context_maintenance_config::resolve_context_maintenance_request_context;
 use crate::context_maintenance_runtime::compact_timing_from_initial_context_injection;
+use crate::context_maintenance_runtime::execute_requested_artifact;
 use crate::context_maintenance_runtime::runtime_plan_for_compact;
 use crate::continuation_bridge::generate_continuation_bridge_item;
 use crate::governance::thread_memory::generate_thread_memory_item;
@@ -46,7 +47,6 @@ use codex_utils_output_truncation::approx_token_count;
 use codex_utils_output_truncation::truncate_text;
 use futures::prelude::*;
 use tracing::error;
-use tracing::warn;
 
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
@@ -179,54 +179,42 @@ async fn run_compact_task_inner_impl(
     let history_for_artifacts = history
         .clone()
         .for_prompt(&turn_context.model_info.input_modalities);
-    let thread_memory_item = if runtime_plan.requests_artifact(ArtifactKind::ThreadMemory) {
-        match generate_thread_memory_item(
-            &sess,
-            turn_context.as_ref(),
-            history_for_artifacts.clone(),
-        )
-        .await
-        {
-            Ok(Some(item)) => Some(item),
-            Ok(None) => {
-                let err = CodexErr::Fatal("required thread memory generation returned empty output before local compaction".to_string());
-                sess.send_event(
-                    &turn_context,
-                    EventMsg::Error(err.to_error_event(/*message_prefix*/ None)),
-                )
-                .await;
-                return Err(err);
-            }
-            Err(err) => {
-                let err = CodexErr::Fatal(format!(
-                    "failed generating required thread memory before local compaction: {err}"
-                ));
-                sess.send_event(
-                    &turn_context,
-                    EventMsg::Error(err.to_error_event(/*message_prefix*/ None)),
-                )
-                .await;
-                return Err(err);
-            }
+    let thread_memory_item = match execute_requested_artifact(
+        runtime_plan.artifact_requiredness(ArtifactKind::ThreadMemory),
+        "thread memory",
+        "before local compaction",
+        || generate_thread_memory_item(&sess, turn_context.as_ref(), history_for_artifacts.clone()),
+    )
+    .await
+    {
+        Ok(item) => item,
+        Err(err) => {
+            sess.send_event(
+                &turn_context,
+                EventMsg::Error(err.to_error_event(/*message_prefix*/ None)),
+            )
+            .await;
+            return Err(err);
         }
-    } else {
-        None
     };
     let thread_memory_present = thread_memory_item.is_some();
-    let continuation_bridge_item = if runtime_plan
-        .requests_artifact(ArtifactKind::ContinuationBridge)
+    let continuation_bridge_item = match execute_requested_artifact(
+        runtime_plan.artifact_requiredness(ArtifactKind::ContinuationBridge),
+        "continuation bridge",
+        "before local compaction",
+        || generate_continuation_bridge_item(&sess, turn_context.as_ref(), history_for_artifacts),
+    )
+    .await
     {
-        match generate_continuation_bridge_item(&sess, turn_context.as_ref(), history_for_artifacts)
-            .await
-        {
-            Ok(item) => item,
-            Err(err) => {
-                warn!("failed generating continuation bridge before local compaction: {err}");
-                None
-            }
+        Ok(item) => item,
+        Err(err) => {
+            sess.send_event(
+                &turn_context,
+                EventMsg::Error(err.to_error_event(/*message_prefix*/ None)),
+            )
+            .await;
+            return Err(err);
         }
-    } else {
-        None
     };
     let authoritative_items: Vec<_> = thread_memory_item
         .into_iter()

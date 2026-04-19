@@ -3,6 +3,7 @@ use pretty_assertions::assert_eq;
 use crate::ArtifactKind;
 use crate::ArtifactLifetime;
 use crate::ArtifactRequest;
+use crate::ArtifactRequiredness;
 use crate::ContextInjectionPolicy;
 use crate::GovernanceEffect;
 use crate::LegacyCompactionMarkerPolicy;
@@ -32,6 +33,7 @@ fn compact_intra_turn_local_pure_requests_turn_scoped_bridge() {
             requested_artifacts: vec![ArtifactRequest {
                 kind: ArtifactKind::ContinuationBridge,
                 lifetime: ArtifactLifetime::TurnScoped,
+                requiredness: ArtifactRequiredness::BestEffort,
             }],
             drop_prior_artifact_kinds: vec![ArtifactKind::ContinuationBridge],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
@@ -57,6 +59,7 @@ fn compact_turn_boundary_local_pure_requests_durable_thread_memory() {
             requested_artifacts: vec![ArtifactRequest {
                 kind: ArtifactKind::ThreadMemory,
                 lifetime: ArtifactLifetime::DurableAcrossTurns,
+                requiredness: ArtifactRequiredness::Required,
             }],
             drop_prior_artifact_kinds: vec![
                 ArtifactKind::ThreadMemory,
@@ -135,6 +138,7 @@ fn refresh_turn_boundary_local_pure_requests_durable_thread_memory() {
             requested_artifacts: vec![ArtifactRequest {
                 kind: ArtifactKind::ThreadMemory,
                 lifetime: ArtifactLifetime::DurableAcrossTurns,
+                requiredness: ArtifactRequiredness::Required,
             }],
             drop_prior_artifact_kinds: vec![
                 ArtifactKind::ThreadMemory,
@@ -201,6 +205,7 @@ fn prune_turn_boundary_requests_marker_only_prune_manifest() {
             requested_artifacts: vec![ArtifactRequest {
                 kind: ArtifactKind::PruneManifest,
                 lifetime: ArtifactLifetime::MarkerOnly,
+                requiredness: ArtifactRequiredness::Required,
             }],
             drop_prior_artifact_kinds: vec![
                 ArtifactKind::PruneManifest,

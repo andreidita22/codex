@@ -34,6 +34,12 @@ pub enum ArtifactLifetime {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ArtifactRequiredness {
+    Required,
+    BestEffort,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ArtifactKind {
     ThreadMemory,
     ContinuationBridge,
@@ -45,6 +51,7 @@ pub enum ArtifactKind {
 pub struct ArtifactRequest {
     pub kind: ArtifactKind,
     pub lifetime: ArtifactLifetime,
+    pub requiredness: ArtifactRequiredness,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

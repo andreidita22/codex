@@ -13,6 +13,7 @@ use crate::compact::is_raw_conversation_message;
 use crate::compact::is_real_user_message;
 use crate::compact::is_user_or_summary_message;
 use crate::context_maintenance_runtime::compact_timing_from_initial_context_injection;
+use crate::context_maintenance_runtime::execute_requested_artifact;
 use crate::context_maintenance_runtime::runtime_plan_for_compact;
 use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
@@ -41,7 +42,6 @@ use futures::TryFutureExt;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 use tracing::info;
-use tracing::warn;
 
 pub(crate) async fn run_inline_remote_auto_compact_task(
     sess: Arc<Session>,
@@ -172,46 +172,27 @@ async fn run_remote_compact_task_inner_impl(
         personality: turn_context.personality,
         output_schema: None,
     };
-    let thread_memory_item = if runtime_plan.requests_artifact(ArtifactKind::ThreadMemory) {
-        match generate_thread_memory_item(
-            sess.as_ref(),
-            turn_context.as_ref(),
-            prompt.input.clone(),
-        )
-        .await
-        {
-            Ok(Some(item)) => Some(item),
-            Ok(None) => {
-                return Err(CodexErr::Fatal("required thread memory generation returned empty output before remote compaction".to_string()));
-            }
-            Err(err) => {
-                return Err(CodexErr::Fatal(format!(
-                    "failed generating required thread memory before remote compaction: {err}"
-                )));
-            }
-        }
-    } else {
-        None
-    };
+    let thread_memory_item = execute_requested_artifact(
+        runtime_plan.artifact_requiredness(ArtifactKind::ThreadMemory),
+        "thread memory",
+        "before remote compaction",
+        || generate_thread_memory_item(sess.as_ref(), turn_context.as_ref(), prompt.input.clone()),
+    )
+    .await?;
     let thread_memory_present = thread_memory_item.is_some();
-    let continuation_bridge_item =
-        if runtime_plan.requests_artifact(ArtifactKind::ContinuationBridge) {
-            match generate_continuation_bridge_item(
+    let continuation_bridge_item = execute_requested_artifact(
+        runtime_plan.artifact_requiredness(ArtifactKind::ContinuationBridge),
+        "continuation bridge",
+        "before remote compaction",
+        || {
+            generate_continuation_bridge_item(
                 sess.as_ref(),
                 turn_context.as_ref(),
                 prompt.input.clone(),
             )
-            .await
-            {
-                Ok(item) => item,
-                Err(err) => {
-                    warn!("failed generating continuation bridge before remote compaction: {err}");
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        },
+    )
+    .await?;
 
     let mut new_history = sess
         .services
