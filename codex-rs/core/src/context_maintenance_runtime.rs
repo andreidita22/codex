@@ -100,7 +100,8 @@ where
                 "required {artifact_name} generation returned empty output {operation}"
             ))),
             Err(err) => Err(CodexErr::Fatal(format!(
-                "failed generating required {artifact_name} {operation}: {err}"
+                "failed generating required {artifact_name} {operation}: {}",
+                required_artifact_error_detail(err)
             ))),
         },
         Some(ArtifactRequiredness::BestEffort) => match generate().await {
@@ -111,6 +112,13 @@ where
             }
         },
         None => Ok(None),
+    }
+}
+
+fn required_artifact_error_detail(err: CodexErr) -> String {
+    match err {
+        CodexErr::Fatal(message) => message,
+        other => other.to_string(),
     }
 }
 
@@ -320,7 +328,7 @@ mod tests {
 
         assert_eq!(
             err.to_string(),
-            "Fatal error: failed generating required continuation bridge during test: Fatal error: boom"
+            "Fatal error: failed generating required continuation bridge during test: boom"
         );
     }
 }
