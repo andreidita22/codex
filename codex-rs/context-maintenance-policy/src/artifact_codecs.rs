@@ -4,6 +4,9 @@ use codex_protocol::models::ResponseItem;
 use serde_json::json;
 
 use crate::ArtifactKind;
+use crate::HistoryDispositionRequest;
+use crate::HistoryDispositionResult;
+use crate::LegacyCompactionMarkerPolicy;
 
 const CONTINUATION_BRIDGE_TAG: &str = "continuation_bridge";
 const THREAD_MEMORY_TAG: &str = "thread_memory";
@@ -196,12 +199,56 @@ pub fn build_prune_manifest_item(
     })
 }
 
+pub fn apply_history_disposition(request: HistoryDispositionRequest) -> HistoryDispositionResult {
+    let mut removed_count = 0usize;
+    let mut items = request.items;
+
+    if request.prune_superseded_artifacts {
+        let (next_items, removed) = prune_superseded_artifacts(items);
+        items = next_items;
+        removed_count = removed_count.saturating_add(removed);
+    }
+
+    let strip_markers = matches!(
+        request.legacy_compaction_marker_policy,
+        LegacyCompactionMarkerPolicy::Strip
+    );
+    if !request.drop_prior_artifact_kinds.is_empty() || strip_markers {
+        let mut removed = 0usize;
+        items = items
+            .into_iter()
+            .filter_map(|item| {
+                if strip_markers && matches!(item, ResponseItem::Compaction { .. }) {
+                    removed = removed.saturating_add(1);
+                    return None;
+                }
+
+                let should_drop_artifact = tagged_artifact_kind(&item)
+                    .is_some_and(|kind| request.drop_prior_artifact_kinds.contains(&kind));
+                if should_drop_artifact {
+                    removed = removed.saturating_add(1);
+                    None
+                } else {
+                    Some(item)
+                }
+            })
+            .collect();
+        removed_count = removed_count.saturating_add(removed);
+    }
+
+    HistoryDispositionResult {
+        items,
+        removed_count,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use codex_protocol::models::ContentItem;
     use codex_protocol::models::ResponseItem;
     use pretty_assertions::assert_eq;
 
+    use super::apply_history_disposition;
     use super::build_prune_manifest_item;
     use super::content_items_to_text;
     use super::extract_tagged_payload;
@@ -211,6 +258,9 @@ mod tests {
     use super::tagged_artifact_kind;
     use super::tagged_artifact_kind_from_text;
     use crate::ArtifactKind;
+    use crate::HistoryDispositionRequest;
+    use crate::HistoryDispositionResult;
+    use crate::LegacyCompactionMarkerPolicy;
 
     #[test]
     fn content_items_to_text_joins_text_and_skips_images() {
@@ -367,6 +417,54 @@ mod tests {
                 "<prune_manifest schema=\"prune_manifest_v1\">\n{\n  \"final_history_len\": 7,\n  \"original_history_len\": 10,\n  \"removed_item_count\": 3,\n  \"schema\": \"prune_manifest_v1\"\n}\n</prune_manifest>"
                     .to_string()
             )
+        );
+    }
+
+    #[test]
+    fn apply_history_disposition_prunes_drops_and_strips_markers() {
+        let result = apply_history_disposition(HistoryDispositionRequest {
+            items: vec![
+                developer_message("<thread_memory>old</thread_memory>"),
+                developer_message("<thread_memory>new</thread_memory>"),
+                developer_message("<prune_manifest>old</prune_manifest>"),
+                ResponseItem::Compaction {
+                    encrypted_content: "encrypted".to_string(),
+                },
+            ],
+            prune_superseded_artifacts: true,
+            drop_prior_artifact_kinds: vec![ArtifactKind::PruneManifest],
+            legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+        });
+
+        assert_eq!(
+            result,
+            HistoryDispositionResult {
+                items: vec![developer_message("<thread_memory>new</thread_memory>")],
+                removed_count: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn apply_history_disposition_preserves_markers_when_policy_requires_it() {
+        let marker = ResponseItem::Compaction {
+            encrypted_content: "encrypted".to_string(),
+        };
+
+        let result = apply_history_disposition(HistoryDispositionRequest {
+            items: vec![marker.clone()],
+            prune_superseded_artifacts: false,
+            drop_prior_artifact_kinds: vec![],
+            legacy_compaction_marker_policy:
+                LegacyCompactionMarkerPolicy::PreserveForUpstreamCompatibility,
+        });
+
+        assert_eq!(
+            result,
+            HistoryDispositionResult {
+                items: vec![marker],
+                removed_count: 0,
+            }
         );
     }
 

@@ -61,6 +61,20 @@ pub enum LegacyCompactionMarkerPolicy {
     Strip,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct HistoryDispositionRequest {
+    pub items: Vec<codex_protocol::models::ResponseItem>,
+    pub prune_superseded_artifacts: bool,
+    pub drop_prior_artifact_kinds: Vec<ArtifactKind>,
+    pub legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HistoryDispositionResult {
+    pub items: Vec<codex_protocol::models::ResponseItem>,
+    pub removed_count: usize,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GovernanceEffect {
     ThreadMemorySuppressed,

@@ -11,9 +11,8 @@ use crate::context_maintenance_runtime::runtime_plan_for_turn_boundary_maintenan
 use crate::governance::thread_memory::generate_thread_memory_item;
 use codex_context_maintenance_policy::ArtifactKind;
 use codex_context_maintenance_policy::MaintenanceAction;
+use codex_context_maintenance_policy::apply_history_disposition;
 use codex_context_maintenance_policy::build_prune_manifest_item;
-use codex_context_maintenance_policy::prune_superseded_artifacts;
-use codex_context_maintenance_policy::remove_artifact_kind;
 use codex_context_maintenance_policy::tagged_artifact_kind;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::ContextCompactionItem;
@@ -54,12 +53,12 @@ pub(crate) async fn run_refresh(
     )
     .await?;
 
-    let (mut new_history, mut removed_count) = prune_superseded_artifacts(raw_history);
-    for artifact_kind in runtime_plan.drop_prior_artifact_kinds() {
-        let (next_history, removed) = remove_artifact_kind(new_history, *artifact_kind);
-        new_history = next_history;
-        removed_count = removed_count.saturating_add(removed);
-    }
+    let disposition = apply_history_disposition(
+        runtime_plan
+            .history_disposition_request(raw_history, /*prune_superseded_artifacts*/ true),
+    );
+    let mut new_history = disposition.items;
+    let mut removed_count = disposition.removed_count;
 
     let authoritative_items: Vec<_> = thread_memory_item.into_iter().collect();
     if !authoritative_items.is_empty() {
@@ -112,12 +111,12 @@ pub(crate) async fn run_prune(
     let raw_history = history_snapshot.raw_items().to_vec();
 
     let original_len = raw_history.len();
-    let (mut pruned_history, mut removed_count) = prune_superseded_artifacts(raw_history);
-    for artifact_kind in runtime_plan.drop_prior_artifact_kinds() {
-        let (next_history, removed) = remove_artifact_kind(pruned_history, *artifact_kind);
-        pruned_history = next_history;
-        removed_count = removed_count.saturating_add(removed);
-    }
+    let disposition = apply_history_disposition(
+        runtime_plan
+            .history_disposition_request(raw_history, /*prune_superseded_artifacts*/ true),
+    );
+    let mut pruned_history = disposition.items;
+    let mut removed_count = disposition.removed_count;
     let (next_history, summary_removed) = retain_latest_summary_message(pruned_history);
     pruned_history = next_history;
     removed_count = removed_count.saturating_add(summary_removed);
@@ -207,6 +206,8 @@ async fn send_turn_started_event(sess: &Session, turn_context: &TurnContext) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_context_maintenance_policy::prune_superseded_artifacts;
+    use codex_context_maintenance_policy::remove_artifact_kind;
     use codex_protocol::models::ContentItem;
     use pretty_assertions::assert_eq;
 

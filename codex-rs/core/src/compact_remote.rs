@@ -43,6 +43,16 @@ use tokio_util::sync::CancellationToken;
 use tracing::error;
 use tracing::info;
 
+pub(crate) struct ProcessCompactedHistoryRequest {
+    pub(crate) compacted_history: Vec<ResponseItem>,
+    pub(crate) authoritative_items: Vec<ResponseItem>,
+    pub(crate) retain_recent_raw_messages: bool,
+    pub(crate) context_injection: ContextInjectionPolicy,
+    pub(crate) drop_prior_artifact_kinds: Vec<ArtifactKind>,
+    pub(crate) legacy_compaction_marker_policy:
+        codex_context_maintenance_policy::LegacyCompactionMarkerPolicy,
+}
+
 pub(crate) async fn run_inline_remote_auto_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
@@ -220,15 +230,18 @@ async fn run_remote_compact_task_inner_impl(
     new_history = process_compacted_history(
         sess.as_ref(),
         turn_context.as_ref(),
-        new_history,
-        thread_memory_item
-            .iter()
-            .cloned()
-            .chain(continuation_bridge_item.iter().cloned())
-            .collect(),
-        thread_memory_present,
-        runtime_plan.context_injection_policy(),
-        runtime_plan.preserves_legacy_compaction_marker(),
+        ProcessCompactedHistoryRequest {
+            compacted_history: new_history,
+            authoritative_items: thread_memory_item
+                .iter()
+                .cloned()
+                .chain(continuation_bridge_item.iter().cloned())
+                .collect(),
+            retain_recent_raw_messages: thread_memory_present,
+            context_injection: runtime_plan.context_injection_policy(),
+            drop_prior_artifact_kinds: runtime_plan.drop_prior_artifact_kinds().to_vec(),
+            legacy_compaction_marker_policy: runtime_plan.legacy_compaction_marker_policy(),
+        },
     )
     .await;
 
@@ -255,17 +268,13 @@ async fn run_remote_compact_task_inner_impl(
 pub(crate) async fn process_compacted_history(
     sess: &Session,
     turn_context: &TurnContext,
-    compacted_history: Vec<ResponseItem>,
-    authoritative_items: Vec<ResponseItem>,
-    retain_recent_raw_messages: bool,
-    context_injection: ContextInjectionPolicy,
-    preserve_legacy_compaction_marker: bool,
+    request: ProcessCompactedHistoryRequest,
 ) -> Vec<ResponseItem> {
     // Mid-turn compaction is the only path that must inject initial context above the last user
     // message in the replacement history. Pre-turn compaction instead injects context after the
     // compaction item, but mid-turn compaction keeps the compaction item last for model training.
     let initial_context = if matches!(
-        context_injection,
+        request.context_injection,
         ContextInjectionPolicy::BeforeLastRealUserOrSummary
     ) {
         sess.build_initial_context(turn_context).await
@@ -275,14 +284,16 @@ pub(crate) async fn process_compacted_history(
 
     shape_remote_compacted_history(
         RemoteCompactedHistoryShapeRequest {
-            compacted_history,
+            compacted_history: request.compacted_history,
             initial_context,
-            authoritative_items,
+            authoritative_items: request.authoritative_items,
+            drop_prior_artifact_kinds: request.drop_prior_artifact_kinds,
+            legacy_compaction_marker_policy: request.legacy_compaction_marker_policy,
             raw_message_retention_limit: COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES,
-            context_injection,
-            retain_recent_raw_messages,
+            context_injection: request.context_injection,
+            retain_recent_raw_messages: request.retain_recent_raw_messages,
         },
-        |item| should_keep_compacted_history_item(item, preserve_legacy_compaction_marker),
+        should_keep_compacted_history_item,
         is_real_user_message,
         is_user_or_summary_message,
         is_raw_conversation_message,
@@ -304,10 +315,7 @@ pub(crate) async fn process_compacted_history(
 /// - `assistant` messages (future remote compaction models may emit them)
 /// - `user`-role warnings and compaction-generated summary messages because
 ///   they parse as `TurnItem::UserMessage`.
-fn should_keep_compacted_history_item(
-    item: &ResponseItem,
-    preserve_legacy_compaction_marker: bool,
-) -> bool {
+fn should_keep_compacted_history_item(item: &ResponseItem) -> bool {
     match item {
         ResponseItem::Message { role, .. } if role == "developer" => false,
         ResponseItem::Message { role, .. } if role == "user" => {
@@ -318,7 +326,7 @@ fn should_keep_compacted_history_item(
         }
         ResponseItem::Message { role, .. } if role == "assistant" => true,
         ResponseItem::Message { .. } => false,
-        ResponseItem::Compaction { .. } => preserve_legacy_compaction_marker,
+        ResponseItem::Compaction { .. } => true,
         ResponseItem::Reasoning { .. }
         | ResponseItem::LocalShellCall { .. }
         | ResponseItem::FunctionCall { .. }
