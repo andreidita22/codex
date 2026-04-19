@@ -13,6 +13,8 @@ use crate::MaintenancePolicyError;
 use crate::MaintenancePolicyPlan;
 use crate::MaintenanceTiming;
 use crate::PolicyEngine;
+use crate::RetentionDirective;
+use crate::RetentionGate;
 use crate::ThreadMemoryGovernance;
 use crate::plan_route;
 
@@ -37,6 +39,7 @@ fn compact_intra_turn_local_pure_requests_turn_scoped_bridge() {
             }],
             drop_prior_artifact_kinds: vec![ArtifactKind::ContinuationBridge],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            retention_directive: RetentionDirective::None,
             governance_effects: vec![],
         }
     );
@@ -66,6 +69,10 @@ fn compact_turn_boundary_local_pure_requests_durable_thread_memory() {
                 ArtifactKind::ContinuationBridge,
             ],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            retention_directive: RetentionDirective::KeepRecentRawConversation {
+                max_messages: 5,
+                gate: RetentionGate::FinalHistoryContainsArtifact(ArtifactKind::ThreadMemory),
+            },
             governance_effects: vec![],
         }
     );
@@ -91,6 +98,10 @@ fn compact_turn_boundary_governance_off_suppresses_thread_memory() {
                 ArtifactKind::ContinuationBridge,
             ],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            retention_directive: RetentionDirective::KeepRecentRawConversation {
+                max_messages: 5,
+                gate: RetentionGate::FinalHistoryContainsArtifact(ArtifactKind::ThreadMemory),
+            },
             governance_effects: vec![GovernanceEffect::ThreadMemorySuppressed],
         }
     );
@@ -116,6 +127,7 @@ fn compact_turn_boundary_remote_vanilla_preserves_legacy_marker_without_fork_art
                 ArtifactKind::ContinuationBridge,
             ],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
+            retention_directive: RetentionDirective::None,
             governance_effects: vec![],
         }
     );
@@ -145,6 +157,10 @@ fn refresh_turn_boundary_local_pure_requests_durable_thread_memory() {
                 ArtifactKind::ContinuationBridge,
             ],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            retention_directive: RetentionDirective::KeepRecentRawConversation {
+                max_messages: 5,
+                gate: RetentionGate::FinalHistoryContainsArtifact(ArtifactKind::ThreadMemory),
+            },
             governance_effects: vec![],
         }
     );
@@ -212,6 +228,10 @@ fn prune_turn_boundary_requests_marker_only_prune_manifest() {
                 ArtifactKind::ContinuationBridge,
             ],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            retention_directive: RetentionDirective::KeepRecentRawConversation {
+                max_messages: 5,
+                gate: RetentionGate::FinalHistoryContainsArtifact(ArtifactKind::ThreadMemory),
+            },
             governance_effects: vec![],
         }
     );

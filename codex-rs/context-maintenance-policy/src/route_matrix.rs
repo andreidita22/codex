@@ -11,7 +11,11 @@ use crate::MaintenancePolicyError;
 use crate::MaintenancePolicyPlan;
 use crate::MaintenanceTiming;
 use crate::PolicyEngine;
+use crate::RetentionDirective;
+use crate::RetentionGate;
 use crate::ThreadMemoryGovernance;
+
+const RECENT_RAW_CONVERSATION_WINDOW_MESSAGES: usize = 5;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct BaseRoutePlan {
@@ -19,6 +23,7 @@ struct BaseRoutePlan {
     requested_artifacts: Vec<ArtifactRequest>,
     drop_prior_artifact_kinds: Vec<ArtifactKind>,
     legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy,
+    retention_directive: RetentionDirective,
 }
 
 pub fn plan_route(
@@ -47,6 +52,7 @@ fn select_base_route_plan(
                 )],
                 drop_prior_artifact_kinds: vec![ArtifactKind::ContinuationBridge],
                 legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+                retention_directive: RetentionDirective::None,
             })
         }
         (MaintenanceAction::Compact, MaintenanceTiming::IntraTurn, PolicyEngine::RemoteHybrid) => {
@@ -60,6 +66,7 @@ fn select_base_route_plan(
                 drop_prior_artifact_kinds: vec![ArtifactKind::ContinuationBridge],
                 legacy_compaction_marker_policy:
                     LegacyCompactionMarkerPolicy::PreserveForUpstreamCompatibility,
+                retention_directive: RetentionDirective::None,
             })
         }
         (MaintenanceAction::Compact, MaintenanceTiming::IntraTurn, PolicyEngine::RemoteVanilla) => {
@@ -68,6 +75,7 @@ fn select_base_route_plan(
                 requested_artifacts: vec![],
                 drop_prior_artifact_kinds: vec![ArtifactKind::ContinuationBridge],
                 legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
+                retention_directive: RetentionDirective::None,
             })
         }
         (MaintenanceAction::Compact, MaintenanceTiming::TurnBoundary, PolicyEngine::LocalPure) => {
@@ -83,6 +91,7 @@ fn select_base_route_plan(
                     ArtifactKind::ContinuationBridge,
                 ],
                 legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+                retention_directive: recent_raw_retention_when_thread_memory_present(),
             })
         }
         (
@@ -102,6 +111,7 @@ fn select_base_route_plan(
             ],
             legacy_compaction_marker_policy:
                 LegacyCompactionMarkerPolicy::PreserveForUpstreamCompatibility,
+            retention_directive: recent_raw_retention_when_thread_memory_present(),
         }),
         (
             MaintenanceAction::Compact,
@@ -115,6 +125,7 @@ fn select_base_route_plan(
                 ArtifactKind::ContinuationBridge,
             ],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
+            retention_directive: RetentionDirective::None,
         }),
         (MaintenanceAction::Refresh, MaintenanceTiming::TurnBoundary, PolicyEngine::LocalPure) => {
             Ok(BaseRoutePlan {
@@ -129,6 +140,7 @@ fn select_base_route_plan(
                     ArtifactKind::ContinuationBridge,
                 ],
                 legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+                retention_directive: recent_raw_retention_when_thread_memory_present(),
             })
         }
         (
@@ -147,6 +159,7 @@ fn select_base_route_plan(
                 ArtifactKind::ContinuationBridge,
             ],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            retention_directive: recent_raw_retention_when_thread_memory_present(),
         }),
         (MaintenanceAction::Prune, MaintenanceTiming::TurnBoundary, _) => Ok(BaseRoutePlan {
             context_injection: ContextInjectionPolicy::None,
@@ -160,6 +173,7 @@ fn select_base_route_plan(
                 ArtifactKind::ContinuationBridge,
             ],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            retention_directive: recent_raw_retention_when_thread_memory_present(),
         }),
         _ => Err(MaintenancePolicyError::UnsupportedRoute {
             action,
@@ -189,7 +203,15 @@ fn apply_governance_overlay(
         requested_artifacts: base_plan.requested_artifacts,
         drop_prior_artifact_kinds: base_plan.drop_prior_artifact_kinds,
         legacy_compaction_marker_policy: base_plan.legacy_compaction_marker_policy,
+        retention_directive: base_plan.retention_directive,
         governance_effects,
+    }
+}
+
+fn recent_raw_retention_when_thread_memory_present() -> RetentionDirective {
+    RetentionDirective::KeepRecentRawConversation {
+        max_messages: RECENT_RAW_CONVERSATION_WINDOW_MESSAGES,
+        gate: RetentionGate::FinalHistoryContainsArtifact(ArtifactKind::ThreadMemory),
     }
 }
 

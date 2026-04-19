@@ -270,7 +270,7 @@ async fn process_compacted_history_preserves_separate_guardian_developer_message
                 },
             ],
             authoritative_items: Vec::new(),
-            retain_recent_raw_messages: false,
+            retention_directive: codex_context_maintenance_policy::RetentionDirective::None,
             context_injection:
                 codex_context_maintenance_policy::ContextInjectionPolicy::BeforeLastRealUserOrSummary,
             drop_prior_artifact_kinds: Vec::new(),
