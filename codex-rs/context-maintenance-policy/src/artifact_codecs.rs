@@ -32,7 +32,7 @@ pub fn content_items_to_text(content: &[ContentItem]) -> Option<String> {
     }
 }
 
-pub fn extract_tagged_payload<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
+pub(crate) fn extract_tagged_payload<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
     let close_tag = format!("</{tag}>");
     let mut search_start = 0usize;
 
@@ -52,11 +52,11 @@ pub fn extract_tagged_payload<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
     None
 }
 
-pub fn has_tagged_block(text: &str, tag: &str) -> bool {
+fn has_tagged_block(text: &str, tag: &str) -> bool {
     find_open_tag_start(text, tag).is_some() && find_close_tag_start(text, tag).is_some()
 }
 
-pub fn tagged_artifact_kind_from_text(text: &str) -> Option<ArtifactKind> {
+pub(crate) fn tagged_artifact_kind_from_text(text: &str) -> Option<ArtifactKind> {
     if has_tagged_block(text, CONTINUATION_BRIDGE_TAG) {
         return Some(ArtifactKind::ContinuationBridge);
     }
@@ -69,7 +69,7 @@ pub fn tagged_artifact_kind_from_text(text: &str) -> Option<ArtifactKind> {
     None
 }
 
-pub fn tagged_artifact_kind(item: &ResponseItem) -> Option<ArtifactKind> {
+pub(crate) fn tagged_artifact_kind(item: &ResponseItem) -> Option<ArtifactKind> {
     let ResponseItem::Message { role, content, .. } = item else {
         return None;
     };

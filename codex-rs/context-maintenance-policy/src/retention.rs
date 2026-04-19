@@ -2,7 +2,7 @@ use codex_protocol::models::ResponseItem;
 
 use crate::RetentionDirective;
 use crate::RetentionGate;
-use crate::tagged_artifact_kind;
+use crate::artifact_codecs::tagged_artifact_kind;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RetentionApplicationResult {

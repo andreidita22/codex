@@ -1,5 +1,6 @@
 mod baton;
 mod rich_review;
+mod supplemental;
 
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::models::ContentItem;
@@ -9,6 +10,9 @@ use tracing::warn;
 
 pub use baton::BatonBridge;
 pub use rich_review::RichReviewBridge;
+pub use supplemental::ContinuationBridgeSubagentSnapshot;
+pub use supplemental::ContinuationBridgeSubagentStatus;
+pub use supplemental::continuation_bridge_subagent_context_item;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BridgeVariant {
