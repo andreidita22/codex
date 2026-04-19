@@ -13,6 +13,8 @@ This spec is the implementation companion to:
 
 - [docs/compaction-policy-hardening-plan.md](compaction-policy-hardening-plan.md)
 - [docs/compaction-policy-hardening-pr6-cleanup-implementation-spec.md](compaction-policy-hardening-pr6-cleanup-implementation-spec.md)
+- [docs/compaction-policy-2nd-audit-review.md](compaction-policy-2nd-audit-review.md)
+- [docs/compaction-policy-post-pr6-followup-spec.md](compaction-policy-post-pr6-followup-spec.md)
 - [docs/compaction-policy-crate-extraction-plan.md](compaction-policy-crate-extraction-plan.md)
 - [docs/compaction-policy-route-matrix.md](compaction-policy-route-matrix.md)
 - [docs/compaction policy gptpro audit.md](compaction%20policy%20gptpro%20audit.md)
