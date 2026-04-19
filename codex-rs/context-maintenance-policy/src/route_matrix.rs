@@ -1,5 +1,3 @@
-use codex_config::config_toml::GovernancePathVariant;
-
 use crate::ArtifactKind;
 use crate::ArtifactLifetime;
 use crate::ArtifactRequest;
@@ -12,6 +10,7 @@ use crate::MaintenancePolicyError;
 use crate::MaintenancePolicyPlan;
 use crate::MaintenanceTiming;
 use crate::PolicyEngine;
+use crate::ThreadMemoryGovernance;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct BaseRoutePlan {
@@ -27,7 +26,7 @@ pub fn plan_route(
     let base_plan = select_base_route_plan(request.action, request.timing, request.engine)?;
     Ok(apply_governance_overlay(
         base_plan,
-        request.governance_variant,
+        request.thread_memory_governance,
     ))
 }
 
@@ -164,11 +163,11 @@ fn select_base_route_plan(
 
 fn apply_governance_overlay(
     mut base_plan: BaseRoutePlan,
-    governance_variant: GovernancePathVariant,
+    thread_memory_governance: ThreadMemoryGovernance,
 ) -> MaintenancePolicyPlan {
     let mut governance_effects = Vec::new();
 
-    if governance_variant == GovernancePathVariant::Off
+    if thread_memory_governance == ThreadMemoryGovernance::Disabled
         && remove_artifact(
             &mut base_plan.requested_artifacts,
             ArtifactKind::ThreadMemory,

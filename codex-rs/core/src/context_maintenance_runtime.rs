@@ -12,6 +12,7 @@ use codex_context_maintenance_policy::MaintenancePolicyError;
 use codex_context_maintenance_policy::MaintenancePolicyPlan;
 use codex_context_maintenance_policy::MaintenanceTiming;
 use codex_context_maintenance_policy::PolicyEngine;
+use codex_context_maintenance_policy::ThreadMemoryGovernance;
 use codex_context_maintenance_policy::plan_route;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
@@ -85,7 +86,7 @@ pub(crate) fn live_compact_route_behavior_for_tests(
             CompactTimingForTests::IntraTurn => MaintenanceTiming::IntraTurn,
         },
         engine: policy_engine(engine),
-        governance_variant: policy_governance_variant(governance_variant),
+        thread_memory_governance: policy_thread_memory_governance(governance_variant),
     })
     .expect("compact test route should plan")
 }
@@ -120,7 +121,7 @@ pub(crate) fn try_live_turn_boundary_maintenance_behavior_for_tests(
         },
         timing: MaintenanceTiming::TurnBoundary,
         engine: policy_engine(engine),
-        governance_variant: policy_governance_variant(governance_variant),
+        thread_memory_governance: policy_thread_memory_governance(governance_variant),
     })
 }
 
@@ -132,7 +133,9 @@ pub(crate) fn runtime_plan_for_compact(
         action: MaintenanceAction::Compact,
         timing,
         engine: policy_engine(compaction_engine(turn_context)),
-        governance_variant: policy_governance_variant(turn_context.governance_path_variant()),
+        thread_memory_governance: policy_thread_memory_governance(
+            turn_context.governance_path_variant(),
+        ),
     })
 }
 
@@ -144,7 +147,9 @@ pub(crate) fn runtime_plan_for_turn_boundary_maintenance(
         action,
         timing: MaintenanceTiming::TurnBoundary,
         engine: policy_engine(compaction_engine(turn_context)),
-        governance_variant: policy_governance_variant(turn_context.governance_path_variant()),
+        thread_memory_governance: policy_thread_memory_governance(
+            turn_context.governance_path_variant(),
+        ),
     })
 }
 
@@ -193,16 +198,10 @@ fn policy_engine(engine: CompactionEngine) -> PolicyEngine {
     }
 }
 
-fn policy_governance_variant(
-    variant: GovernancePathVariant,
-) -> codex_config::config_toml::GovernancePathVariant {
+fn policy_thread_memory_governance(variant: GovernancePathVariant) -> ThreadMemoryGovernance {
     match variant {
-        GovernancePathVariant::Off => codex_config::config_toml::GovernancePathVariant::Off,
-        GovernancePathVariant::StrictV1Shadow => {
-            codex_config::config_toml::GovernancePathVariant::StrictV1Shadow
-        }
-        GovernancePathVariant::StrictV1Enforce => {
-            codex_config::config_toml::GovernancePathVariant::StrictV1Enforce
-        }
+        GovernancePathVariant::Off => ThreadMemoryGovernance::Disabled,
+        GovernancePathVariant::StrictV1Shadow => ThreadMemoryGovernance::Enabled,
+        GovernancePathVariant::StrictV1Enforce => ThreadMemoryGovernance::Enabled,
     }
 }

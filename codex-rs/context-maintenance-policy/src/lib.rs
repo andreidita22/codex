@@ -34,6 +34,7 @@ pub use contracts::MaintenancePolicyError;
 pub use contracts::MaintenancePolicyPlan;
 pub use contracts::MaintenanceTiming;
 pub use contracts::PolicyEngine;
+pub use contracts::ThreadMemoryGovernance;
 pub use history_shape::RemoteCompactedHistoryShapeRequest;
 pub use history_shape::insert_initial_context_before_last_real_user_or_summary;
 pub use history_shape::insert_items_before_last_summary_or_compaction;

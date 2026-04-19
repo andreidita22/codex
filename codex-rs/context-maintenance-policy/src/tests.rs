@@ -1,4 +1,3 @@
-use codex_config::config_toml::GovernancePathVariant;
 use pretty_assertions::assert_eq;
 
 use crate::ArtifactKind;
@@ -13,6 +12,7 @@ use crate::MaintenancePolicyError;
 use crate::MaintenancePolicyPlan;
 use crate::MaintenanceTiming;
 use crate::PolicyEngine;
+use crate::ThreadMemoryGovernance;
 use crate::plan_route;
 
 #[test]
@@ -21,7 +21,7 @@ fn compact_intra_turn_local_pure_requests_turn_scoped_bridge() {
         action: MaintenanceAction::Compact,
         timing: MaintenanceTiming::IntraTurn,
         engine: PolicyEngine::LocalPure,
-        governance_variant: GovernancePathVariant::StrictV1Shadow,
+        thread_memory_governance: ThreadMemoryGovernance::Enabled,
     })
     .expect("local pure intra-turn compact should be supported");
 
@@ -46,7 +46,7 @@ fn compact_turn_boundary_local_pure_requests_durable_thread_memory() {
         action: MaintenanceAction::Compact,
         timing: MaintenanceTiming::TurnBoundary,
         engine: PolicyEngine::LocalPure,
-        governance_variant: GovernancePathVariant::StrictV1Shadow,
+        thread_memory_governance: ThreadMemoryGovernance::Enabled,
     })
     .expect("local pure turn-boundary compact should be supported");
 
@@ -74,7 +74,7 @@ fn compact_turn_boundary_governance_off_suppresses_thread_memory() {
         action: MaintenanceAction::Compact,
         timing: MaintenanceTiming::TurnBoundary,
         engine: PolicyEngine::LocalPure,
-        governance_variant: GovernancePathVariant::Off,
+        thread_memory_governance: ThreadMemoryGovernance::Disabled,
     })
     .expect("governance off should still support local pure compact");
 
@@ -99,7 +99,7 @@ fn compact_turn_boundary_remote_vanilla_preserves_legacy_marker_without_fork_art
         action: MaintenanceAction::Compact,
         timing: MaintenanceTiming::TurnBoundary,
         engine: PolicyEngine::RemoteVanilla,
-        governance_variant: GovernancePathVariant::StrictV1Shadow,
+        thread_memory_governance: ThreadMemoryGovernance::Enabled,
     })
     .expect("remote vanilla turn-boundary compact should be supported");
 
@@ -124,7 +124,7 @@ fn refresh_turn_boundary_local_pure_requests_durable_thread_memory() {
         action: MaintenanceAction::Refresh,
         timing: MaintenanceTiming::TurnBoundary,
         engine: PolicyEngine::LocalPure,
-        governance_variant: GovernancePathVariant::StrictV1Shadow,
+        thread_memory_governance: ThreadMemoryGovernance::Enabled,
     })
     .expect("local pure refresh should be supported");
 
@@ -152,7 +152,7 @@ fn refresh_turn_boundary_remote_vanilla_is_unsupported() {
         action: MaintenanceAction::Refresh,
         timing: MaintenanceTiming::TurnBoundary,
         engine: PolicyEngine::RemoteVanilla,
-        governance_variant: GovernancePathVariant::StrictV1Shadow,
+        thread_memory_governance: ThreadMemoryGovernance::Enabled,
     });
 
     assert_eq!(
@@ -171,7 +171,7 @@ fn refresh_intra_turn_is_unsupported() {
         action: MaintenanceAction::Refresh,
         timing: MaintenanceTiming::IntraTurn,
         engine: PolicyEngine::LocalPure,
-        governance_variant: GovernancePathVariant::StrictV1Shadow,
+        thread_memory_governance: ThreadMemoryGovernance::Enabled,
     });
 
     assert_eq!(
@@ -190,7 +190,7 @@ fn prune_turn_boundary_requests_marker_only_prune_manifest() {
         action: MaintenanceAction::Prune,
         timing: MaintenanceTiming::TurnBoundary,
         engine: PolicyEngine::RemoteHybrid,
-        governance_variant: GovernancePathVariant::StrictV1Shadow,
+        thread_memory_governance: ThreadMemoryGovernance::Enabled,
     })
     .expect("turn-boundary prune should be supported");
 

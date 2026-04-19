@@ -1894,7 +1894,6 @@ dependencies = [
 name = "codex-context-maintenance-policy"
 version = "0.121.0"
 dependencies = [
- "codex-config",
  "codex-protocol",
  "pretty_assertions",
  "serde",
