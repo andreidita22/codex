@@ -23,14 +23,10 @@ where
             items,
             removed_count: 0,
         },
-        RetentionDirective::KeepRecentRawConversation { max_messages, gate } => {
-            if !retention_gate_matches(&items, gate) {
-                return RetentionApplicationResult {
-                    items,
-                    removed_count: 0,
-                };
-            }
-
+        RetentionDirective::KeepRecentRawConversation {
+            max_messages,
+            gate: RetentionGate::Always,
+        } => {
             let original_len = items.len();
             let items = retain_recent_raw_conversation_messages(
                 items,
@@ -42,15 +38,51 @@ where
                 items,
             }
         }
-    }
-}
+        RetentionDirective::KeepRecentRawConversation {
+            max_messages,
+            gate: RetentionGate::FinalHistoryContainsArtifact(kind),
+        } => {
+            if items.is_empty() {
+                return RetentionApplicationResult {
+                    items,
+                    removed_count: 0,
+                };
+            }
 
-fn retention_gate_matches(items: &[ResponseItem], gate: RetentionGate) -> bool {
-    match gate {
-        RetentionGate::Always => true,
-        RetentionGate::FinalHistoryContainsArtifact(kind) => items
-            .iter()
-            .any(|item| tagged_artifact_kind(item) == Some(kind)),
+            let original_len = items.len();
+            let mut retained = vec![true; original_len];
+            let mut remaining = max_messages;
+            let mut gate_satisfied = false;
+            for (index, item) in items.iter().enumerate().rev() {
+                gate_satisfied |= tagged_artifact_kind(item) == Some(kind);
+
+                if !is_raw_conversation_message(item) {
+                    continue;
+                }
+                if remaining > 0 {
+                    remaining -= 1;
+                    continue;
+                }
+                retained[index] = false;
+            }
+
+            if !gate_satisfied {
+                return RetentionApplicationResult {
+                    items,
+                    removed_count: 0,
+                };
+            }
+
+            let items = items
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, item)| retained[index].then_some(item))
+                .collect::<Vec<_>>();
+            RetentionApplicationResult {
+                removed_count: original_len.saturating_sub(items.len()),
+                items,
+            }
+        }
     }
 }
 
