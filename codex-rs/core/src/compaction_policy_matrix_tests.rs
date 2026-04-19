@@ -166,7 +166,7 @@ fn live_remote_vanilla_refresh_fails_closed() {
 
     assert_eq!(
         err.to_string(),
-        "Fatal error: Unsupported context-maintenance route: unsupported context-maintenance route: action=Refresh timing=TurnBoundary engine=RemoteVanilla"
+        "Fatal error: Unsupported context-maintenance route: action=Refresh timing=TurnBoundary engine=RemoteVanilla"
     );
 }
 
