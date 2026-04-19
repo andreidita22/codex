@@ -2,6 +2,7 @@ mod baton;
 mod rich_review;
 mod supplemental;
 
+use crate::artifact_codecs::tagged_artifact_kind_from_text;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
@@ -24,6 +25,17 @@ pub enum BridgeVariant {
 pub enum ContinuationBridgePayload {
     Baton(Box<BatonBridge>),
     RichReview(Box<RichReviewBridge>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PriorBridgeVisibility {
+    Exclude,
+    Allow,
+}
+
+pub struct ContinuationBridgeSourceSelectionInput<'a> {
+    pub input: &'a [ResponseItem],
+    pub prior_bridge_visibility: PriorBridgeVisibility,
 }
 
 pub struct ContinuationBridgeModelInput {
@@ -58,6 +70,19 @@ pub fn build_continuation_bridge_prompt_input(
         phase: None,
     });
     source_items
+}
+
+pub fn select_continuation_bridge_source(
+    input: ContinuationBridgeSourceSelectionInput<'_>,
+) -> Vec<ResponseItem> {
+    input
+        .input
+        .iter()
+        .filter(|item| {
+            should_include_continuation_bridge_source_item(item, input.prior_bridge_visibility)
+        })
+        .cloned()
+        .collect()
 }
 
 impl ContinuationBridgePayload {
@@ -134,6 +159,31 @@ fn preview_text(text: &str, max_chars: usize) -> String {
         format!("{preview}...")
     } else {
         preview
+    }
+}
+
+fn should_include_continuation_bridge_source_item(
+    item: &ResponseItem,
+    prior_bridge_visibility: PriorBridgeVisibility,
+) -> bool {
+    match item {
+        ResponseItem::Compaction { .. } | ResponseItem::GhostSnapshot { .. } => false,
+        ResponseItem::Message { role, content, .. } if role == "developer" => {
+            let Some(text) = crate::content_items_to_text(content) else {
+                return true;
+            };
+
+            match tagged_artifact_kind_from_text(&text) {
+                Some(crate::ArtifactKind::ContinuationBridge) => {
+                    matches!(prior_bridge_visibility, PriorBridgeVisibility::Allow)
+                }
+                Some(crate::ArtifactKind::PruneManifest) => false,
+                Some(crate::ArtifactKind::ThreadMemory)
+                | Some(crate::ArtifactKind::CompactionMarker)
+                | None => true,
+            }
+        }
+        _ => true,
     }
 }
 
@@ -232,6 +282,8 @@ mod tests {
     use super::BridgeVariant;
     use super::ContinuationBridgeModelInput;
     use super::ContinuationBridgePayload;
+    use super::ContinuationBridgeSourceSelectionInput;
+    use super::PriorBridgeVisibility;
     use super::baton;
     use super::build_continuation_bridge_prompt_input;
     use super::continuation_bridge_output_schema;
@@ -239,6 +291,7 @@ mod tests {
     use super::default_prompt;
     use super::parse_continuation_bridge_payload;
     use super::rich_review;
+    use super::select_continuation_bridge_source;
 
     #[test]
     fn continuation_bridge_defaults_to_baton_prompt() {
@@ -260,6 +313,82 @@ mod tests {
                 message("supplement", "developer"),
                 message("bridge prompt", "user"),
             ],
+        );
+    }
+
+    #[test]
+    fn select_continuation_bridge_source_excludes_prior_bridge_by_default() {
+        let input = vec![
+            message(
+                "<continuation_bridge schema=\"continuation_bridge_baton_v1\">\n{}\n</continuation_bridge>",
+                "developer",
+            ),
+            message("real user request", "user"),
+        ];
+
+        assert_eq!(
+            select_continuation_bridge_source(ContinuationBridgeSourceSelectionInput {
+                input: &input,
+                prior_bridge_visibility: PriorBridgeVisibility::Exclude,
+            }),
+            vec![message("real user request", "user")]
+        );
+    }
+
+    #[test]
+    fn select_continuation_bridge_source_can_keep_prior_bridge_when_allowed() {
+        let input = vec![
+            message(
+                "<continuation_bridge schema=\"continuation_bridge_baton_v1\">\n{}\n</continuation_bridge>",
+                "developer",
+            ),
+            message("real user request", "user"),
+        ];
+
+        assert_eq!(
+            select_continuation_bridge_source(ContinuationBridgeSourceSelectionInput {
+                input: &input,
+                prior_bridge_visibility: PriorBridgeVisibility::Allow,
+            }),
+            input
+        );
+    }
+
+    #[test]
+    fn select_continuation_bridge_source_excludes_prune_manifest() {
+        let input = vec![
+            message(
+                "<prune_manifest schema=\"prune_manifest_v1\">\n{}\n</prune_manifest>",
+                "developer",
+            ),
+            message("real user request", "user"),
+        ];
+
+        assert_eq!(
+            select_continuation_bridge_source(ContinuationBridgeSourceSelectionInput {
+                input: &input,
+                prior_bridge_visibility: PriorBridgeVisibility::Exclude,
+            }),
+            vec![message("real user request", "user")]
+        );
+    }
+
+    #[test]
+    fn select_continuation_bridge_source_keeps_thread_memory_context() {
+        let input = vec![
+            message(
+                "<thread_memory schema=\"odeu_thread_memory_v1\">\n{}\n</thread_memory>",
+                "developer",
+            ),
+            message("real user request", "user"),
+        ];
+
+        assert_eq!(
+            select_continuation_bridge_source(ContinuationBridgeSourceSelectionInput {
+                input: &input,
+                prior_bridge_visibility: PriorBridgeVisibility::Exclude,
+            }),
+            input
         );
     }
 

@@ -25,8 +25,7 @@ pub(crate) async fn generate_thread_memory_item(
         return Ok(None);
     }
 
-    let selection =
-        split_previous_memory_and_source_items(&input, crate::compact::SUMMARY_PREFIX.trim_end());
+    let selection = split_previous_memory_and_source_items(&input, is_compaction_summary);
     let codex_context_maintenance_policy::ThreadMemorySourceSelection {
         previous_memory,
         source_items,
@@ -113,4 +112,19 @@ pub(crate) async fn generate_thread_memory_item(
     }
     let memory = parse_thread_memory_payload(result)?;
     Ok(Some(thread_memory_response_item(memory)?))
+}
+
+fn is_compaction_summary(item: &ResponseItem) -> bool {
+    let ResponseItem::Message { role, content, .. } = item else {
+        return false;
+    };
+    if role != "user" {
+        return false;
+    }
+
+    let Some(text) = content_items_to_text(content) else {
+        return false;
+    };
+    text.trim_start()
+        .starts_with(crate::compact::SUMMARY_PREFIX.trim_end())
 }

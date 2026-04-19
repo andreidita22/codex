@@ -9,6 +9,8 @@ use crate::context_maintenance_config::resolve_context_maintenance_request_conte
 use codex_api::ResponseEvent;
 use codex_context_maintenance_policy::BridgeVariant;
 use codex_context_maintenance_policy::ContinuationBridgeModelInput;
+use codex_context_maintenance_policy::ContinuationBridgeSourceSelectionInput;
+use codex_context_maintenance_policy::PriorBridgeVisibility;
 use codex_context_maintenance_policy::build_continuation_bridge_prompt_input;
 use codex_context_maintenance_policy::content_items_to_text;
 use codex_context_maintenance_policy::continuation_bridge_default_prompt;
@@ -16,6 +18,7 @@ use codex_context_maintenance_policy::continuation_bridge_output_schema;
 use codex_context_maintenance_policy::continuation_bridge_response_item;
 use codex_context_maintenance_policy::continuation_bridge_subagent_context_item;
 use codex_context_maintenance_policy::parse_continuation_bridge_payload;
+use codex_context_maintenance_policy::select_continuation_bridge_source;
 use codex_otel::SessionTelemetry;
 use codex_protocol::error::Result;
 use codex_protocol::models::BaseInstructions;
@@ -64,19 +67,22 @@ pub(crate) async fn generate_continuation_bridge_item(
     turn_context: &TurnContext,
     input: Vec<ResponseItem>,
 ) -> Result<Option<ResponseItem>> {
-    if input.is_empty() {
-        return Ok(None);
-    }
-
     let request_context = resolve_request_context(sess, turn_context).await;
+    let source_items = select_continuation_bridge_source(ContinuationBridgeSourceSelectionInput {
+        input: &input,
+        prior_bridge_visibility: PriorBridgeVisibility::Exclude,
+    });
     let supplemental_items = match continuation_bridge_subagent_context_item(
         subagent_context::collect_subagent_snapshots(sess).await,
     )? {
         Some(item) => vec![item],
         None => Vec::new(),
     };
+    if source_items.is_empty() && supplemental_items.is_empty() {
+        return Ok(None);
+    }
     let prompt_input = build_continuation_bridge_prompt_input(ContinuationBridgeModelInput {
-        source_items: input,
+        source_items,
         supplemental_items,
         user_prompt_text: turn_context.continuation_bridge_prompt().to_string(),
     });
