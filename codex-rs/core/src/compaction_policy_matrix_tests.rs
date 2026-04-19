@@ -6,6 +6,7 @@ use crate::context_maintenance_runtime::live_compact_route_behavior_for_tests;
 use crate::context_maintenance_runtime::live_turn_boundary_maintenance_behavior_for_tests;
 use crate::context_maintenance_runtime::try_live_turn_boundary_maintenance_behavior_for_tests;
 use codex_context_maintenance_policy::ArtifactKind;
+use codex_context_maintenance_policy::ArtifactRequiredness;
 use codex_context_maintenance_policy::GovernanceEffect;
 use pretty_assertions::assert_eq;
 
@@ -26,6 +27,10 @@ fn live_local_pure_intra_turn_compact_is_bridge_only() {
         true
     );
     assert_eq!(
+        behavior.artifact_requiredness(ArtifactKind::ContinuationBridge),
+        Some(ArtifactRequiredness::BestEffort)
+    );
+    assert_eq!(
         behavior.drops_prior_artifact(ArtifactKind::ContinuationBridge),
         true
     );
@@ -40,6 +45,10 @@ fn live_remote_hybrid_turn_boundary_compact_is_thread_memory_only() {
     );
 
     assert_eq!(behavior.requests_artifact(ArtifactKind::ThreadMemory), true);
+    assert_eq!(
+        behavior.artifact_requiredness(ArtifactKind::ThreadMemory),
+        Some(ArtifactRequiredness::Required)
+    );
     assert_eq!(
         behavior.requests_artifact(ArtifactKind::ContinuationBridge),
         false
@@ -82,6 +91,10 @@ fn live_refresh_is_thread_memory_only_for_supported_engines() {
         );
 
         assert_eq!(behavior.requests_artifact(ArtifactKind::ThreadMemory), true);
+        assert_eq!(
+            behavior.artifact_requiredness(ArtifactKind::ThreadMemory),
+            Some(ArtifactRequiredness::Required)
+        );
         assert_eq!(
             behavior.requests_artifact(ArtifactKind::ContinuationBridge),
             false
@@ -135,6 +148,10 @@ fn live_prune_is_manifest_only_and_drops_turn_scoped_bridge() {
     assert_eq!(
         behavior.requests_artifact(ArtifactKind::PruneManifest),
         true
+    );
+    assert_eq!(
+        behavior.artifact_requiredness(ArtifactKind::PruneManifest),
+        Some(ArtifactRequiredness::Required)
     );
     assert_eq!(
         behavior.drops_prior_artifact(ArtifactKind::ContinuationBridge),

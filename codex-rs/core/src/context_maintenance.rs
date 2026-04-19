@@ -6,6 +6,7 @@ use crate::compact::COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES;
 use crate::compact::insert_items_before_last_summary_or_compaction;
 use crate::compact::is_summary_message;
 use crate::compact::retain_recent_raw_conversation_messages;
+use crate::context_maintenance_runtime::execute_requested_artifact;
 use crate::context_maintenance_runtime::runtime_plan_for_turn_boundary_maintenance;
 use crate::governance::thread_memory::generate_thread_memory_item;
 use codex_context_maintenance_policy::ArtifactKind;
@@ -14,7 +15,6 @@ use codex_context_maintenance_policy::build_prune_manifest_item;
 use codex_context_maintenance_policy::prune_superseded_artifacts;
 use codex_context_maintenance_policy::remove_artifact_kind;
 use codex_context_maintenance_policy::tagged_artifact_kind;
-use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::ContextCompactionItem;
 use codex_protocol::items::TurnItem;
@@ -40,30 +40,19 @@ pub(crate) async fn run_refresh(
     let prompt_history = history_snapshot
         .clone()
         .for_prompt(&turn_context.model_info.input_modalities);
-    let thread_memory_item = if runtime_plan.requests_artifact(ArtifactKind::ThreadMemory) {
-        match generate_thread_memory_item(
-            sess.as_ref(),
-            turn_context.as_ref(),
-            prompt_history.clone(),
-        )
-        .await
-        {
-            Ok(Some(item)) => Some(item),
-            Ok(None) => {
-                return Err(CodexErr::Fatal(
-                    "required thread memory generation returned empty output during /refresh"
-                        .to_string(),
-                ));
-            }
-            Err(err) => {
-                return Err(CodexErr::Fatal(format!(
-                    "failed generating required thread memory during /refresh: {err}"
-                )));
-            }
-        }
-    } else {
-        None
-    };
+    let thread_memory_item = execute_requested_artifact(
+        runtime_plan.artifact_requiredness(ArtifactKind::ThreadMemory),
+        "thread memory",
+        "during /refresh",
+        || {
+            generate_thread_memory_item(
+                sess.as_ref(),
+                turn_context.as_ref(),
+                prompt_history.clone(),
+            )
+        },
+    )
+    .await?;
 
     let (mut new_history, mut removed_count) = prune_superseded_artifacts(raw_history);
     for artifact_kind in runtime_plan.drop_prior_artifact_kinds() {

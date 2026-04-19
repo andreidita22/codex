@@ -1,6 +1,7 @@
 use crate::ArtifactKind;
 use crate::ArtifactLifetime;
 use crate::ArtifactRequest;
+use crate::ArtifactRequiredness;
 use crate::ContextInjectionPolicy;
 use crate::GovernanceEffect;
 use crate::LegacyCompactionMarkerPolicy;
@@ -42,6 +43,7 @@ fn select_base_route_plan(
                 requested_artifacts: vec![artifact(
                     ArtifactKind::ContinuationBridge,
                     ArtifactLifetime::TurnScoped,
+                    ArtifactRequiredness::BestEffort,
                 )],
                 drop_prior_artifact_kinds: vec![ArtifactKind::ContinuationBridge],
                 legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
@@ -53,6 +55,7 @@ fn select_base_route_plan(
                 requested_artifacts: vec![artifact(
                     ArtifactKind::ContinuationBridge,
                     ArtifactLifetime::TurnScoped,
+                    ArtifactRequiredness::BestEffort,
                 )],
                 drop_prior_artifact_kinds: vec![ArtifactKind::ContinuationBridge],
                 legacy_compaction_marker_policy:
@@ -73,6 +76,7 @@ fn select_base_route_plan(
                 requested_artifacts: vec![artifact(
                     ArtifactKind::ThreadMemory,
                     ArtifactLifetime::DurableAcrossTurns,
+                    ArtifactRequiredness::Required,
                 )],
                 drop_prior_artifact_kinds: vec![
                     ArtifactKind::ThreadMemory,
@@ -90,6 +94,7 @@ fn select_base_route_plan(
             requested_artifacts: vec![artifact(
                 ArtifactKind::ThreadMemory,
                 ArtifactLifetime::DurableAcrossTurns,
+                ArtifactRequiredness::Required,
             )],
             drop_prior_artifact_kinds: vec![
                 ArtifactKind::ThreadMemory,
@@ -117,6 +122,7 @@ fn select_base_route_plan(
                 requested_artifacts: vec![artifact(
                     ArtifactKind::ThreadMemory,
                     ArtifactLifetime::DurableAcrossTurns,
+                    ArtifactRequiredness::Required,
                 )],
                 drop_prior_artifact_kinds: vec![
                     ArtifactKind::ThreadMemory,
@@ -134,6 +140,7 @@ fn select_base_route_plan(
             requested_artifacts: vec![artifact(
                 ArtifactKind::ThreadMemory,
                 ArtifactLifetime::DurableAcrossTurns,
+                ArtifactRequiredness::Required,
             )],
             drop_prior_artifact_kinds: vec![
                 ArtifactKind::ThreadMemory,
@@ -146,6 +153,7 @@ fn select_base_route_plan(
             requested_artifacts: vec![artifact(
                 ArtifactKind::PruneManifest,
                 ArtifactLifetime::MarkerOnly,
+                ArtifactRequiredness::Required,
             )],
             drop_prior_artifact_kinds: vec![
                 ArtifactKind::PruneManifest,
@@ -185,8 +193,16 @@ fn apply_governance_overlay(
     }
 }
 
-fn artifact(kind: ArtifactKind, lifetime: ArtifactLifetime) -> ArtifactRequest {
-    ArtifactRequest { kind, lifetime }
+fn artifact(
+    kind: ArtifactKind,
+    lifetime: ArtifactLifetime,
+    requiredness: ArtifactRequiredness,
+) -> ArtifactRequest {
+    ArtifactRequest {
+        kind,
+        lifetime,
+        requiredness,
+    }
 }
 
 fn remove_artifact(artifacts: &mut Vec<ArtifactRequest>, kind: ArtifactKind) -> bool {

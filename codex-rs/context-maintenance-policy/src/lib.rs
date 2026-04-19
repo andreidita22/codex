@@ -25,6 +25,7 @@ pub use continuation_bridge::parse_continuation_bridge_payload;
 pub use contracts::ArtifactKind;
 pub use contracts::ArtifactLifetime;
 pub use contracts::ArtifactRequest;
+pub use contracts::ArtifactRequiredness;
 pub use contracts::ContextInjectionPolicy;
 pub use contracts::GovernanceEffect;
 pub use contracts::LegacyCompactionMarkerPolicy;

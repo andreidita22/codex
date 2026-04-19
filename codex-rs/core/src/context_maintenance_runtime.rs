@@ -1,8 +1,12 @@
+use std::future::Future;
+
 use crate::codex::TurnContext;
 use crate::compact::InitialContextInjection;
 use crate::config::CompactionEngine;
 use crate::config::GovernancePathVariant;
 use codex_context_maintenance_policy::ArtifactKind;
+use codex_context_maintenance_policy::ArtifactRequest;
+use codex_context_maintenance_policy::ArtifactRequiredness;
 use codex_context_maintenance_policy::ContextInjectionPolicy;
 use codex_context_maintenance_policy::GovernanceEffect;
 use codex_context_maintenance_policy::LegacyCompactionMarkerPolicy;
@@ -16,10 +20,11 @@ use codex_context_maintenance_policy::ThreadMemoryGovernance;
 use codex_context_maintenance_policy::plan_route;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
+use tracing::warn;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RuntimeMaintenancePlan {
-    requested_artifacts: Vec<ArtifactKind>,
+    requested_artifacts: Vec<ArtifactRequest>,
     drop_prior_artifact_kinds: Vec<ArtifactKind>,
     context_injection: ContextInjectionPolicy,
     legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy,
@@ -27,8 +32,20 @@ pub(crate) struct RuntimeMaintenancePlan {
 }
 
 impl RuntimeMaintenancePlan {
+    pub(crate) fn artifact_request(&self, kind: ArtifactKind) -> Option<&ArtifactRequest> {
+        self.requested_artifacts
+            .iter()
+            .find(|artifact| artifact.kind == kind)
+    }
+
+    #[cfg(test)]
     pub(crate) fn requests_artifact(&self, kind: ArtifactKind) -> bool {
-        self.requested_artifacts.contains(&kind)
+        self.artifact_request(kind).is_some()
+    }
+
+    pub(crate) fn artifact_requiredness(&self, kind: ArtifactKind) -> Option<ArtifactRequiredness> {
+        self.artifact_request(kind)
+            .map(|artifact| artifact.requiredness)
     }
 
     #[cfg(test)]
@@ -63,6 +80,45 @@ impl RuntimeMaintenancePlan {
     #[cfg(test)]
     pub(crate) fn governance_effects(&self) -> &[GovernanceEffect] {
         &self.governance_effects
+    }
+}
+
+pub(crate) async fn execute_requested_artifact<T, F, Fut>(
+    requiredness: Option<ArtifactRequiredness>,
+    artifact_name: &str,
+    operation: &str,
+    generate: F,
+) -> CodexResult<Option<T>>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = CodexResult<Option<T>>>,
+{
+    match requiredness {
+        Some(ArtifactRequiredness::Required) => match generate().await {
+            Ok(Some(item)) => Ok(Some(item)),
+            Ok(None) => Err(CodexErr::Fatal(format!(
+                "required {artifact_name} generation returned empty output {operation}"
+            ))),
+            Err(err) => Err(CodexErr::Fatal(format!(
+                "failed generating required {artifact_name} {operation}: {}",
+                required_artifact_error_detail(err)
+            ))),
+        },
+        Some(ArtifactRequiredness::BestEffort) => match generate().await {
+            Ok(item) => Ok(item),
+            Err(err) => {
+                warn!("failed generating {artifact_name} {operation}: {err}");
+                Ok(None)
+            }
+        },
+        None => Ok(None),
+    }
+}
+
+fn required_artifact_error_detail(err: CodexErr) -> String {
+    match err {
+        CodexErr::Fatal(message) => message,
+        other => other.to_string(),
     }
 }
 
@@ -174,11 +230,7 @@ fn runtime_plan(request: MaintenancePlanningRequest) -> CodexResult<RuntimeMaint
 
 fn runtime_plan_from_policy_plan(plan: MaintenancePolicyPlan) -> RuntimeMaintenancePlan {
     RuntimeMaintenancePlan {
-        requested_artifacts: plan
-            .requested_artifacts
-            .into_iter()
-            .map(|artifact| artifact.kind)
-            .collect(),
+        requested_artifacts: plan.requested_artifacts,
         drop_prior_artifact_kinds: plan.drop_prior_artifact_kinds,
         context_injection: plan.context_injection,
         legacy_compaction_marker_policy: plan.legacy_compaction_marker_policy,
@@ -203,5 +255,80 @@ fn policy_thread_memory_governance(variant: GovernancePathVariant) -> ThreadMemo
         GovernancePathVariant::Off => ThreadMemoryGovernance::Disabled,
         GovernancePathVariant::StrictV1Shadow => ThreadMemoryGovernance::Enabled,
         GovernancePathVariant::StrictV1Enforce => ThreadMemoryGovernance::Enabled,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn execute_requested_artifact_skips_generation_when_not_requested() {
+        let called = Arc::new(AtomicBool::new(false));
+        let called_for_closure = Arc::clone(&called);
+
+        let result = execute_requested_artifact(None, "thread memory", "during test", move || {
+            called_for_closure.store(true, Ordering::SeqCst);
+            async { Ok(Some("unused")) }
+        })
+        .await
+        .expect("missing request should skip generation");
+
+        assert_eq!(result, None);
+        assert_eq!(called.load(Ordering::SeqCst), false);
+    }
+
+    #[tokio::test]
+    async fn execute_requested_artifact_fails_when_required_output_is_missing() {
+        let err = execute_requested_artifact(
+            Some(ArtifactRequiredness::Required),
+            "thread memory",
+            "during test",
+            || async { Ok(None::<()>) },
+        )
+        .await
+        .expect_err("required artifact should fail when generation returns no item");
+
+        assert_eq!(
+            err.to_string(),
+            "Fatal error: required thread memory generation returned empty output during test"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_requested_artifact_ignores_best_effort_failures() {
+        let result = execute_requested_artifact(
+            Some(ArtifactRequiredness::BestEffort),
+            "continuation bridge",
+            "during test",
+            || async { Err(CodexErr::Fatal("boom".to_string())) as CodexResult<Option<()>> },
+        )
+        .await
+        .expect("best-effort artifact failures should not fail the runtime path");
+
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn execute_requested_artifact_propagates_required_failures() {
+        let err = execute_requested_artifact(
+            Some(ArtifactRequiredness::Required),
+            "continuation bridge",
+            "during test",
+            || async { Err(CodexErr::Fatal("boom".to_string())) as CodexResult<Option<()>> },
+        )
+        .await
+        .expect_err("required artifact failures should be fatal");
+
+        assert_eq!(
+            err.to_string(),
+            "Fatal error: failed generating required continuation bridge during test: boom"
+        );
     }
 }
