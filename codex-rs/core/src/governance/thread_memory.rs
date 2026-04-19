@@ -25,8 +25,7 @@ pub(crate) async fn generate_thread_memory_item(
         return Ok(None);
     }
 
-    let selection =
-        split_previous_memory_and_source_items(&input, crate::compact::SUMMARY_PREFIX.trim_end());
+    let selection = split_previous_memory_and_source_items(&input, is_compaction_summary);
     let codex_context_maintenance_policy::ThreadMemorySourceSelection {
         previous_memory,
         source_items,
@@ -39,9 +38,6 @@ pub(crate) async fn generate_thread_memory_item(
 
     let trim_result = limit_thread_memory_source_items(source_items);
     let mut source_items = trim_result.source_items;
-    if source_items.is_empty() && previous_memory.is_none() {
-        return Ok(None);
-    }
 
     source_items.push(ResponseItem::Message {
         id: None,
@@ -113,4 +109,26 @@ pub(crate) async fn generate_thread_memory_item(
     }
     let memory = parse_thread_memory_payload(result)?;
     Ok(Some(thread_memory_response_item(memory)?))
+}
+
+fn is_compaction_summary(item: &ResponseItem) -> bool {
+    let ResponseItem::Message { role, content, .. } = item else {
+        return false;
+    };
+    if role != "user" {
+        return false;
+    }
+
+    content
+        .iter()
+        .find_map(|item| match item {
+            ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                (!text.is_empty()).then_some(text.as_str())
+            }
+            ContentItem::InputImage { .. } => None,
+        })
+        .is_some_and(|text| {
+            text.trim_start()
+                .starts_with(crate::compact::SUMMARY_PREFIX.trim_end())
+        })
 }

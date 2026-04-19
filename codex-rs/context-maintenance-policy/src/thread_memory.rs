@@ -33,10 +33,13 @@ pub fn thread_memory_output_schema() -> Value {
     }
 }
 
-pub fn split_previous_memory_and_source_items(
+pub fn split_previous_memory_and_source_items<F>(
     input: &[ResponseItem],
-    summary_prefix: &str,
-) -> ThreadMemorySourceSelection {
+    is_compaction_summary: F,
+) -> ThreadMemorySourceSelection
+where
+    F: Fn(&ResponseItem) -> bool,
+{
     for (index, item) in input.iter().enumerate().rev() {
         if let Some(payload) = extract_thread_memory_payload_from_item(item) {
             match serde_json::from_str::<Value>(&payload) {
@@ -44,7 +47,9 @@ pub fn split_previous_memory_and_source_items(
                     let source_items = input
                         .iter()
                         .skip(index + 1)
-                        .filter(|item| should_include_delta_source_item(item, summary_prefix))
+                        .filter(|item| {
+                            should_include_delta_source_item(item, &is_compaction_summary)
+                        })
                         .cloned()
                         .collect();
                     return ThreadMemorySourceSelection {
@@ -61,7 +66,11 @@ pub fn split_previous_memory_and_source_items(
 
     ThreadMemorySourceSelection {
         previous_memory: None,
-        source_items: input.to_vec(),
+        source_items: input
+            .iter()
+            .filter(|item| should_include_delta_source_item(item, &is_compaction_summary))
+            .cloned()
+            .collect(),
     }
 }
 
@@ -161,7 +170,10 @@ pub fn thread_memory_response_item(mut memory: Value) -> CodexResult<ResponseIte
     })
 }
 
-fn should_include_delta_source_item(item: &ResponseItem, summary_prefix: &str) -> bool {
+fn should_include_delta_source_item<F>(item: &ResponseItem, is_compaction_summary: &F) -> bool
+where
+    F: Fn(&ResponseItem) -> bool,
+{
     match item {
         ResponseItem::Compaction { .. } | ResponseItem::GhostSnapshot { .. } => false,
         ResponseItem::Message { role, content, .. } if role == "developer" => {
@@ -171,12 +183,7 @@ fn should_include_delta_source_item(item: &ResponseItem, summary_prefix: &str) -
 
             tagged_artifact_kind_from_text(&text).is_none()
         }
-        ResponseItem::Message { role, content, .. } if role == "user" => {
-            let Some(text) = content_items_to_text(content) else {
-                return true;
-            };
-            !text.trim_start().starts_with(summary_prefix)
-        }
+        ResponseItem::Message { role, .. } if role == "user" => !is_compaction_summary(item),
         _ => true,
     }
 }
@@ -408,6 +415,21 @@ mod tests {
         }
     }
 
+    fn is_compaction_summary(item: &ResponseItem) -> bool {
+        let ResponseItem::Message { role, content, .. } = item else {
+            return false;
+        };
+        if role != "user" {
+            return false;
+        }
+
+        let Some(text) = super::content_items_to_text(content) else {
+            return false;
+        };
+        text.trim_start()
+            .starts_with("Compact this conversation by preserving the most important context.")
+    }
+
     #[test]
     fn output_schema_uses_artifact() {
         let schema = thread_memory_output_schema();
@@ -452,10 +474,7 @@ mod tests {
             user_message("delta two"),
         ];
 
-        let selection = split_previous_memory_and_source_items(
-            &input,
-            "Compact this conversation by preserving the most important context.",
-        );
+        let selection = split_previous_memory_and_source_items(&input, is_compaction_summary);
 
         assert_eq!(
             selection.previous_memory,
@@ -483,10 +502,7 @@ mod tests {
             },
         ];
 
-        let selection = split_previous_memory_and_source_items(
-            &input,
-            "Compact this conversation by preserving the most important context.",
-        );
+        let selection = split_previous_memory_and_source_items(&input, is_compaction_summary);
 
         assert_eq!(
             selection.previous_memory,
@@ -524,10 +540,7 @@ mod tests {
             },
         ];
 
-        let selection = split_previous_memory_and_source_items(
-            &input,
-            "Compact this conversation by preserving the most important context.",
-        );
+        let selection = split_previous_memory_and_source_items(&input, is_compaction_summary);
 
         assert_eq!(
             selection.previous_memory,
@@ -566,10 +579,7 @@ mod tests {
             user_message("new user request"),
         ];
 
-        let selection = split_previous_memory_and_source_items(
-            &input,
-            "Compact this conversation by preserving the most important context.",
-        );
+        let selection = split_previous_memory_and_source_items(&input, is_compaction_summary);
 
         assert_eq!(
             selection.previous_memory,
@@ -581,6 +591,24 @@ mod tests {
         assert_eq!(
             selection.source_items,
             vec![user_message("new user request")]
+        );
+    }
+
+    #[test]
+    fn split_previous_memory_without_prior_memory_filters_policy_artifacts_and_summary() {
+        let input = vec![
+            continuation_bridge_item(),
+            prune_manifest_item(),
+            compaction_summary_item(),
+            user_message("real user request"),
+        ];
+
+        let selection = split_previous_memory_and_source_items(&input, is_compaction_summary);
+
+        assert_eq!(selection.previous_memory, None);
+        assert_eq!(
+            selection.source_items,
+            vec![user_message("real user request")]
         );
     }
 
