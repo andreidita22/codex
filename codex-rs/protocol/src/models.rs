@@ -169,14 +169,10 @@ pub fn content_items_to_text(content: &[ContentItem]) -> Option<String> {
     let text_segments = content
         .iter()
         .filter_map(|item| match item {
-            ContentItem::InputText { text } | ContentItem::OutputText { text }
-                if !text.is_empty() =>
-            {
-                Some(text.as_str())
+            ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                (!text.is_empty()).then_some(text.as_str())
             }
-            ContentItem::InputText { .. }
-            | ContentItem::OutputText { .. }
-            | ContentItem::InputImage { .. } => None,
+            ContentItem::InputImage { .. } => None,
         })
         .collect::<Vec<_>>();
 
