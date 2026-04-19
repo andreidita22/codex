@@ -1,4 +1,3 @@
-use codex_config::config_toml::GovernancePathVariant;
 use thiserror::Error;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -61,11 +60,17 @@ pub enum GovernanceEffect {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ThreadMemoryGovernance {
+    Disabled,
+    Enabled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MaintenancePlanningRequest {
     pub action: MaintenanceAction,
     pub timing: MaintenanceTiming,
     pub engine: PolicyEngine,
-    pub governance_variant: GovernancePathVariant,
+    pub thread_memory_governance: ThreadMemoryGovernance,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
