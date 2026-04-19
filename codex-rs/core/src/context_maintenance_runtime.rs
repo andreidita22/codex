@@ -71,11 +71,11 @@ impl RuntimeMaintenancePlan {
         }
     }
 
-    pub(crate) fn initial_context_injection(&self) -> InitialContextInjection {
+    pub(crate) fn context_injection_placement(&self) -> InitialContextInjection {
         match self.context_injection {
             ContextInjectionPolicy::None => InitialContextInjection::DoNotInject,
             ContextInjectionPolicy::BeforeLastRealUserOrSummary => {
-                InitialContextInjection::BeforeLastUserMessage
+                InitialContextInjection::BeforeLastRealUserOrSummary
             }
         }
     }
@@ -133,25 +133,30 @@ fn required_artifact_error_detail(err: CodexErr) -> String {
     }
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CompactTimingForTests {
+pub(crate) enum CompactInvocationTiming {
     TurnBoundary,
     IntraTurn,
+}
+
+impl CompactInvocationTiming {
+    fn maintenance_timing(self) -> MaintenanceTiming {
+        match self {
+            Self::TurnBoundary => MaintenanceTiming::TurnBoundary,
+            Self::IntraTurn => MaintenanceTiming::IntraTurn,
+        }
+    }
 }
 
 #[cfg(test)]
 pub(crate) fn live_compact_route_behavior_for_tests(
     engine: CompactionEngine,
     governance_variant: GovernancePathVariant,
-    timing: CompactTimingForTests,
+    timing: CompactInvocationTiming,
 ) -> RuntimeMaintenancePlan {
     runtime_plan(MaintenancePlanningRequest {
         action: MaintenanceAction::Compact,
-        timing: match timing {
-            CompactTimingForTests::TurnBoundary => MaintenanceTiming::TurnBoundary,
-            CompactTimingForTests::IntraTurn => MaintenanceTiming::IntraTurn,
-        },
+        timing: timing.maintenance_timing(),
         engine: policy_engine(engine),
         thread_memory_governance: policy_thread_memory_governance(governance_variant),
     })
@@ -194,11 +199,11 @@ pub(crate) fn try_live_turn_boundary_maintenance_behavior_for_tests(
 
 pub(crate) fn runtime_plan_for_compact(
     turn_context: &TurnContext,
-    timing: MaintenanceTiming,
+    timing: CompactInvocationTiming,
 ) -> CodexResult<RuntimeMaintenancePlan> {
     runtime_plan(MaintenancePlanningRequest {
         action: MaintenanceAction::Compact,
-        timing,
+        timing: timing.maintenance_timing(),
         engine: policy_engine(compaction_engine(turn_context)),
         thread_memory_governance: policy_thread_memory_governance(
             turn_context.governance_path_variant(),
@@ -218,15 +223,6 @@ pub(crate) fn runtime_plan_for_turn_boundary_maintenance(
             turn_context.governance_path_variant(),
         ),
     })
-}
-
-pub(crate) fn compact_timing_from_initial_context_injection(
-    initial_context_injection: InitialContextInjection,
-) -> MaintenanceTiming {
-    match initial_context_injection {
-        InitialContextInjection::DoNotInject => MaintenanceTiming::TurnBoundary,
-        InitialContextInjection::BeforeLastUserMessage => MaintenanceTiming::IntraTurn,
-    }
 }
 
 pub(crate) fn compaction_engine(turn_context: &TurnContext) -> CompactionEngine {
@@ -340,6 +336,41 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "Fatal error: failed generating required continuation bridge during test: boom"
+        );
+    }
+
+    #[test]
+    fn compact_invocation_timing_maps_to_maintenance_timing() {
+        assert_eq!(
+            CompactInvocationTiming::TurnBoundary.maintenance_timing(),
+            MaintenanceTiming::TurnBoundary
+        );
+        assert_eq!(
+            CompactInvocationTiming::IntraTurn.maintenance_timing(),
+            MaintenanceTiming::IntraTurn
+        );
+    }
+
+    #[test]
+    fn compact_timing_drives_context_injection_placement() {
+        let turn_boundary = live_compact_route_behavior_for_tests(
+            CompactionEngine::LocalPure,
+            GovernancePathVariant::StrictV1Shadow,
+            CompactInvocationTiming::TurnBoundary,
+        );
+        let intra_turn = live_compact_route_behavior_for_tests(
+            CompactionEngine::LocalPure,
+            GovernancePathVariant::StrictV1Shadow,
+            CompactInvocationTiming::IntraTurn,
+        );
+
+        assert_eq!(
+            turn_boundary.context_injection_placement(),
+            InitialContextInjection::DoNotInject
+        );
+        assert_eq!(
+            intra_turn.context_injection_placement(),
+            InitialContextInjection::BeforeLastRealUserOrSummary
         );
     }
 }
