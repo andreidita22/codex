@@ -61,12 +61,31 @@ pub enum LegacyCompactionMarkerPolicy {
     Strip,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SummaryDispositionPolicy {
+    KeepAll,
+    KeepLatestCompactionSummary,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RemoteCompactedHistoryKeepPolicy {
+    KeepAll,
+    DropDeveloperAndNonTurnUserMessages,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HistoryDispositionPolicy {
+    pub prune_superseded_artifacts: bool,
+    pub summary_disposition: SummaryDispositionPolicy,
+    pub remote_keep_policy: RemoteCompactedHistoryKeepPolicy,
+    pub drop_prior_artifact_kinds: Vec<ArtifactKind>,
+    pub legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct HistoryDispositionRequest {
     pub items: Vec<codex_protocol::models::ResponseItem>,
-    pub prune_superseded_artifacts: bool,
-    pub drop_prior_artifact_kinds: Vec<ArtifactKind>,
-    pub legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy,
+    pub policy: HistoryDispositionPolicy,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -113,8 +132,7 @@ pub struct MaintenancePlanningRequest {
 pub struct MaintenancePolicyPlan {
     pub context_injection: ContextInjectionPolicy,
     pub requested_artifacts: Vec<ArtifactRequest>,
-    pub drop_prior_artifact_kinds: Vec<ArtifactKind>,
-    pub legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy,
+    pub history_disposition: HistoryDispositionPolicy,
     pub retention_directive: RetentionDirective,
     pub governance_effects: Vec<GovernanceEffect>,
 }

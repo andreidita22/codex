@@ -4,6 +4,7 @@ use crate::ArtifactRequest;
 use crate::ArtifactRequiredness;
 use crate::ContextInjectionPolicy;
 use crate::GovernanceEffect;
+use crate::HistoryDispositionPolicy;
 use crate::LegacyCompactionMarkerPolicy;
 use crate::MaintenanceAction;
 use crate::MaintenancePlanningRequest;
@@ -11,8 +12,10 @@ use crate::MaintenancePolicyError;
 use crate::MaintenancePolicyPlan;
 use crate::MaintenanceTiming;
 use crate::PolicyEngine;
+use crate::RemoteCompactedHistoryKeepPolicy;
 use crate::RetentionDirective;
 use crate::RetentionGate;
+use crate::SummaryDispositionPolicy;
 use crate::ThreadMemoryGovernance;
 
 const RECENT_RAW_CONVERSATION_WINDOW_MESSAGES: usize = 5;
@@ -21,8 +24,7 @@ const RECENT_RAW_CONVERSATION_WINDOW_MESSAGES: usize = 5;
 struct BaseRoutePlan {
     context_injection: ContextInjectionPolicy,
     requested_artifacts: Vec<ArtifactRequest>,
-    drop_prior_artifact_kinds: Vec<ArtifactKind>,
-    legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy,
+    history_disposition: HistoryDispositionPolicy,
     retention_directive: RetentionDirective,
 }
 
@@ -50,8 +52,13 @@ fn select_base_route_plan(
                     ArtifactLifetime::TurnScoped,
                     ArtifactRequiredness::BestEffort,
                 )],
-                drop_prior_artifact_kinds: vec![ArtifactKind::ContinuationBridge],
-                legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+                history_disposition: history_disposition(
+                    /*prune_superseded_artifacts*/ false,
+                    SummaryDispositionPolicy::KeepAll,
+                    RemoteCompactedHistoryKeepPolicy::DropDeveloperAndNonTurnUserMessages,
+                    vec![ArtifactKind::ContinuationBridge],
+                    LegacyCompactionMarkerPolicy::Strip,
+                ),
                 retention_directive: RetentionDirective::None,
             })
         }
@@ -63,9 +70,13 @@ fn select_base_route_plan(
                     ArtifactLifetime::TurnScoped,
                     ArtifactRequiredness::BestEffort,
                 )],
-                drop_prior_artifact_kinds: vec![ArtifactKind::ContinuationBridge],
-                legacy_compaction_marker_policy:
+                history_disposition: history_disposition(
+                    /*prune_superseded_artifacts*/ false,
+                    SummaryDispositionPolicy::KeepAll,
+                    RemoteCompactedHistoryKeepPolicy::DropDeveloperAndNonTurnUserMessages,
+                    vec![ArtifactKind::ContinuationBridge],
                     LegacyCompactionMarkerPolicy::PreserveForUpstreamCompatibility,
+                ),
                 retention_directive: RetentionDirective::None,
             })
         }
@@ -73,8 +84,13 @@ fn select_base_route_plan(
             Ok(BaseRoutePlan {
                 context_injection: ContextInjectionPolicy::BeforeLastRealUserOrSummary,
                 requested_artifacts: vec![],
-                drop_prior_artifact_kinds: vec![ArtifactKind::ContinuationBridge],
-                legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
+                history_disposition: history_disposition(
+                    /*prune_superseded_artifacts*/ false,
+                    SummaryDispositionPolicy::KeepAll,
+                    RemoteCompactedHistoryKeepPolicy::DropDeveloperAndNonTurnUserMessages,
+                    vec![ArtifactKind::ContinuationBridge],
+                    LegacyCompactionMarkerPolicy::Preserve,
+                ),
                 retention_directive: RetentionDirective::None,
             })
         }
@@ -86,11 +102,13 @@ fn select_base_route_plan(
                     ArtifactLifetime::DurableAcrossTurns,
                     ArtifactRequiredness::Required,
                 )],
-                drop_prior_artifact_kinds: vec![
-                    ArtifactKind::ThreadMemory,
-                    ArtifactKind::ContinuationBridge,
-                ],
-                legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+                history_disposition: history_disposition(
+                    /*prune_superseded_artifacts*/ false,
+                    SummaryDispositionPolicy::KeepAll,
+                    RemoteCompactedHistoryKeepPolicy::DropDeveloperAndNonTurnUserMessages,
+                    vec![ArtifactKind::ThreadMemory, ArtifactKind::ContinuationBridge],
+                    LegacyCompactionMarkerPolicy::Strip,
+                ),
                 retention_directive: recent_raw_retention_when_thread_memory_present(),
             })
         }
@@ -105,12 +123,13 @@ fn select_base_route_plan(
                 ArtifactLifetime::DurableAcrossTurns,
                 ArtifactRequiredness::Required,
             )],
-            drop_prior_artifact_kinds: vec![
-                ArtifactKind::ThreadMemory,
-                ArtifactKind::ContinuationBridge,
-            ],
-            legacy_compaction_marker_policy:
+            history_disposition: history_disposition(
+                /*prune_superseded_artifacts*/ false,
+                SummaryDispositionPolicy::KeepAll,
+                RemoteCompactedHistoryKeepPolicy::DropDeveloperAndNonTurnUserMessages,
+                vec![ArtifactKind::ThreadMemory, ArtifactKind::ContinuationBridge],
                 LegacyCompactionMarkerPolicy::PreserveForUpstreamCompatibility,
+            ),
             retention_directive: recent_raw_retention_when_thread_memory_present(),
         }),
         (
@@ -120,11 +139,13 @@ fn select_base_route_plan(
         ) => Ok(BaseRoutePlan {
             context_injection: ContextInjectionPolicy::None,
             requested_artifacts: vec![],
-            drop_prior_artifact_kinds: vec![
-                ArtifactKind::ThreadMemory,
-                ArtifactKind::ContinuationBridge,
-            ],
-            legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
+            history_disposition: history_disposition(
+                /*prune_superseded_artifacts*/ false,
+                SummaryDispositionPolicy::KeepAll,
+                RemoteCompactedHistoryKeepPolicy::DropDeveloperAndNonTurnUserMessages,
+                vec![ArtifactKind::ThreadMemory, ArtifactKind::ContinuationBridge],
+                LegacyCompactionMarkerPolicy::Preserve,
+            ),
             retention_directive: RetentionDirective::None,
         }),
         (MaintenanceAction::Refresh, MaintenanceTiming::TurnBoundary, PolicyEngine::LocalPure) => {
@@ -135,11 +156,13 @@ fn select_base_route_plan(
                     ArtifactLifetime::DurableAcrossTurns,
                     ArtifactRequiredness::Required,
                 )],
-                drop_prior_artifact_kinds: vec![
-                    ArtifactKind::ThreadMemory,
-                    ArtifactKind::ContinuationBridge,
-                ],
-                legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+                history_disposition: history_disposition(
+                    /*prune_superseded_artifacts*/ true,
+                    SummaryDispositionPolicy::KeepAll,
+                    RemoteCompactedHistoryKeepPolicy::KeepAll,
+                    vec![ArtifactKind::ThreadMemory, ArtifactKind::ContinuationBridge],
+                    LegacyCompactionMarkerPolicy::Strip,
+                ),
                 retention_directive: recent_raw_retention_when_thread_memory_present(),
             })
         }
@@ -154,11 +177,13 @@ fn select_base_route_plan(
                 ArtifactLifetime::DurableAcrossTurns,
                 ArtifactRequiredness::Required,
             )],
-            drop_prior_artifact_kinds: vec![
-                ArtifactKind::ThreadMemory,
-                ArtifactKind::ContinuationBridge,
-            ],
-            legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            history_disposition: history_disposition(
+                /*prune_superseded_artifacts*/ true,
+                SummaryDispositionPolicy::KeepAll,
+                RemoteCompactedHistoryKeepPolicy::KeepAll,
+                vec![ArtifactKind::ThreadMemory, ArtifactKind::ContinuationBridge],
+                LegacyCompactionMarkerPolicy::Strip,
+            ),
             retention_directive: recent_raw_retention_when_thread_memory_present(),
         }),
         (MaintenanceAction::Prune, MaintenanceTiming::TurnBoundary, _) => Ok(BaseRoutePlan {
@@ -168,11 +193,16 @@ fn select_base_route_plan(
                 ArtifactLifetime::MarkerOnly,
                 ArtifactRequiredness::Required,
             )],
-            drop_prior_artifact_kinds: vec![
-                ArtifactKind::PruneManifest,
-                ArtifactKind::ContinuationBridge,
-            ],
-            legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            history_disposition: history_disposition(
+                /*prune_superseded_artifacts*/ true,
+                SummaryDispositionPolicy::KeepLatestCompactionSummary,
+                RemoteCompactedHistoryKeepPolicy::KeepAll,
+                vec![
+                    ArtifactKind::PruneManifest,
+                    ArtifactKind::ContinuationBridge,
+                ],
+                LegacyCompactionMarkerPolicy::Strip,
+            ),
             retention_directive: recent_raw_retention_when_thread_memory_present(),
         }),
         _ => Err(MaintenancePolicyError::UnsupportedRoute {
@@ -201,10 +231,25 @@ fn apply_governance_overlay(
     MaintenancePolicyPlan {
         context_injection: base_plan.context_injection,
         requested_artifacts: base_plan.requested_artifacts,
-        drop_prior_artifact_kinds: base_plan.drop_prior_artifact_kinds,
-        legacy_compaction_marker_policy: base_plan.legacy_compaction_marker_policy,
+        history_disposition: base_plan.history_disposition,
         retention_directive: base_plan.retention_directive,
         governance_effects,
+    }
+}
+
+fn history_disposition(
+    prune_superseded_artifacts: bool,
+    summary_disposition: SummaryDispositionPolicy,
+    remote_keep_policy: RemoteCompactedHistoryKeepPolicy,
+    drop_prior_artifact_kinds: Vec<ArtifactKind>,
+    legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy,
+) -> HistoryDispositionPolicy {
+    HistoryDispositionPolicy {
+        prune_superseded_artifacts,
+        summary_disposition,
+        remote_keep_policy,
+        drop_prior_artifact_kinds,
+        legacy_compaction_marker_policy,
     }
 }
 

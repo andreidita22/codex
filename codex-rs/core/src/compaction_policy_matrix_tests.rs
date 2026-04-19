@@ -34,11 +34,15 @@ fn live_local_pure_intra_turn_compact_is_bridge_only() {
         Some(ArtifactRequiredness::BestEffort)
     );
     assert_eq!(
-        behavior.drops_prior_artifact(ArtifactKind::ContinuationBridge),
-        true
+        behavior
+            .history_disposition_policy()
+            .drop_prior_artifact_kinds,
+        vec![ArtifactKind::ContinuationBridge]
     );
     assert_eq!(
-        behavior.legacy_compaction_marker_policy(),
+        behavior
+            .history_disposition_policy()
+            .legacy_compaction_marker_policy,
         LegacyCompactionMarkerPolicy::Strip
     );
     assert_eq!(behavior.retention_directive(), RetentionDirective::None);
@@ -62,15 +66,15 @@ fn live_remote_hybrid_turn_boundary_compact_is_thread_memory_only() {
         false
     );
     assert_eq!(
-        behavior.drops_prior_artifact(ArtifactKind::ThreadMemory),
-        true
+        behavior
+            .history_disposition_policy()
+            .drop_prior_artifact_kinds,
+        vec![ArtifactKind::ThreadMemory, ArtifactKind::ContinuationBridge,]
     );
     assert_eq!(
-        behavior.drops_prior_artifact(ArtifactKind::ContinuationBridge),
-        true
-    );
-    assert_eq!(
-        behavior.legacy_compaction_marker_policy(),
+        behavior
+            .history_disposition_policy()
+            .legacy_compaction_marker_policy,
         LegacyCompactionMarkerPolicy::PreserveForUpstreamCompatibility
     );
     assert_eq!(
@@ -130,15 +134,15 @@ fn live_refresh_is_thread_memory_only_for_supported_engines() {
             false
         );
         assert_eq!(
-            behavior.drops_prior_artifact(ArtifactKind::ThreadMemory),
-            true
+            behavior
+                .history_disposition_policy()
+                .drop_prior_artifact_kinds,
+            vec![ArtifactKind::ThreadMemory, ArtifactKind::ContinuationBridge,]
         );
         assert_eq!(
-            behavior.drops_prior_artifact(ArtifactKind::ContinuationBridge),
-            true
-        );
-        assert_eq!(
-            behavior.legacy_compaction_marker_policy(),
+            behavior
+                .history_disposition_policy()
+                .legacy_compaction_marker_policy,
             LegacyCompactionMarkerPolicy::Strip
         );
         assert_eq!(
@@ -191,15 +195,18 @@ fn live_prune_is_manifest_only_and_drops_turn_scoped_bridge() {
         Some(ArtifactRequiredness::Required)
     );
     assert_eq!(
-        behavior.drops_prior_artifact(ArtifactKind::ContinuationBridge),
-        true
+        behavior
+            .history_disposition_policy()
+            .drop_prior_artifact_kinds,
+        vec![
+            ArtifactKind::PruneManifest,
+            ArtifactKind::ContinuationBridge,
+        ]
     );
     assert_eq!(
-        behavior.drops_prior_artifact(ArtifactKind::PruneManifest),
-        true
-    );
-    assert_eq!(
-        behavior.legacy_compaction_marker_policy(),
+        behavior
+            .history_disposition_policy()
+            .legacy_compaction_marker_policy,
         LegacyCompactionMarkerPolicy::Strip
     );
     assert_eq!(

@@ -9,8 +9,8 @@ use codex_context_maintenance_policy::ArtifactRequest;
 use codex_context_maintenance_policy::ArtifactRequiredness;
 use codex_context_maintenance_policy::ContextInjectionPolicy;
 use codex_context_maintenance_policy::GovernanceEffect;
+use codex_context_maintenance_policy::HistoryDispositionPolicy;
 use codex_context_maintenance_policy::HistoryDispositionRequest;
-use codex_context_maintenance_policy::LegacyCompactionMarkerPolicy;
 use codex_context_maintenance_policy::MaintenanceAction;
 use codex_context_maintenance_policy::MaintenancePlanningRequest;
 use codex_context_maintenance_policy::MaintenancePolicyError;
@@ -27,9 +27,8 @@ use tracing::warn;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RuntimeMaintenancePlan {
     requested_artifacts: Vec<ArtifactRequest>,
-    drop_prior_artifact_kinds: Vec<ArtifactKind>,
+    history_disposition: HistoryDispositionPolicy,
     context_injection: ContextInjectionPolicy,
-    legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy,
     retention_directive: RetentionDirective,
     governance_effects: Vec<GovernanceEffect>,
 }
@@ -51,25 +50,13 @@ impl RuntimeMaintenancePlan {
             .map(|artifact| artifact.requiredness)
     }
 
-    #[cfg(test)]
-    pub(crate) fn drops_prior_artifact(&self, kind: ArtifactKind) -> bool {
-        self.drop_prior_artifact_kinds.contains(&kind)
-    }
-
-    pub(crate) fn drop_prior_artifact_kinds(&self) -> &[ArtifactKind] {
-        &self.drop_prior_artifact_kinds
-    }
-
     pub(crate) fn history_disposition_request(
         &self,
         items: Vec<codex_protocol::models::ResponseItem>,
-        prune_superseded_artifacts: bool,
     ) -> HistoryDispositionRequest {
         HistoryDispositionRequest {
             items,
-            prune_superseded_artifacts,
-            drop_prior_artifact_kinds: self.drop_prior_artifact_kinds.clone(),
-            legacy_compaction_marker_policy: self.legacy_compaction_marker_policy,
+            policy: self.history_disposition.clone(),
         }
     }
 
@@ -86,8 +73,8 @@ impl RuntimeMaintenancePlan {
         self.context_injection
     }
 
-    pub(crate) fn legacy_compaction_marker_policy(&self) -> LegacyCompactionMarkerPolicy {
-        self.legacy_compaction_marker_policy
+    pub(crate) fn history_disposition_policy(&self) -> &HistoryDispositionPolicy {
+        &self.history_disposition
     }
 
     pub(crate) fn retention_directive(&self) -> RetentionDirective {
@@ -244,9 +231,8 @@ fn runtime_plan(request: MaintenancePlanningRequest) -> CodexResult<RuntimeMaint
 fn runtime_plan_from_policy_plan(plan: MaintenancePolicyPlan) -> RuntimeMaintenancePlan {
     RuntimeMaintenancePlan {
         requested_artifacts: plan.requested_artifacts,
-        drop_prior_artifact_kinds: plan.drop_prior_artifact_kinds,
+        history_disposition: plan.history_disposition,
         context_injection: plan.context_injection,
-        legacy_compaction_marker_policy: plan.legacy_compaction_marker_policy,
         retention_directive: plan.retention_directive,
         governance_effects: plan.governance_effects,
     }

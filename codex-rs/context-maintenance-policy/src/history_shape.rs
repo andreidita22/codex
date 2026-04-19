@@ -1,20 +1,19 @@
 use codex_protocol::models::ResponseItem;
 
-use crate::ArtifactKind;
 use crate::ContextInjectionPolicy;
+use crate::HistoryDispositionPolicy;
 use crate::HistoryDispositionRequest;
-use crate::LegacyCompactionMarkerPolicy;
+use crate::RemoteCompactedHistoryKeepPolicy;
 use crate::RetentionDirective;
-use crate::apply_history_disposition;
 use crate::apply_retention_directive;
+use crate::artifact_codecs::apply_history_disposition_with_summary_classifier;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RemoteCompactedHistoryShapeRequest {
     pub compacted_history: Vec<ResponseItem>,
     pub initial_context: Vec<ResponseItem>,
     pub authoritative_items: Vec<ResponseItem>,
-    pub drop_prior_artifact_kinds: Vec<ArtifactKind>,
-    pub legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy,
+    pub history_disposition: HistoryDispositionPolicy,
     pub retention_directive: RetentionDirective,
     pub context_injection: ContextInjectionPolicy,
 }
@@ -88,29 +87,44 @@ where
     compacted_history
 }
 
-pub fn shape_remote_compacted_history<FKeepItem, FRealUser, FUserOrSummary, FRawConversation>(
+pub fn shape_remote_compacted_history<
+    FRemoteUserKeep,
+    FRealUser,
+    FUserOrSummary,
+    FSummary,
+    FRawConversation,
+>(
     request: RemoteCompactedHistoryShapeRequest,
-    should_keep_item: FKeepItem,
+    should_keep_remote_user_message: FRemoteUserKeep,
     is_real_user_message: FRealUser,
     is_user_or_summary_message: FUserOrSummary,
+    is_compaction_summary_message: FSummary,
     is_raw_conversation_message: FRawConversation,
 ) -> Vec<ResponseItem>
 where
-    FKeepItem: Fn(&ResponseItem) -> bool,
+    FRemoteUserKeep: Fn(&ResponseItem) -> bool,
     FRealUser: Fn(&ResponseItem) -> bool,
     FUserOrSummary: Fn(&ResponseItem) -> bool,
+    FSummary: Fn(&ResponseItem) -> bool,
     FRawConversation: Fn(&ResponseItem) -> bool,
 {
-    let disposition = apply_history_disposition(HistoryDispositionRequest {
-        items: request.compacted_history,
-        prune_superseded_artifacts: false,
-        drop_prior_artifact_kinds: request.drop_prior_artifact_kinds,
-        legacy_compaction_marker_policy: request.legacy_compaction_marker_policy,
-    });
+    let disposition = apply_history_disposition_with_summary_classifier(
+        HistoryDispositionRequest {
+            items: request.compacted_history,
+            policy: request.history_disposition.clone(),
+        },
+        is_compaction_summary_message,
+    );
     let mut compacted_history: Vec<_> = disposition
         .items
         .into_iter()
-        .filter(should_keep_item)
+        .filter(|item| {
+            should_keep_remote_compacted_history_item(
+                item,
+                request.history_disposition.remote_keep_policy,
+                &should_keep_remote_user_message,
+            )
+        })
         .collect();
 
     if matches!(
@@ -143,6 +157,40 @@ where
     compacted_history
 }
 
+fn should_keep_remote_compacted_history_item<FUserKeep>(
+    item: &ResponseItem,
+    keep_policy: RemoteCompactedHistoryKeepPolicy,
+    should_keep_remote_user_message: &FUserKeep,
+) -> bool
+where
+    FUserKeep: Fn(&ResponseItem) -> bool,
+{
+    match keep_policy {
+        RemoteCompactedHistoryKeepPolicy::KeepAll => true,
+        RemoteCompactedHistoryKeepPolicy::DropDeveloperAndNonTurnUserMessages => match item {
+            ResponseItem::Message { role, .. } if role == "developer" => false,
+            ResponseItem::Message { role, .. } if role == "user" => {
+                should_keep_remote_user_message(item)
+            }
+            ResponseItem::Message { role, .. } if role == "assistant" => true,
+            ResponseItem::Message { .. } => false,
+            ResponseItem::Compaction { .. } => true,
+            ResponseItem::Reasoning { .. }
+            | ResponseItem::LocalShellCall { .. }
+            | ResponseItem::FunctionCall { .. }
+            | ResponseItem::ToolSearchCall { .. }
+            | ResponseItem::FunctionCallOutput { .. }
+            | ResponseItem::ToolSearchOutput { .. }
+            | ResponseItem::CustomToolCall { .. }
+            | ResponseItem::CustomToolCallOutput { .. }
+            | ResponseItem::WebSearchCall { .. }
+            | ResponseItem::ImageGenerationCall { .. }
+            | ResponseItem::GhostSnapshot { .. }
+            | ResponseItem::Other => false,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use codex_protocol::models::ContentItem;
@@ -155,9 +203,12 @@ mod tests {
     use super::shape_remote_compacted_history;
     use crate::ArtifactKind;
     use crate::ContextInjectionPolicy;
+    use crate::HistoryDispositionPolicy;
     use crate::LegacyCompactionMarkerPolicy;
+    use crate::RemoteCompactedHistoryKeepPolicy;
     use crate::RetentionDirective;
     use crate::RetentionGate;
+    use crate::SummaryDispositionPolicy;
 
     #[test]
     fn initial_context_insertion_keeps_summary_last_when_no_real_user_remains() {
@@ -220,17 +271,24 @@ mod tests {
             ],
             initial_context: vec![message("developer", "fresh context")],
             authoritative_items: vec![message("developer", "thread memory")],
-            drop_prior_artifact_kinds: vec![],
-            legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
+            history_disposition: HistoryDispositionPolicy {
+                prune_superseded_artifacts: false,
+                summary_disposition: SummaryDispositionPolicy::KeepAll,
+                remote_keep_policy:
+                    RemoteCompactedHistoryKeepPolicy::DropDeveloperAndNonTurnUserMessages,
+                drop_prior_artifact_kinds: vec![],
+                legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
+            },
             retention_directive: RetentionDirective::None,
             context_injection: ContextInjectionPolicy::BeforeLastRealUserOrSummary,
         };
 
         let refreshed = shape_remote_compacted_history(
             request,
-            should_keep_item,
+            should_keep_remote_user_message,
             is_real_user_message,
             is_user_or_summary_message,
+            is_summary_message,
             is_raw_conversation_message,
         );
 
@@ -256,8 +314,13 @@ mod tests {
             ],
             initial_context: vec![],
             authoritative_items: vec![],
-            drop_prior_artifact_kinds: vec![ArtifactKind::ThreadMemory],
-            legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            history_disposition: HistoryDispositionPolicy {
+                prune_superseded_artifacts: false,
+                summary_disposition: SummaryDispositionPolicy::KeepAll,
+                remote_keep_policy: RemoteCompactedHistoryKeepPolicy::KeepAll,
+                drop_prior_artifact_kinds: vec![ArtifactKind::ThreadMemory],
+                legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
+            },
             retention_directive: RetentionDirective::None,
             context_injection: ContextInjectionPolicy::None,
         };
@@ -267,6 +330,7 @@ mod tests {
             |_| true,
             is_real_user_message,
             is_user_or_summary_message,
+            is_summary_message,
             is_raw_conversation_message,
         );
 
@@ -285,8 +349,14 @@ mod tests {
             authoritative_items: vec![developer_message(
                 "<thread_memory>durable memory</thread_memory>",
             )],
-            drop_prior_artifact_kinds: vec![],
-            legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
+            history_disposition: HistoryDispositionPolicy {
+                prune_superseded_artifacts: false,
+                summary_disposition: SummaryDispositionPolicy::KeepAll,
+                remote_keep_policy:
+                    RemoteCompactedHistoryKeepPolicy::DropDeveloperAndNonTurnUserMessages,
+                drop_prior_artifact_kinds: vec![],
+                legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
+            },
             retention_directive: RetentionDirective::KeepRecentRawConversation {
                 max_messages: 1,
                 gate: RetentionGate::FinalHistoryContainsArtifact(ArtifactKind::ThreadMemory),
@@ -296,9 +366,10 @@ mod tests {
 
         let refreshed = shape_remote_compacted_history(
             request,
-            should_keep_item,
+            should_keep_remote_user_message,
             is_real_user_message,
             is_user_or_summary_message,
+            is_summary_message,
             is_raw_conversation_message,
         );
 
@@ -312,8 +383,8 @@ mod tests {
         );
     }
 
-    fn should_keep_item(item: &ResponseItem) -> bool {
-        !matches!(item, ResponseItem::Message { role, .. } if role == "developer")
+    fn should_keep_remote_user_message(item: &ResponseItem) -> bool {
+        matches!(item, ResponseItem::Message { role, .. } if role == "user")
     }
 
     fn is_real_user_message(item: &ResponseItem) -> bool {
@@ -331,6 +402,14 @@ mod tests {
     fn is_raw_conversation_message(item: &ResponseItem) -> bool {
         matches!(item, ResponseItem::Message { role, .. } if role == "assistant")
             || is_real_user_message(item)
+    }
+
+    fn is_summary_message(item: &ResponseItem) -> bool {
+        matches!(
+            item,
+            ResponseItem::Message { role, content, .. }
+                if role == "user" && content_text(content).is_some_and(|text| is_summary_text(&text))
+        )
     }
 
     fn message(role: &str, text: &str) -> ResponseItem {
