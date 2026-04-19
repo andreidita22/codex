@@ -38,9 +38,6 @@ pub(crate) async fn generate_thread_memory_item(
 
     let trim_result = limit_thread_memory_source_items(source_items);
     let mut source_items = trim_result.source_items;
-    if source_items.is_empty() && previous_memory.is_none() {
-        return Ok(None);
-    }
 
     source_items.push(ResponseItem::Message {
         id: None,
@@ -122,9 +119,16 @@ fn is_compaction_summary(item: &ResponseItem) -> bool {
         return false;
     }
 
-    let Some(text) = content_items_to_text(content) else {
-        return false;
-    };
-    text.trim_start()
-        .starts_with(crate::compact::SUMMARY_PREFIX.trim_end())
+    content
+        .iter()
+        .find_map(|item| match item {
+            ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                (!text.is_empty()).then_some(text.as_str())
+            }
+            ContentItem::InputImage { .. } => None,
+        })
+        .is_some_and(|text| {
+            text.trim_start()
+                .starts_with(crate::compact::SUMMARY_PREFIX.trim_end())
+        })
 }

@@ -2,7 +2,7 @@ mod baton;
 mod rich_review;
 mod supplemental;
 
-use crate::artifact_codecs::tagged_artifact_kind_from_text;
+use crate::artifact_codecs::tagged_artifact_kind;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
@@ -168,21 +168,13 @@ fn should_include_continuation_bridge_source_item(
 ) -> bool {
     match item {
         ResponseItem::Compaction { .. } | ResponseItem::GhostSnapshot { .. } => false,
-        ResponseItem::Message { role, content, .. } if role == "developer" => {
-            let Some(text) = crate::content_items_to_text(content) else {
-                return true;
-            };
-
-            match tagged_artifact_kind_from_text(&text) {
-                Some(crate::ArtifactKind::ContinuationBridge) => {
-                    matches!(prior_bridge_visibility, PriorBridgeVisibility::Allow)
-                }
-                Some(crate::ArtifactKind::PruneManifest) => false,
-                Some(crate::ArtifactKind::ThreadMemory)
-                | Some(crate::ArtifactKind::CompactionMarker)
-                | None => true,
+        ResponseItem::Message { .. } => match tagged_artifact_kind(item) {
+            Some(crate::ArtifactKind::ContinuationBridge) => {
+                matches!(prior_bridge_visibility, PriorBridgeVisibility::Allow)
             }
-        }
+            Some(crate::ArtifactKind::PruneManifest) => false,
+            _ => true,
+        },
         _ => true,
     }
 }
