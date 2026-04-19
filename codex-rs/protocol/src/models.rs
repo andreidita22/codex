@@ -158,6 +158,31 @@ pub enum ContentItem {
     OutputText { text: String },
 }
 
+/// Best-effort conversion of multimodal message content into plain text for
+/// human-readable surfaces.
+///
+/// This conversion is intentionally lossy:
+/// - only text items are included
+/// - image items are ignored
+/// - empty text fragments are dropped
+pub fn content_items_to_text(content: &[ContentItem]) -> Option<String> {
+    let text_segments = content
+        .iter()
+        .filter_map(|item| match item {
+            ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                (!text.is_empty()).then_some(text.as_str())
+            }
+            ContentItem::InputImage { .. } => None,
+        })
+        .collect::<Vec<_>>();
+
+    if text_segments.is_empty() {
+        None
+    } else {
+        Some(text_segments.join("\n"))
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum ImageDetail {
@@ -1159,6 +1184,103 @@ pub fn function_call_output_content_items_to_text(
     }
 }
 
+/// Removes the matching paired response item, if present, for the provided
+/// tool-call-shaped item.
+///
+/// This is useful when trimming history suffixes while preserving the invariant
+/// that tool calls and their outputs do not survive independently.
+pub fn remove_corresponding_response_item(items: &mut Vec<ResponseItem>, item: &ResponseItem) {
+    match item {
+        ResponseItem::FunctionCall { call_id, .. } => {
+            remove_first_matching(items, |i| {
+                matches!(
+                    i,
+                    ResponseItem::FunctionCallOutput {
+                        call_id: existing, ..
+                    } if existing == call_id
+                )
+            });
+        }
+        ResponseItem::FunctionCallOutput { call_id, .. } => {
+            if let Some(pos) = items.iter().position(|i| {
+                matches!(i, ResponseItem::FunctionCall { call_id: existing, .. } if existing == call_id)
+            }) {
+                items.remove(pos);
+            } else if let Some(pos) = items.iter().position(|i| {
+                matches!(i, ResponseItem::LocalShellCall { call_id: Some(existing), .. } if existing == call_id)
+            }) {
+                items.remove(pos);
+            }
+        }
+        ResponseItem::ToolSearchCall {
+            call_id: Some(call_id),
+            ..
+        } => {
+            remove_first_matching(items, |i| {
+                matches!(
+                    i,
+                    ResponseItem::ToolSearchOutput {
+                        call_id: Some(existing),
+                        ..
+                    } if existing == call_id
+                )
+            });
+        }
+        ResponseItem::ToolSearchOutput {
+            call_id: Some(call_id),
+            ..
+        } => {
+            remove_first_matching(items, |i| {
+                matches!(
+                    i,
+                    ResponseItem::ToolSearchCall {
+                        call_id: Some(existing),
+                        ..
+                    } if existing == call_id
+                )
+            });
+        }
+        ResponseItem::CustomToolCall { call_id, .. } => {
+            remove_first_matching(items, |i| {
+                matches!(
+                    i,
+                    ResponseItem::CustomToolCallOutput {
+                        call_id: existing, ..
+                    } if existing == call_id
+                )
+            });
+        }
+        ResponseItem::CustomToolCallOutput { call_id, .. } => {
+            remove_first_matching(items, |i| {
+                matches!(i, ResponseItem::CustomToolCall { call_id: existing, .. } if existing == call_id)
+            });
+        }
+        ResponseItem::LocalShellCall {
+            call_id: Some(call_id),
+            ..
+        } => {
+            remove_first_matching(items, |i| {
+                matches!(
+                    i,
+                    ResponseItem::FunctionCallOutput {
+                        call_id: existing, ..
+                    } if existing == call_id
+                )
+            });
+        }
+        _ => {}
+    }
+}
+
+fn remove_first_matching<F>(items: &mut Vec<ResponseItem>, predicate: F)
+where
+    F: Fn(&ResponseItem) -> bool,
+{
+    if let Some(pos) = items.iter().position(predicate) {
+        items.remove(pos);
+    }
+}
+
 impl From<crate::dynamic_tools::DynamicToolCallOutputContentItem>
     for FunctionCallOutputContentItem
 {
@@ -1607,6 +1729,123 @@ mod tests {
 
         let text = function_call_output_content_items_to_text(&content_items);
         assert_eq!(text, None);
+    }
+
+    #[test]
+    fn content_items_to_text_joins_text_segments() {
+        let content_items = vec![
+            ContentItem::InputText {
+                text: "line 1".to_string(),
+            },
+            ContentItem::InputImage {
+                image_url: "data:image/png;base64,AAA".to_string(),
+            },
+            ContentItem::OutputText {
+                text: "line 2".to_string(),
+            },
+        ];
+
+        let text = content_items_to_text(&content_items);
+        assert_eq!(text, Some("line 1\nline 2".to_string()));
+    }
+
+    #[test]
+    fn content_items_to_text_ignores_empty_text_and_images() {
+        let content_items = vec![
+            ContentItem::InputText {
+                text: String::new(),
+            },
+            ContentItem::InputImage {
+                image_url: "data:image/png;base64,AAA".to_string(),
+            },
+        ];
+
+        let text = content_items_to_text(&content_items);
+        assert_eq!(text, None);
+    }
+
+    #[test]
+    fn remove_corresponding_response_item_removes_matching_function_call_output() {
+        let call = ResponseItem::FunctionCall {
+            id: None,
+            name: "shell".to_string(),
+            namespace: None,
+            arguments: "{}".to_string(),
+            call_id: "call-1".to_string(),
+        };
+        let mut items = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "keep".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "call-1".to_string(),
+                output: FunctionCallOutputPayload::from_text("done".to_string()),
+            },
+        ];
+
+        remove_corresponding_response_item(&mut items, &call);
+
+        assert_eq!(
+            items,
+            vec![ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "keep".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn remove_corresponding_response_item_removes_matching_tool_call_for_output() {
+        let output = ResponseItem::ToolSearchOutput {
+            call_id: Some("call-2".to_string()),
+            status: "completed".to_string(),
+            execution: "local".to_string(),
+            tools: vec![],
+        };
+        let mut items = vec![
+            ResponseItem::ToolSearchCall {
+                id: None,
+                call_id: Some("call-2".to_string()),
+                status: None,
+                execution: "local".to_string(),
+                arguments: serde_json::json!({}),
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "keep".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+        ];
+
+        remove_corresponding_response_item(&mut items, &output);
+
+        assert_eq!(
+            items,
+            vec![ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "keep".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            }]
+        );
     }
 
     #[test]

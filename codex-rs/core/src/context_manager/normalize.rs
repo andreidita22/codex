@@ -2,6 +2,7 @@ use codex_protocol::models::ContentItem;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::models::remove_corresponding_response_item;
 use codex_protocol::openai_models::InputModality;
 use std::collections::HashSet;
 
@@ -195,99 +196,7 @@ pub(crate) fn remove_orphan_outputs(items: &mut Vec<ResponseItem>) {
 }
 
 pub(crate) fn remove_corresponding_for(items: &mut Vec<ResponseItem>, item: &ResponseItem) {
-    match item {
-        ResponseItem::FunctionCall { call_id, .. } => {
-            remove_first_matching(items, |i| {
-                matches!(
-                    i,
-                    ResponseItem::FunctionCallOutput {
-                        call_id: existing, ..
-                    } if existing == call_id
-                )
-            });
-        }
-        ResponseItem::FunctionCallOutput { call_id, .. } => {
-            if let Some(pos) = items.iter().position(|i| {
-                matches!(i, ResponseItem::FunctionCall { call_id: existing, .. } if existing == call_id)
-            }) {
-                items.remove(pos);
-            } else if let Some(pos) = items.iter().position(|i| {
-                matches!(i, ResponseItem::LocalShellCall { call_id: Some(existing), .. } if existing == call_id)
-            }) {
-                items.remove(pos);
-            }
-        }
-        ResponseItem::ToolSearchCall {
-            call_id: Some(call_id),
-            ..
-        } => {
-            remove_first_matching(items, |i| {
-                matches!(
-                    i,
-                    ResponseItem::ToolSearchOutput {
-                        call_id: Some(existing),
-                        ..
-                    } if existing == call_id
-                )
-            });
-        }
-        ResponseItem::ToolSearchOutput {
-            call_id: Some(call_id),
-            ..
-        } => {
-            remove_first_matching(
-                items,
-                |i| {
-                    matches!(
-                        i,
-                        ResponseItem::ToolSearchCall {
-                            call_id: Some(existing),
-                            ..
-                        } if existing == call_id
-                    )
-                },
-            );
-        }
-        ResponseItem::CustomToolCall { call_id, .. } => {
-            remove_first_matching(items, |i| {
-                matches!(
-                    i,
-                    ResponseItem::CustomToolCallOutput {
-                        call_id: existing, ..
-                    } if existing == call_id
-                )
-            });
-        }
-        ResponseItem::CustomToolCallOutput { call_id, .. } => {
-            remove_first_matching(
-                items,
-                |i| matches!(i, ResponseItem::CustomToolCall { call_id: existing, .. } if existing == call_id),
-            );
-        }
-        ResponseItem::LocalShellCall {
-            call_id: Some(call_id),
-            ..
-        } => {
-            remove_first_matching(items, |i| {
-                matches!(
-                    i,
-                    ResponseItem::FunctionCallOutput {
-                        call_id: existing, ..
-                    } if existing == call_id
-                )
-            });
-        }
-        _ => {}
-    }
-}
-
-fn remove_first_matching<F>(items: &mut Vec<ResponseItem>, predicate: F)
-where
-    F: Fn(&ResponseItem) -> bool,
-{
-    if let Some(pos) = items.iter().position(predicate) {
-        items.remove(pos);
-    }
+    remove_corresponding_response_item(items, item);
 }
 
 /// Strip image content from messages and tool outputs when the model does not support images.
