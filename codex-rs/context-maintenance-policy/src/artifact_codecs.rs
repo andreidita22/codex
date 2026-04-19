@@ -97,7 +97,8 @@ fn is_close_tag_boundary(after_tag: &str) -> bool {
     matches!(after_tag.chars().next(), Some('>'))
 }
 
-pub fn remove_artifact_kind(
+#[cfg(test)]
+pub(crate) fn remove_artifact_kind(
     items: Vec<ResponseItem>,
     kind: ArtifactKind,
 ) -> (Vec<ResponseItem>, usize) {
@@ -116,7 +117,7 @@ pub fn remove_artifact_kind(
     (items, removed)
 }
 
-pub fn prune_superseded_artifacts(items: Vec<ResponseItem>) -> (Vec<ResponseItem>, usize) {
+pub(crate) fn prune_superseded_artifacts(items: Vec<ResponseItem>) -> (Vec<ResponseItem>, usize) {
     let mut last_continuation_bridge = None;
     let mut last_thread_memory = None;
     let mut last_prune_manifest = None;

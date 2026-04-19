@@ -9,8 +9,6 @@ mod thread_memory;
 pub use artifact_codecs::apply_history_disposition;
 pub use artifact_codecs::apply_history_disposition_with_summary_classifier;
 pub use artifact_codecs::build_prune_manifest_item;
-pub use artifact_codecs::prune_superseded_artifacts;
-pub use artifact_codecs::remove_artifact_kind;
 pub use continuation_bridge::BridgeVariant;
 pub use continuation_bridge::ContinuationBridgeModelInput;
 pub use continuation_bridge::ContinuationBridgePayload;
