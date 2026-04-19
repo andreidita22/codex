@@ -200,10 +200,25 @@ pub fn build_prune_manifest_item(
     })
 }
 
+/// Applies history disposition policies that do not require compaction-summary
+/// classification.
+///
+/// Callers that use [`SummaryDispositionPolicy::KeepLatestCompactionSummary`]
+/// must instead use [`apply_history_disposition_with_summary_classifier`] so
+/// the policy crate can identify summary messages correctly.
 pub fn apply_history_disposition(request: HistoryDispositionRequest) -> HistoryDispositionResult {
+    debug_assert!(
+        !matches!(
+            request.policy.summary_disposition,
+            SummaryDispositionPolicy::KeepLatestCompactionSummary
+        ),
+        "KeepLatestCompactionSummary requires apply_history_disposition_with_summary_classifier"
+    );
     apply_history_disposition_with_summary_classifier(request, |_| false)
 }
 
+/// Applies history disposition policies, including summary disposition when the
+/// caller provides a compaction-summary classifier.
 pub fn apply_history_disposition_with_summary_classifier<F>(
     request: HistoryDispositionRequest,
     is_compaction_summary_message: F,
@@ -270,18 +285,22 @@ fn keep_latest_compaction_summary<F>(
 where
     F: Fn(&ResponseItem) -> bool,
 {
-    let latest_summary_index = items
+    let latest_summary_index = match items
         .iter()
         .enumerate()
         .rev()
-        .find_map(|(idx, item)| is_compaction_summary_message(item).then_some(idx));
+        .find_map(|(idx, item)| is_compaction_summary_message(item).then_some(idx))
+    {
+        Some(idx) => idx,
+        None => return (items, 0),
+    };
 
     let mut removed = 0usize;
     let items = items
         .into_iter()
         .enumerate()
         .filter_map(|(idx, item)| {
-            if is_compaction_summary_message(&item) && Some(idx) != latest_summary_index {
+            if is_compaction_summary_message(&item) && idx != latest_summary_index {
                 removed = removed.saturating_add(1);
                 None
             } else {
