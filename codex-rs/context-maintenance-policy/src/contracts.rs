@@ -139,7 +139,7 @@ pub struct MaintenancePolicyPlan {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub enum MaintenancePolicyError {
-    #[error("action={action:?} timing={timing:?} engine={engine:?}")]
+    #[error("action={action:?}, timing={timing:?}, engine={engine:?}")]
     UnsupportedRoute {
         action: MaintenanceAction,
         timing: MaintenanceTiming,
