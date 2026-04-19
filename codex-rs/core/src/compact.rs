@@ -26,8 +26,10 @@ use codex_analytics::CompactionStrategy;
 use codex_analytics::CompactionTrigger;
 use codex_analytics::now_unix_seconds;
 use codex_context_maintenance_policy::ArtifactKind;
+use codex_context_maintenance_policy::apply_retention_directive;
 use codex_context_maintenance_policy::insert_initial_context_before_last_real_user_or_summary as insert_initial_context_before_last_real_user_or_summary_impl;
 use codex_context_maintenance_policy::insert_items_before_last_summary_or_compaction as insert_items_before_last_summary_or_compaction_impl;
+#[cfg(test)]
 use codex_context_maintenance_policy::retain_recent_raw_conversation_messages as retain_recent_raw_conversation_messages_impl;
 use codex_features::Feature;
 use codex_protocol::error::CodexErr;
@@ -51,8 +53,6 @@ use tracing::error;
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
 const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = 20_000;
-pub(crate) const COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES: usize = 5;
-
 /// Controls whether compaction replacement history must include initial context.
 ///
 /// Pre-turn/manual compaction variants use `DoNotInject`: they replace history with a summary and
@@ -191,7 +191,6 @@ async fn run_compact_task_inner_impl(
             return Err(err);
         }
     };
-    let thread_memory_present = thread_memory_item.is_some();
     let continuation_bridge_item = match execute_requested_artifact(
         runtime_plan.artifact_requiredness(ArtifactKind::ContinuationBridge),
         "continuation bridge",
@@ -326,12 +325,12 @@ async fn run_compact_task_inner_impl(
         new_history =
             insert_items_before_last_summary_or_compaction(new_history, authoritative_items);
     }
-    if thread_memory_present {
-        new_history = retain_recent_raw_conversation_messages(
-            new_history,
-            COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES,
-        );
-    }
+    new_history = apply_retention_directive(
+        new_history,
+        runtime_plan.retention_directive(),
+        is_raw_conversation_message,
+    )
+    .items;
     let ghost_snapshots: Vec<ResponseItem> = history_items
         .iter()
         .filter(|item| matches!(item, ResponseItem::GhostSnapshot { .. }))
@@ -498,6 +497,7 @@ pub(crate) fn is_user_or_summary_message(item: &ResponseItem) -> bool {
     )
 }
 
+#[cfg(test)]
 pub(crate) fn retain_recent_raw_conversation_messages(
     compacted_history: Vec<ResponseItem>,
     max_messages: usize,

@@ -81,6 +81,21 @@ pub enum GovernanceEffect {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RetentionGate {
+    Always,
+    FinalHistoryContainsArtifact(ArtifactKind),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RetentionDirective {
+    None,
+    KeepRecentRawConversation {
+        max_messages: usize,
+        gate: RetentionGate,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ThreadMemoryGovernance {
     Disabled,
     Enabled,
@@ -100,6 +115,7 @@ pub struct MaintenancePolicyPlan {
     pub requested_artifacts: Vec<ArtifactRequest>,
     pub drop_prior_artifact_kinds: Vec<ArtifactKind>,
     pub legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy,
+    pub retention_directive: RetentionDirective,
     pub governance_effects: Vec<GovernanceEffect>,
 }
 

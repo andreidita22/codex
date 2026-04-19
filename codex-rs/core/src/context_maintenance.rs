@@ -2,18 +2,16 @@ use std::sync::Arc;
 
 use crate::codex::Session;
 use crate::codex::TurnContext;
-use crate::compact::COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES;
 use crate::compact::insert_items_before_last_summary_or_compaction;
 use crate::compact::is_summary_message;
-use crate::compact::retain_recent_raw_conversation_messages;
 use crate::context_maintenance_runtime::execute_requested_artifact;
 use crate::context_maintenance_runtime::runtime_plan_for_turn_boundary_maintenance;
 use crate::governance::thread_memory::generate_thread_memory_item;
 use codex_context_maintenance_policy::ArtifactKind;
 use codex_context_maintenance_policy::MaintenanceAction;
 use codex_context_maintenance_policy::apply_history_disposition;
+use codex_context_maintenance_policy::apply_retention_directive;
 use codex_context_maintenance_policy::build_prune_manifest_item;
-use codex_context_maintenance_policy::tagged_artifact_kind;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::ContextCompactionItem;
 use codex_protocol::items::TurnItem;
@@ -66,17 +64,13 @@ pub(crate) async fn run_refresh(
             insert_items_before_last_summary_or_compaction(new_history, authoritative_items);
     }
 
-    let has_thread_memory = new_history
-        .iter()
-        .any(|item| tagged_artifact_kind(item) == Some(ArtifactKind::ThreadMemory));
-    if has_thread_memory {
-        let old_len = new_history.len();
-        new_history = retain_recent_raw_conversation_messages(
-            new_history,
-            COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES,
-        );
-        removed_count = removed_count.saturating_add(old_len.saturating_sub(new_history.len()));
-    }
+    let retention = apply_retention_directive(
+        new_history,
+        runtime_plan.retention_directive(),
+        crate::compact::is_raw_conversation_message,
+    );
+    new_history = retention.items;
+    removed_count = removed_count.saturating_add(retention.removed_count);
 
     let reference_context_item = sess.reference_context_item().await;
     sess.replace_history(new_history, reference_context_item)
@@ -121,17 +115,13 @@ pub(crate) async fn run_prune(
     pruned_history = next_history;
     removed_count = removed_count.saturating_add(summary_removed);
 
-    let has_thread_memory = pruned_history
-        .iter()
-        .any(|item| tagged_artifact_kind(item) == Some(ArtifactKind::ThreadMemory));
-    if has_thread_memory {
-        let old_len = pruned_history.len();
-        pruned_history = retain_recent_raw_conversation_messages(
-            pruned_history,
-            COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES,
-        );
-        removed_count = removed_count.saturating_add(old_len.saturating_sub(pruned_history.len()));
-    }
+    let retention = apply_retention_directive(
+        pruned_history,
+        runtime_plan.retention_directive(),
+        crate::compact::is_raw_conversation_message,
+    );
+    pruned_history = retention.items;
+    removed_count = removed_count.saturating_add(retention.removed_count);
 
     let post_prune_len = pruned_history.len();
     let manifest_item = build_prune_manifest_item(original_len, post_prune_len, removed_count)?;

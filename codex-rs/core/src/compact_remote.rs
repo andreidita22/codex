@@ -5,7 +5,6 @@ use crate::Prompt;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::codex::built_tools;
-use crate::compact::COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES;
 use crate::compact::CompactionAnalyticsAttempt;
 use crate::compact::InitialContextInjection;
 use crate::compact::compaction_status_from_result;
@@ -28,6 +27,7 @@ use codex_analytics::CompactionTrigger;
 use codex_context_maintenance_policy::ArtifactKind;
 use codex_context_maintenance_policy::ContextInjectionPolicy;
 use codex_context_maintenance_policy::RemoteCompactedHistoryShapeRequest;
+use codex_context_maintenance_policy::RetentionDirective;
 use codex_context_maintenance_policy::shape_remote_compacted_history;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
@@ -46,7 +46,7 @@ use tracing::info;
 pub(crate) struct ProcessCompactedHistoryRequest {
     pub(crate) compacted_history: Vec<ResponseItem>,
     pub(crate) authoritative_items: Vec<ResponseItem>,
-    pub(crate) retain_recent_raw_messages: bool,
+    pub(crate) retention_directive: RetentionDirective,
     pub(crate) context_injection: ContextInjectionPolicy,
     pub(crate) drop_prior_artifact_kinds: Vec<ArtifactKind>,
     pub(crate) legacy_compaction_marker_policy:
@@ -187,7 +187,6 @@ async fn run_remote_compact_task_inner_impl(
         || generate_thread_memory_item(sess.as_ref(), turn_context.as_ref(), prompt.input.clone()),
     )
     .await?;
-    let thread_memory_present = thread_memory_item.is_some();
     let continuation_bridge_item = execute_requested_artifact(
         runtime_plan.artifact_requiredness(ArtifactKind::ContinuationBridge),
         "continuation bridge",
@@ -235,7 +234,7 @@ async fn run_remote_compact_task_inner_impl(
                 .cloned()
                 .chain(continuation_bridge_item.iter().cloned())
                 .collect(),
-            retain_recent_raw_messages: thread_memory_present,
+            retention_directive: runtime_plan.retention_directive(),
             context_injection: runtime_plan.context_injection_policy(),
             drop_prior_artifact_kinds: runtime_plan.drop_prior_artifact_kinds().to_vec(),
             legacy_compaction_marker_policy: runtime_plan.legacy_compaction_marker_policy(),
@@ -289,9 +288,8 @@ pub(crate) async fn process_compacted_history(
             authoritative_items: request.authoritative_items,
             drop_prior_artifact_kinds: request.drop_prior_artifact_kinds,
             legacy_compaction_marker_policy: request.legacy_compaction_marker_policy,
-            raw_message_retention_limit: COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES,
+            retention_directive: request.retention_directive,
             context_injection: request.context_injection,
-            retain_recent_raw_messages: request.retain_recent_raw_messages,
         },
         should_keep_compacted_history_item,
         is_real_user_message,

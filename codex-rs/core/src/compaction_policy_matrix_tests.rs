@@ -9,6 +9,8 @@ use codex_context_maintenance_policy::ArtifactKind;
 use codex_context_maintenance_policy::ArtifactRequiredness;
 use codex_context_maintenance_policy::GovernanceEffect;
 use codex_context_maintenance_policy::LegacyCompactionMarkerPolicy;
+use codex_context_maintenance_policy::RetentionDirective;
+use codex_context_maintenance_policy::RetentionGate;
 use pretty_assertions::assert_eq;
 
 #[test]
@@ -39,6 +41,7 @@ fn live_local_pure_intra_turn_compact_is_bridge_only() {
         behavior.legacy_compaction_marker_policy(),
         LegacyCompactionMarkerPolicy::Strip
     );
+    assert_eq!(behavior.retention_directive(), RetentionDirective::None);
 }
 
 #[test]
@@ -70,6 +73,13 @@ fn live_remote_hybrid_turn_boundary_compact_is_thread_memory_only() {
         behavior.legacy_compaction_marker_policy(),
         LegacyCompactionMarkerPolicy::PreserveForUpstreamCompatibility
     );
+    assert_eq!(
+        behavior.retention_directive(),
+        RetentionDirective::KeepRecentRawConversation {
+            max_messages: 5,
+            gate: RetentionGate::FinalHistoryContainsArtifact(ArtifactKind::ThreadMemory),
+        }
+    );
 }
 
 #[test]
@@ -87,6 +97,13 @@ fn live_turn_boundary_compact_suppresses_thread_memory_when_governance_is_off() 
     assert_eq!(
         behavior.governance_effects(),
         &[GovernanceEffect::ThreadMemorySuppressed]
+    );
+    assert_eq!(
+        behavior.retention_directive(),
+        RetentionDirective::KeepRecentRawConversation {
+            max_messages: 5,
+            gate: RetentionGate::FinalHistoryContainsArtifact(ArtifactKind::ThreadMemory),
+        }
     );
 }
 
@@ -123,6 +140,13 @@ fn live_refresh_is_thread_memory_only_for_supported_engines() {
         assert_eq!(
             behavior.legacy_compaction_marker_policy(),
             LegacyCompactionMarkerPolicy::Strip
+        );
+        assert_eq!(
+            behavior.retention_directive(),
+            RetentionDirective::KeepRecentRawConversation {
+                max_messages: 5,
+                gate: RetentionGate::FinalHistoryContainsArtifact(ArtifactKind::ThreadMemory),
+            }
         );
     }
 }
@@ -177,5 +201,12 @@ fn live_prune_is_manifest_only_and_drops_turn_scoped_bridge() {
     assert_eq!(
         behavior.legacy_compaction_marker_policy(),
         LegacyCompactionMarkerPolicy::Strip
+    );
+    assert_eq!(
+        behavior.retention_directive(),
+        RetentionDirective::KeepRecentRawConversation {
+            max_messages: 5,
+            gate: RetentionGate::FinalHistoryContainsArtifact(ArtifactKind::ThreadMemory),
+        }
     );
 }

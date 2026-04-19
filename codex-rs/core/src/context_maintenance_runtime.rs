@@ -17,6 +17,7 @@ use codex_context_maintenance_policy::MaintenancePolicyError;
 use codex_context_maintenance_policy::MaintenancePolicyPlan;
 use codex_context_maintenance_policy::MaintenanceTiming;
 use codex_context_maintenance_policy::PolicyEngine;
+use codex_context_maintenance_policy::RetentionDirective;
 use codex_context_maintenance_policy::ThreadMemoryGovernance;
 use codex_context_maintenance_policy::plan_route;
 use codex_protocol::error::CodexErr;
@@ -29,6 +30,7 @@ pub(crate) struct RuntimeMaintenancePlan {
     drop_prior_artifact_kinds: Vec<ArtifactKind>,
     context_injection: ContextInjectionPolicy,
     legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy,
+    retention_directive: RetentionDirective,
     governance_effects: Vec<GovernanceEffect>,
 }
 
@@ -86,6 +88,10 @@ impl RuntimeMaintenancePlan {
 
     pub(crate) fn legacy_compaction_marker_policy(&self) -> LegacyCompactionMarkerPolicy {
         self.legacy_compaction_marker_policy
+    }
+
+    pub(crate) fn retention_directive(&self) -> RetentionDirective {
+        self.retention_directive
     }
 
     #[cfg(test)]
@@ -241,6 +247,7 @@ fn runtime_plan_from_policy_plan(plan: MaintenancePolicyPlan) -> RuntimeMaintena
         drop_prior_artifact_kinds: plan.drop_prior_artifact_kinds,
         context_injection: plan.context_injection,
         legacy_compaction_marker_policy: plan.legacy_compaction_marker_policy,
+        retention_directive: plan.retention_directive,
         governance_effects: plan.governance_effects,
     }
 }

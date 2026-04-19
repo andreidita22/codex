@@ -1,5 +1,6 @@
 use super::*;
 use crate::context_maintenance_runtime::compaction_engine;
+use codex_context_maintenance_policy::RetentionDirective;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ async fn process_compacted_history_with_test_session(
         crate::compact_remote::ProcessCompactedHistoryRequest {
             compacted_history,
             authoritative_items: Vec::new(),
-            retain_recent_raw_messages: false,
+            retention_directive: RetentionDirective::None,
             context_injection:
                 codex_context_maintenance_policy::ContextInjectionPolicy::BeforeLastRealUserOrSummary,
             drop_prior_artifact_kinds: Vec::new(),

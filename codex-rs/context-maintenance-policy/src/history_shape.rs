@@ -4,8 +4,9 @@ use crate::ArtifactKind;
 use crate::ContextInjectionPolicy;
 use crate::HistoryDispositionRequest;
 use crate::LegacyCompactionMarkerPolicy;
+use crate::RetentionDirective;
 use crate::apply_history_disposition;
-use crate::retain_recent_raw_conversation_messages;
+use crate::apply_retention_directive;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RemoteCompactedHistoryShapeRequest {
@@ -14,9 +15,8 @@ pub struct RemoteCompactedHistoryShapeRequest {
     pub authoritative_items: Vec<ResponseItem>,
     pub drop_prior_artifact_kinds: Vec<ArtifactKind>,
     pub legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy,
-    pub raw_message_retention_limit: usize,
+    pub retention_directive: RetentionDirective,
     pub context_injection: ContextInjectionPolicy,
-    pub retain_recent_raw_messages: bool,
 }
 
 pub fn insert_initial_context_before_last_real_user_or_summary<FRealUser, FUserOrSummary>(
@@ -133,13 +133,12 @@ where
         );
     }
 
-    if request.retain_recent_raw_messages {
-        compacted_history = retain_recent_raw_conversation_messages(
-            compacted_history,
-            request.raw_message_retention_limit,
-            is_raw_conversation_message,
-        );
-    }
+    compacted_history = apply_retention_directive(
+        compacted_history,
+        request.retention_directive,
+        is_raw_conversation_message,
+    )
+    .items;
 
     compacted_history
 }
@@ -157,6 +156,8 @@ mod tests {
     use crate::ArtifactKind;
     use crate::ContextInjectionPolicy;
     use crate::LegacyCompactionMarkerPolicy;
+    use crate::RetentionDirective;
+    use crate::RetentionGate;
 
     #[test]
     fn initial_context_insertion_keeps_summary_last_when_no_real_user_remains() {
@@ -221,9 +222,8 @@ mod tests {
             authoritative_items: vec![message("developer", "thread memory")],
             drop_prior_artifact_kinds: vec![],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
-            raw_message_retention_limit: 10,
+            retention_directive: RetentionDirective::None,
             context_injection: ContextInjectionPolicy::BeforeLastRealUserOrSummary,
-            retain_recent_raw_messages: false,
         };
 
         let refreshed = shape_remote_compacted_history(
@@ -258,9 +258,8 @@ mod tests {
             authoritative_items: vec![],
             drop_prior_artifact_kinds: vec![ArtifactKind::ThreadMemory],
             legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
-            raw_message_retention_limit: 10,
+            retention_directive: RetentionDirective::None,
             context_injection: ContextInjectionPolicy::None,
-            retain_recent_raw_messages: false,
         };
 
         let refreshed = shape_remote_compacted_history(
@@ -272,6 +271,45 @@ mod tests {
         );
 
         assert_eq!(refreshed, vec![message("user", "summary")]);
+    }
+
+    #[test]
+    fn remote_history_shaping_applies_retention_directive_after_authoritative_insertion() {
+        let request = RemoteCompactedHistoryShapeRequest {
+            compacted_history: vec![
+                message("user", "older user"),
+                message("assistant", "latest assistant"),
+                summary_message("summary text"),
+            ],
+            initial_context: vec![],
+            authoritative_items: vec![developer_message(
+                "<thread_memory>durable memory</thread_memory>",
+            )],
+            drop_prior_artifact_kinds: vec![],
+            legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Preserve,
+            retention_directive: RetentionDirective::KeepRecentRawConversation {
+                max_messages: 1,
+                gate: RetentionGate::FinalHistoryContainsArtifact(ArtifactKind::ThreadMemory),
+            },
+            context_injection: ContextInjectionPolicy::None,
+        };
+
+        let refreshed = shape_remote_compacted_history(
+            request,
+            should_keep_item,
+            is_real_user_message,
+            is_user_or_summary_message,
+            is_raw_conversation_message,
+        );
+
+        assert_eq!(
+            refreshed,
+            vec![
+                message("assistant", "latest assistant"),
+                developer_message("<thread_memory>durable memory</thread_memory>"),
+                summary_message("summary text"),
+            ]
+        );
     }
 
     fn should_keep_item(item: &ResponseItem) -> bool {
@@ -291,10 +329,8 @@ mod tests {
     }
 
     fn is_raw_conversation_message(item: &ResponseItem) -> bool {
-        matches!(
-            item,
-            ResponseItem::Message { role, .. } if role == "user" || role == "assistant"
-        )
+        matches!(item, ResponseItem::Message { role, .. } if role == "assistant")
+            || is_real_user_message(item)
     }
 
     fn message(role: &str, text: &str) -> ResponseItem {
