@@ -11,7 +11,7 @@ use crate::codex::TurnContext;
 use crate::codex::get_last_assistant_message_from_turn;
 use crate::config::CompactionEngine;
 use crate::context_maintenance_config::resolve_context_maintenance_request_context;
-use crate::context_maintenance_runtime::compact_timing_from_initial_context_injection;
+use crate::context_maintenance_runtime::CompactInvocationTiming;
 use crate::context_maintenance_runtime::execute_requested_artifact;
 use crate::context_maintenance_runtime::runtime_plan_for_compact;
 use crate::continuation_bridge::generate_continuation_bridge_item;
@@ -59,12 +59,11 @@ pub(crate) const COMPACT_RAW_CONVERSATION_WINDOW_MESSAGES: usize = 5;
 /// clear `reference_context_item`, so the next regular turn will fully reinject initial context
 /// after compaction.
 ///
-/// Mid-turn compaction must use `BeforeLastUserMessage` because the model is trained to see the
-/// compaction summary as the last item in history after mid-turn compaction; we therefore inject
-/// initial context into the replacement history just above the last real user message.
+/// Mid-turn compaction injects initial context above the last real user message or summary because
+/// the model is trained to see the compaction summary as the last item in replacement history.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InitialContextInjection {
-    BeforeLastUserMessage,
+    BeforeLastRealUserOrSummary,
     DoNotInject,
 }
 
@@ -78,7 +77,7 @@ pub(crate) fn should_use_remote_compact_task(turn_context: &TurnContext) -> bool
 pub(crate) async fn run_inline_auto_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
-    initial_context_injection: InitialContextInjection,
+    timing: CompactInvocationTiming,
     reason: CompactionReason,
     phase: CompactionPhase,
 ) -> CodexResult<()> {
@@ -93,7 +92,7 @@ pub(crate) async fn run_inline_auto_compact_task(
         sess,
         turn_context,
         input,
-        initial_context_injection,
+        timing,
         CompactionTrigger::Auto,
         reason,
         phase,
@@ -118,7 +117,7 @@ pub(crate) async fn run_compact_task(
         sess.clone(),
         turn_context,
         input,
-        InitialContextInjection::DoNotInject,
+        CompactInvocationTiming::TurnBoundary,
         CompactionTrigger::Manual,
         CompactionReason::UserRequested,
         CompactionPhase::StandaloneTurn,
@@ -130,7 +129,7 @@ async fn run_compact_task_inner(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
     input: Vec<UserInput>,
-    initial_context_injection: InitialContextInjection,
+    timing: CompactInvocationTiming,
     trigger: CompactionTrigger,
     reason: CompactionReason,
     phase: CompactionPhase,
@@ -144,13 +143,9 @@ async fn run_compact_task_inner(
         phase,
     )
     .await;
-    let result = run_compact_task_inner_impl(
-        Arc::clone(&sess),
-        Arc::clone(&turn_context),
-        input,
-        initial_context_injection,
-    )
-    .await;
+    let result =
+        run_compact_task_inner_impl(Arc::clone(&sess), Arc::clone(&turn_context), input, timing)
+            .await;
     attempt
         .track(
             sess.as_ref(),
@@ -165,11 +160,10 @@ async fn run_compact_task_inner_impl(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
     input: Vec<UserInput>,
-    initial_context_injection: InitialContextInjection,
+    timing: CompactInvocationTiming,
 ) -> CodexResult<()> {
-    let timing = compact_timing_from_initial_context_injection(initial_context_injection);
     let runtime_plan = runtime_plan_for_compact(turn_context.as_ref(), timing)?;
-    let initial_context_injection = runtime_plan.initial_context_injection();
+    let injection_placement = runtime_plan.context_injection_placement();
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(&turn_context, &compaction_item)
         .await;
@@ -321,8 +315,8 @@ async fn run_compact_task_inner_impl(
     let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
 
     if matches!(
-        initial_context_injection,
-        InitialContextInjection::BeforeLastUserMessage
+        injection_placement,
+        InitialContextInjection::BeforeLastRealUserOrSummary
     ) {
         let initial_context = sess.build_initial_context(turn_context.as_ref()).await;
         new_history =
@@ -344,9 +338,11 @@ async fn run_compact_task_inner_impl(
         .cloned()
         .collect();
     new_history.extend(ghost_snapshots);
-    let reference_context_item = match initial_context_injection {
+    let reference_context_item = match injection_placement {
         InitialContextInjection::DoNotInject => None,
-        InitialContextInjection::BeforeLastUserMessage => Some(turn_context.to_turn_context_item()),
+        InitialContextInjection::BeforeLastRealUserOrSummary => {
+            Some(turn_context.to_turn_context_item())
+        }
     };
     let compacted_item = CompactedItem {
         message: summary_text.clone(),

@@ -1,6 +1,6 @@
 use crate::config::CompactionEngine;
 use crate::config::GovernancePathVariant;
-use crate::context_maintenance_runtime::CompactTimingForTests;
+use crate::context_maintenance_runtime::CompactInvocationTiming;
 use crate::context_maintenance_runtime::TurnBoundaryMaintenanceActionForTests;
 use crate::context_maintenance_runtime::live_compact_route_behavior_for_tests;
 use crate::context_maintenance_runtime::live_turn_boundary_maintenance_behavior_for_tests;
@@ -16,7 +16,7 @@ fn live_local_pure_intra_turn_compact_is_bridge_only() {
     let behavior = live_compact_route_behavior_for_tests(
         CompactionEngine::LocalPure,
         GovernancePathVariant::StrictV1Shadow,
-        CompactTimingForTests::IntraTurn,
+        CompactInvocationTiming::IntraTurn,
     );
 
     assert_eq!(
@@ -46,7 +46,7 @@ fn live_remote_hybrid_turn_boundary_compact_is_thread_memory_only() {
     let behavior = live_compact_route_behavior_for_tests(
         CompactionEngine::RemoteHybrid,
         GovernancePathVariant::StrictV1Shadow,
-        CompactTimingForTests::TurnBoundary,
+        CompactInvocationTiming::TurnBoundary,
     );
 
     assert_eq!(behavior.requests_artifact(ArtifactKind::ThreadMemory), true);
@@ -77,7 +77,7 @@ fn live_turn_boundary_compact_suppresses_thread_memory_when_governance_is_off() 
     let behavior = live_compact_route_behavior_for_tests(
         CompactionEngine::LocalPure,
         GovernancePathVariant::Off,
-        CompactTimingForTests::TurnBoundary,
+        CompactInvocationTiming::TurnBoundary,
     );
 
     assert_eq!(

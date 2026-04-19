@@ -17,12 +17,12 @@ use crate::agent_identity::AgentIdentityManager;
 use crate::apps::render_apps_section;
 use crate::commit_attribution::commit_message_trailer_instruction;
 use crate::compact;
-use crate::compact::InitialContextInjection;
 use crate::compact::run_inline_auto_compact_task;
 use crate::compact::should_use_remote_compact_task;
 use crate::compact_remote::run_inline_remote_auto_compact_task;
 use crate::config::ManagedFeatures;
 use crate::connectors;
+use crate::context_maintenance_runtime::CompactInvocationTiming;
 use crate::exec_policy::ExecPolicyManager;
 use crate::installation_id::resolve_installation_id;
 use crate::mcp_tool_exposure::build_mcp_tool_exposure;
@@ -6716,7 +6716,7 @@ pub(crate) async fn run_turn(
                     if run_auto_compact(
                         &sess,
                         &turn_context,
-                        InitialContextInjection::BeforeLastUserMessage,
+                        CompactInvocationTiming::IntraTurn,
                         CompactionReason::ContextLimit,
                         CompactionPhase::MidTurn,
                     )
@@ -6951,7 +6951,7 @@ async fn run_pre_sampling_compact(
         run_auto_compact(
             sess,
             turn_context,
-            InitialContextInjection::DoNotInject,
+            CompactInvocationTiming::TurnBoundary,
             CompactionReason::ContextLimit,
             CompactionPhase::PreTurn,
         )
@@ -6998,7 +6998,7 @@ async fn maybe_run_previous_model_inline_compact(
         run_auto_compact(
             sess,
             &previous_model_turn_context,
-            InitialContextInjection::DoNotInject,
+            CompactInvocationTiming::TurnBoundary,
             CompactionReason::ModelDownshift,
             CompactionPhase::PreTurn,
         )
@@ -7011,7 +7011,7 @@ async fn maybe_run_previous_model_inline_compact(
 async fn run_auto_compact(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
-    initial_context_injection: InitialContextInjection,
+    timing: CompactInvocationTiming,
     reason: CompactionReason,
     phase: CompactionPhase,
 ) -> CodexResult<()> {
@@ -7019,7 +7019,7 @@ async fn run_auto_compact(
         run_inline_remote_auto_compact_task(
             Arc::clone(sess),
             Arc::clone(turn_context),
-            initial_context_injection,
+            timing,
             reason,
             phase,
         )
@@ -7028,7 +7028,7 @@ async fn run_auto_compact(
         run_inline_auto_compact_task(
             Arc::clone(sess),
             Arc::clone(turn_context),
-            initial_context_injection,
+            timing,
             reason,
             phase,
         )

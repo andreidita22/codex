@@ -12,7 +12,7 @@ use crate::compact::compaction_status_from_result;
 use crate::compact::is_raw_conversation_message;
 use crate::compact::is_real_user_message;
 use crate::compact::is_user_or_summary_message;
-use crate::context_maintenance_runtime::compact_timing_from_initial_context_injection;
+use crate::context_maintenance_runtime::CompactInvocationTiming;
 use crate::context_maintenance_runtime::execute_requested_artifact;
 use crate::context_maintenance_runtime::runtime_plan_for_compact;
 use crate::context_manager::ContextManager;
@@ -56,14 +56,14 @@ pub(crate) struct ProcessCompactedHistoryRequest {
 pub(crate) async fn run_inline_remote_auto_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
-    initial_context_injection: InitialContextInjection,
+    timing: CompactInvocationTiming,
     reason: CompactionReason,
     phase: CompactionPhase,
 ) -> CodexResult<()> {
     run_remote_compact_task_inner(
         &sess,
         &turn_context,
-        initial_context_injection,
+        timing,
         CompactionTrigger::Auto,
         reason,
         phase,
@@ -87,7 +87,7 @@ pub(crate) async fn run_remote_compact_task(
     run_remote_compact_task_inner(
         &sess,
         &turn_context,
-        InitialContextInjection::DoNotInject,
+        CompactInvocationTiming::TurnBoundary,
         CompactionTrigger::Manual,
         CompactionReason::UserRequested,
         CompactionPhase::StandaloneTurn,
@@ -98,7 +98,7 @@ pub(crate) async fn run_remote_compact_task(
 async fn run_remote_compact_task_inner(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
-    initial_context_injection: InitialContextInjection,
+    timing: CompactInvocationTiming,
     trigger: CompactionTrigger,
     reason: CompactionReason,
     phase: CompactionPhase,
@@ -112,8 +112,7 @@ async fn run_remote_compact_task_inner(
         phase,
     )
     .await;
-    let result =
-        run_remote_compact_task_inner_impl(sess, turn_context, initial_context_injection).await;
+    let result = run_remote_compact_task_inner_impl(sess, turn_context, timing).await;
     attempt
         .track(
             sess.as_ref(),
@@ -134,11 +133,10 @@ async fn run_remote_compact_task_inner(
 async fn run_remote_compact_task_inner_impl(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
-    initial_context_injection: InitialContextInjection,
+    timing: CompactInvocationTiming,
 ) -> CodexResult<()> {
-    let timing = compact_timing_from_initial_context_injection(initial_context_injection);
     let runtime_plan = runtime_plan_for_compact(turn_context.as_ref(), timing)?;
-    let initial_context_injection = runtime_plan.initial_context_injection();
+    let injection_placement = runtime_plan.context_injection_placement();
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(turn_context, &compaction_item)
         .await;
@@ -248,9 +246,11 @@ async fn run_remote_compact_task_inner_impl(
     if !ghost_snapshots.is_empty() {
         new_history.extend(ghost_snapshots);
     }
-    let reference_context_item = match initial_context_injection {
+    let reference_context_item = match injection_placement {
         InitialContextInjection::DoNotInject => None,
-        InitialContextInjection::BeforeLastUserMessage => Some(turn_context.to_turn_context_item()),
+        InitialContextInjection::BeforeLastRealUserOrSummary => {
+            Some(turn_context.to_turn_context_item())
+        }
     };
     let compacted_item = CompactedItem {
         message: String::new(),
