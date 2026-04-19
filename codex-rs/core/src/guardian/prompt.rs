@@ -5,7 +5,7 @@ use codex_protocol::user_input::UserInput;
 use serde_json::Value;
 
 use crate::codex::Session;
-use crate::compact::content_items_to_text;
+use crate::content_items_to_text;
 use crate::event_mapping::is_contextual_user_message_content;
 use codex_utils_output_truncation::approx_bytes_for_tokens;
 use codex_utils_output_truncation::approx_token_count;

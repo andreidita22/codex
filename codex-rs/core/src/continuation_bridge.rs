@@ -14,6 +14,7 @@ use codex_context_maintenance_policy::content_items_to_text;
 use codex_context_maintenance_policy::continuation_bridge_default_prompt;
 use codex_context_maintenance_policy::continuation_bridge_output_schema;
 use codex_context_maintenance_policy::continuation_bridge_response_item;
+use codex_context_maintenance_policy::continuation_bridge_subagent_context_item;
 use codex_context_maintenance_policy::parse_continuation_bridge_payload;
 use codex_otel::SessionTelemetry;
 use codex_protocol::error::Result;
@@ -68,7 +69,9 @@ pub(crate) async fn generate_continuation_bridge_item(
     }
 
     let request_context = resolve_request_context(sess, turn_context).await;
-    let supplemental_items = match subagent_context::build_subagent_context_item(sess).await? {
+    let supplemental_items = match continuation_bridge_subagent_context_item(
+        subagent_context::collect_subagent_snapshots(sess).await,
+    )? {
         Some(item) => vec![item],
         None => Vec::new(),
     };

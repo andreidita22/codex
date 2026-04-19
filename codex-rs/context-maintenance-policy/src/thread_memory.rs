@@ -6,12 +6,12 @@ use codex_protocol::models::ResponseItem;
 use serde_json::Value;
 use tracing::warn;
 
+use crate::artifact_codecs::extract_tagged_payload;
+use crate::artifact_codecs::tagged_artifact_kind_from_text;
 use crate::content_items_to_text;
-use crate::extract_tagged_payload;
-use crate::tagged_artifact_kind_from_text;
 
-pub const THREAD_MEMORY_SCHEMA: &str = "odeu_thread_memory_v1";
-pub const THREAD_MEMORY_PROMPT: &str = include_str!("../templates/thread_memory/prompt.md");
+const THREAD_MEMORY_SCHEMA: &str = "odeu_thread_memory_v1";
+const THREAD_MEMORY_PROMPT: &str = include_str!("../templates/thread_memory/prompt.md");
 const OUTPUT_SCHEMA: &str = include_str!("../templates/thread_memory/schema.json");
 const THREAD_MEMORY_TAG: &str = "thread_memory";
 const MAX_SOURCE_ITEMS: usize = 160;

@@ -1,4 +1,5 @@
 use super::*;
+use crate::content_items_to_text;
 use crate::context_maintenance_runtime::compaction_engine;
 use codex_context_maintenance_policy::RetentionDirective;
 use pretty_assertions::assert_eq;

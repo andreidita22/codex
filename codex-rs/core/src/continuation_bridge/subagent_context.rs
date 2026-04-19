@@ -1,30 +1,15 @@
 use crate::agent::AgentStatus;
 use crate::codex::Session;
-use codex_protocol::error::Result;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseItem;
-use serde::Serialize;
+use codex_context_maintenance_policy::ContinuationBridgeSubagentSnapshot;
+use codex_context_maintenance_policy::ContinuationBridgeSubagentStatus;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct ContinuationBridgeSubagentSnapshot {
-    agent_id: String,
-    thread_id: String,
-    nickname: String,
-    role: String,
-    status: String,
-}
-
-pub(crate) async fn build_subagent_context_item(sess: &Session) -> Result<Option<ResponseItem>> {
-    let subagents = sess
-        .services
+pub(crate) async fn collect_subagent_snapshots(
+    sess: &Session,
+) -> Vec<ContinuationBridgeSubagentSnapshot> {
+    sess.services
         .agent_control
         .list_subagents(sess.conversation_id)
-        .await;
-    if subagents.is_empty() {
-        return Ok(None);
-    }
-
-    let snapshots = subagents
+        .await
         .into_iter()
         .map(|subagent| {
             let thread_id = subagent.thread_id.to_string();
@@ -33,30 +18,21 @@ pub(crate) async fn build_subagent_context_item(sess: &Session) -> Result<Option
                 thread_id,
                 nickname: subagent.nickname.unwrap_or_default(),
                 role: subagent.role.unwrap_or_default(),
-                status: bridge_status(&subagent.status).to_string(),
+                status: bridge_status(&subagent.status),
             }
         })
-        .collect::<Vec<_>>();
-    let payload = serde_json::to_string_pretty(&snapshots)?;
-
-    Ok(Some(ResponseItem::Message {
-        id: None,
-        role: "developer".to_string(),
-        content: vec![ContentItem::InputText {
-            text: format!(
-                "<continuation_bridge_subagents>\n{payload}\n</continuation_bridge_subagents>"
-            ),
-        }],
-        end_turn: None,
-        phase: None,
-    }))
+        .collect()
 }
 
-fn bridge_status(status: &AgentStatus) -> &'static str {
+fn bridge_status(status: &AgentStatus) -> ContinuationBridgeSubagentStatus {
     match status {
-        AgentStatus::PendingInit => "pending",
-        AgentStatus::Running | AgentStatus::Interrupted => "running",
-        AgentStatus::Completed(_) => "completed",
-        AgentStatus::Errored(_) | AgentStatus::Shutdown | AgentStatus::NotFound => "failed",
+        AgentStatus::PendingInit => ContinuationBridgeSubagentStatus::Pending,
+        AgentStatus::Running | AgentStatus::Interrupted => {
+            ContinuationBridgeSubagentStatus::Running
+        }
+        AgentStatus::Completed(_) => ContinuationBridgeSubagentStatus::Completed,
+        AgentStatus::Errored(_) | AgentStatus::Shutdown | AgentStatus::NotFound => {
+            ContinuationBridgeSubagentStatus::Failed
+        }
     }
 }

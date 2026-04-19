@@ -177,7 +177,7 @@ fn is_compaction_summary_message(item: &ResponseItem) -> bool {
     if role != "user" {
         return false;
     }
-    let Some(text) = crate::compact::content_items_to_text(content) else {
+    let Some(text) = crate::content_items_to_text(content) else {
         return false;
     };
     is_summary_message(&text)

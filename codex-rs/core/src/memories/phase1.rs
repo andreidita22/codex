@@ -366,7 +366,7 @@ mod job {
                 ResponseEvent::OutputItemDone(item) => {
                     if result.is_empty()
                         && let ResponseItem::Message { content, .. } = item
-                        && let Some(text) = crate::compact::content_items_to_text(&content)
+                        && let Some(text) = crate::content_items_to_text(&content)
                     {
                         result.push_str(&text);
                     }
