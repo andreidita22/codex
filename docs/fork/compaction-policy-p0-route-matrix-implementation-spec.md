@@ -23,7 +23,7 @@ That means `p0` must distinguish between:
 
 - **target semantics**
   - the authoritative future law in
-    [compaction-policy-route-matrix.md](/home/rose/work/codex/fork/docs/compaction-policy-route-matrix.md)
+    [compaction-policy-route-matrix.md](/home/rose/work/codex/fork/docs/fork/compaction-policy-route-matrix.md)
 - **current observed behavior**
   - what the current fork actually does today and therefore must be frozen in
     tests before extraction
@@ -131,7 +131,7 @@ P0 should produce four concrete artifacts.
 
 The existing route-table doc:
 
-- [compaction-policy-route-matrix.md](/home/rose/work/codex/fork/docs/compaction-policy-route-matrix.md)
+- [compaction-policy-route-matrix.md](/home/rose/work/codex/fork/docs/fork/compaction-policy-route-matrix.md)
 
 becomes the authoritative semantic source for extraction.
 
@@ -228,7 +228,7 @@ This keeps later extraction scoped.
 
 - no new conceptual doctrine docs required
 - optionally link this spec from:
-  - [compaction-policy-crate-extraction-plan.md](/home/rose/work/codex/fork/docs/compaction-policy-crate-extraction-plan.md)
+  - [compaction-policy-crate-extraction-plan.md](/home/rose/work/codex/fork/docs/fork/compaction-policy-crate-extraction-plan.md)
 
 ### Rust
 

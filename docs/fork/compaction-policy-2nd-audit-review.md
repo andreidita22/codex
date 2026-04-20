@@ -9,6 +9,11 @@ This document records the review of:
 It exists so future work does not need to reconstruct which findings were
 accepted, which were deferred, and why.
 
+For the current implemented thread-memory behavior, especially the difference
+between timing-driven inactivity and governance-driven suppression, see:
+
+- [docs/compaction-policy-thread-memory-current-semantics.md](compaction-policy-thread-memory-current-semantics.md)
+
 ## Executive Read
 
 The second audit is useful and mostly accurate.

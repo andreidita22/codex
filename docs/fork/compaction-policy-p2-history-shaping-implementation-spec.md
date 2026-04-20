@@ -300,7 +300,7 @@ Add:
 
 Update links in:
 
-- [compaction-policy-crate-extraction-plan.md](/home/rose/work/codex/fork/docs/compaction-policy-crate-extraction-plan.md)
+- [compaction-policy-crate-extraction-plan.md](/home/rose/work/codex/fork/docs/fork/compaction-policy-crate-extraction-plan.md)
 
 ### New crate
 
