@@ -26,6 +26,7 @@ This spec should be read with:
 
 - [docs/compaction-policy-2nd-audit-review.md](compaction-policy-2nd-audit-review.md)
 - [docs/compaction-policy-thread-memory-current-semantics.md](compaction-policy-thread-memory-current-semantics.md)
+- [docs/compaction-policy-disposition-hardening-implementation-spec.md](compaction-policy-disposition-hardening-implementation-spec.md)
 - [docs/gptpro 2nd audit.md](gptpro%202nd%20audit.md)
 - [docs/compaction-policy-hardening-plan.md](compaction-policy-hardening-plan.md)
 - [docs/compaction-policy-hardening-implementation-spec.md](compaction-policy-hardening-implementation-spec.md)

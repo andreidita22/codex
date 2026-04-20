@@ -14,6 +14,11 @@ changes. In particular, it distinguishes:
 
 These are related, but they are not the same thing.
 
+For the small follow-up hardening slice that keeps these semantics fixed while
+hardening disposition APIs and local compact invariants, see:
+
+- [compaction-policy-disposition-hardening-implementation-spec.md](/home/rose/work/codex/fork/docs/fork/compaction-policy-disposition-hardening-implementation-spec.md)
+
 ## Executive Read
 
 Current live behavior is:
