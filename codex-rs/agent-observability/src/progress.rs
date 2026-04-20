@@ -624,10 +624,7 @@ fn phase_for_status(status: &AgentStatus) -> Option<AgentProgressPhase> {
 }
 
 fn is_final_for_progress(status: &AgentStatus) -> bool {
-    !matches!(
-        status,
-        AgentStatus::PendingInit | AgentStatus::Running | AgentStatus::Interrupted
-    )
+    !matches!(status, AgentStatus::PendingInit | AgentStatus::Running)
 }
 
 fn push_update(snapshot: &mut LiveProgressSnapshot, update: String) {
@@ -930,6 +927,7 @@ mod tests {
             registry.inspect(thread_id, AgentStatus::Interrupted, Duration::from_secs(1));
         assert_eq!(interrupted.phase, AgentProgressPhase::Interrupted);
         assert_eq!(interrupted.active_work, None);
+        assert_eq!(interrupted.stalled, false);
     }
 
     #[tokio::test]
