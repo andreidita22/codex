@@ -103,27 +103,37 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
     ] {
         expected.insert(spec.name().to_string(), spec);
     }
-    let collab_specs = if config.multi_agent_v2 {
-        vec![
+    if config
+        .agent_tool_surface_policy
+        .progress_observability_enabled
+    {
+        let mut collab_specs = vec![
             create_inspect_agent_progress_tool(),
             create_wait_for_agent_progress_tool(),
-            create_spawn_agent_tool_v2(spawn_agent_tool_options(&config)),
-            create_send_message_tool(),
-            create_wait_agent_tool_v2(wait_agent_timeout_options()),
-            create_close_agent_tool_v2(),
-        ]
-    } else {
-        vec![
-            create_inspect_agent_progress_tool(),
-            create_wait_for_agent_progress_tool(),
-            create_spawn_agent_tool_v1(spawn_agent_tool_options(&config)),
-            create_send_input_tool_v1(),
-            create_wait_agent_tool_v1(wait_agent_timeout_options()),
-            create_close_agent_tool_v1(),
-        ]
-    };
-    for spec in collab_specs {
-        expected.insert(spec.name().to_string(), spec);
+        ];
+        if config.multi_agent_v2 {
+            if config.agent_tool_surface_policy.spawn_agent_enabled {
+                collab_specs.push(create_spawn_agent_tool_v2(spawn_agent_tool_options(
+                    &config,
+                )));
+            }
+            collab_specs.push(create_send_message_tool());
+            collab_specs.push(create_wait_agent_tool_v2(wait_agent_timeout_options()));
+            collab_specs.push(create_close_agent_tool_v2());
+        } else {
+            if config.agent_tool_surface_policy.spawn_agent_enabled {
+                collab_specs.push(create_spawn_agent_tool_v1(spawn_agent_tool_options(
+                    &config,
+                )));
+            }
+            collab_specs.push(create_send_input_tool_v1());
+            collab_specs.push(create_wait_agent_tool_v1(wait_agent_timeout_options()));
+            collab_specs.push(create_close_agent_tool_v1());
+        }
+
+        for spec in collab_specs {
+            expected.insert(spec.name().to_string(), spec);
+        }
     }
     if !config.multi_agent_v2 {
         let spec = create_resume_agent_tool();

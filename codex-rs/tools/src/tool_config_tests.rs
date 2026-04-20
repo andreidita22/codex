@@ -155,6 +155,49 @@ fn subagents_keep_request_user_input_mode_config_and_agent_jobs_workers_opt_in_b
     assert!(tools_config.default_mode_request_user_input);
     assert!(tools_config.agent_jobs_tools);
     assert!(tools_config.agent_jobs_worker_tools);
+    assert_eq!(
+        tools_config.agent_tool_surface_policy,
+        AgentToolSurfacePolicy {
+            progress_observability_enabled: true,
+            spawn_agent_enabled: true,
+            request_user_input_enabled: false,
+        }
+    );
+}
+
+#[test]
+fn thread_spawn_subagents_keep_observability_but_hide_spawn_and_request_user_input() {
+    let model_info = model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::Collab);
+    features.enable(Feature::MultiAgentV2);
+
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: Default::default(),
+            depth: 1,
+            agent_path: None,
+            agent_nickname: None,
+            agent_role: None,
+        }),
+        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+
+    assert_eq!(
+        tools_config.agent_tool_surface_policy,
+        AgentToolSurfacePolicy {
+            progress_observability_enabled: true,
+            spawn_agent_enabled: false,
+            request_user_input_enabled: false,
+        }
+    );
 }
 
 #[test]
