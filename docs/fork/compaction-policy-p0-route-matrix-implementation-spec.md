@@ -23,7 +23,7 @@ That means `p0` must distinguish between:
 
 - **target semantics**
   - the authoritative future law in
-    [compaction-policy-route-matrix.md](/home/rose/work/codex/fork/docs/fork/compaction-policy-route-matrix.md)
+    [compaction-policy-route-matrix.md](compaction-policy-route-matrix.md)
 - **current observed behavior**
   - what the current fork actually does today and therefore must be frozen in
     tests before extraction
