@@ -35,10 +35,10 @@ pub const WAIT_FOR_AGENT_PROGRESS_MATCH_REASON_NAMES: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AgentActiveWorkKind;
-    use crate::AgentBlockReason;
     use crate::AgentProgressPhase;
     use crate::WaitForAgentProgressMatchReason;
+    use crate::progress::AgentActiveWorkKind;
+    use crate::progress::AgentBlockReason;
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
