@@ -1,7 +1,6 @@
-use crate::agent::AgentStatus;
-use crate::agent::status::is_final;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::AgentReasoningEvent;
+use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::EventMsg;
 use serde::Deserialize;
 use serde::Serialize;
@@ -17,7 +16,7 @@ const MAX_PREVIEW_CHARS: usize = 160;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AgentProgressPhase {
+pub enum AgentProgressPhase {
     Pending,
     Reasoning,
     MessageDrafting,
@@ -33,7 +32,7 @@ pub(crate) enum AgentProgressPhase {
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AgentBlockReason {
+pub enum AgentBlockReason {
     ExecApproval,
     PatchApproval,
     PermissionsRequest,
@@ -43,7 +42,7 @@ pub(crate) enum AgentBlockReason {
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AgentActiveWorkKind {
+pub enum AgentActiveWorkKind {
     Reasoning,
     Message,
     Command,
@@ -51,26 +50,46 @@ pub(crate) enum AgentActiveWorkKind {
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentActiveWork {
-    kind: AgentActiveWorkKind,
-    label: String,
+pub struct AgentActiveWork {
+    pub kind: AgentActiveWorkKind,
+    pub label: String,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-pub(crate) struct AgentProgressSnapshot {
-    pub(crate) lifecycle_status: AgentStatus,
-    pub(crate) phase: AgentProgressPhase,
-    pub(crate) blocked_on: Option<AgentBlockReason>,
-    pub(crate) active_work: Option<AgentActiveWork>,
-    pub(crate) recent_updates: Vec<String>,
-    pub(crate) latest_visible_message: Option<String>,
-    pub(crate) final_message: Option<String>,
-    pub(crate) error_message: Option<String>,
-    pub(crate) ever_entered_turn: bool,
-    pub(crate) ever_reported_progress: bool,
-    pub(crate) last_progress_age_ms: Option<u64>,
-    pub(crate) seq: u64,
-    pub(crate) stalled: bool,
+pub struct AgentProgressSnapshot {
+    pub lifecycle_status: AgentStatus,
+    pub phase: AgentProgressPhase,
+    pub blocked_on: Option<AgentBlockReason>,
+    pub active_work: Option<AgentActiveWork>,
+    pub recent_updates: Vec<String>,
+    pub latest_visible_message: Option<String>,
+    pub final_message: Option<String>,
+    pub error_message: Option<String>,
+    pub ever_entered_turn: bool,
+    pub ever_reported_progress: bool,
+    pub last_progress_age_ms: Option<u64>,
+    pub seq: u64,
+    pub stalled: bool,
+}
+
+impl AgentProgressSnapshot {
+    pub fn not_found() -> Self {
+        Self {
+            lifecycle_status: AgentStatus::NotFound,
+            phase: AgentProgressPhase::Pending,
+            blocked_on: None,
+            active_work: None,
+            recent_updates: Vec::new(),
+            latest_visible_message: None,
+            final_message: None,
+            error_message: None,
+            ever_entered_turn: false,
+            ever_reported_progress: false,
+            last_progress_age_ms: None,
+            seq: 0,
+            stalled: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -140,13 +159,14 @@ impl TrackedProgressState {
     }
 }
 
+/// Reduces emitted protocol events into per-thread progress snapshots.
 #[derive(Default)]
-pub(crate) struct ProgressRegistry {
+pub struct ProgressRegistry {
     by_thread: Mutex<HashMap<ThreadId, TrackedProgressState>>,
 }
 
 impl ProgressRegistry {
-    pub(crate) fn seed(&self, thread_id: ThreadId) {
+    pub fn seed(&self, thread_id: ThreadId) {
         let mut snapshots = self
             .by_thread
             .lock()
@@ -157,7 +177,7 @@ impl ProgressRegistry {
             .or_insert_with(|| TrackedProgressState::seeded(now));
     }
 
-    pub(crate) fn subscribe_seq(&self, thread_id: ThreadId) -> watch::Receiver<u64> {
+    pub fn subscribe_seq(&self, thread_id: ThreadId) -> watch::Receiver<u64> {
         let mut snapshots = self
             .by_thread
             .lock()
@@ -170,7 +190,7 @@ impl ProgressRegistry {
             .subscribe()
     }
 
-    pub(crate) fn record_event(&self, thread_id: ThreadId, event: &EventMsg) {
+    pub fn record_event(&self, thread_id: ThreadId, event: &EventMsg) {
         let mut snapshots = self
             .by_thread
             .lock()
@@ -501,7 +521,7 @@ impl ProgressRegistry {
         }
     }
 
-    pub(crate) fn inspect(
+    pub fn inspect(
         &self,
         thread_id: ThreadId,
         lifecycle_status: AgentStatus,
@@ -517,7 +537,7 @@ impl ProgressRegistry {
         let last_progress_age_ms = snapshot
             .last_progress_at
             .map(|instant| duration_millis_u64(instant.elapsed()));
-        let stalled = !is_final(&lifecycle_status)
+        let stalled = !is_final_for_progress(&lifecycle_status)
             && snapshot.blocked_on.is_none()
             && duration_millis_u64(
                 snapshot
@@ -565,7 +585,7 @@ impl ProgressRegistry {
         resolved
     }
 
-    pub(crate) fn remove(&self, thread_id: &ThreadId) {
+    pub fn remove(&self, thread_id: &ThreadId) {
         self.by_thread
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -601,6 +621,13 @@ fn phase_for_status(status: &AgentStatus) -> Option<AgentProgressPhase> {
         AgentStatus::Shutdown => Some(AgentProgressPhase::Shutdown),
         AgentStatus::Running | AgentStatus::NotFound => None,
     }
+}
+
+fn is_final_for_progress(status: &AgentStatus) -> bool {
+    !matches!(
+        status,
+        AgentStatus::PendingInit | AgentStatus::Running | AgentStatus::Interrupted
+    )
 }
 
 fn push_update(snapshot: &mut LiveProgressSnapshot, update: String) {

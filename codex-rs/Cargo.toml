@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "analytics",
+    "agent-observability",
     "backend-client",
     "ansi-escape",
     "async-utils",
@@ -106,6 +107,7 @@ license = "Apache-2.0"
 [workspace.dependencies]
 # Internal
 app_test_support = { path = "app-server/tests/common" }
+codex-agent-observability = { path = "agent-observability" }
 codex-analytics = { path = "analytics" }
 codex-ansi-escape = { path = "ansi-escape" }
 codex-api = { path = "codex-api" }

@@ -1,6 +1,4 @@
 use crate::agent::AgentStatus;
-use crate::agent::progress::AgentProgressPhase;
-use crate::agent::progress::AgentProgressSnapshot;
 use crate::agent::registry::AgentMetadata;
 use crate::agent::registry::AgentRegistry;
 use crate::agent::role::DEFAULT_ROLE_NAME;
@@ -16,6 +14,7 @@ use crate::session_prefix::format_subagent_notification_message;
 use crate::shell_snapshot::ShellSnapshot;
 use crate::thread_manager::ThreadManagerState;
 use crate::thread_rollout_truncation::truncate_rollout_to_last_n_fork_turns;
+use codex_agent_observability::AgentProgressSnapshot;
 use codex_features::Feature;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
@@ -836,21 +835,7 @@ impl AgentControl {
         stalled_after: Duration,
     ) -> AgentProgressSnapshot {
         let Ok(state) = self.upgrade() else {
-            return AgentProgressSnapshot {
-                lifecycle_status: AgentStatus::NotFound,
-                phase: AgentProgressPhase::Pending,
-                blocked_on: None,
-                active_work: None,
-                recent_updates: Vec::new(),
-                latest_visible_message: None,
-                final_message: None,
-                error_message: None,
-                ever_entered_turn: false,
-                ever_reported_progress: false,
-                last_progress_age_ms: None,
-                seq: 0,
-                stalled: false,
-            };
+            return AgentProgressSnapshot::not_found();
         };
         let lifecycle_status = match state.get_thread(agent_id).await {
             Ok(thread) => thread.agent_status().await,
