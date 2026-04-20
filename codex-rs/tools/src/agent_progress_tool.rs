@@ -1,6 +1,12 @@
 use crate::JsonSchema;
 use crate::ResponsesApiTool;
 use crate::ToolSpec;
+use codex_agent_observability::AGENT_ACTIVE_WORK_KIND_NAMES;
+use codex_agent_observability::AGENT_BLOCK_REASON_NAMES;
+use codex_agent_observability::AGENT_PROGRESS_PHASE_NAMES;
+use codex_agent_observability::INSPECT_AGENT_PROGRESS_TOOL_NAME;
+use codex_agent_observability::WAIT_FOR_AGENT_PROGRESS_MATCH_REASON_NAMES;
+use codex_agent_observability::WAIT_FOR_AGENT_PROGRESS_TOOL_NAME;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -23,7 +29,7 @@ pub fn create_inspect_agent_progress_tool() -> ToolSpec {
     ]);
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "inspect_agent_progress".to_string(),
+        name: INSPECT_AGENT_PROGRESS_TOOL_NAME.to_string(),
         description: "Inspect normalized live progress for an existing agent. Use this when you need to know whether a sub-agent has entered its turn, started meaningful work, is blocked on approval or user input, or appears stalled."
             .to_string(),
         strict: false,
@@ -79,7 +85,7 @@ pub fn create_wait_for_agent_progress_tool() -> ToolSpec {
     ]);
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "wait_for_agent_progress".to_string(),
+        name: WAIT_FOR_AGENT_PROGRESS_TOOL_NAME.to_string(),
         description: "Wait for meaningful progress from an existing agent. Use this after an initial inspect to block until seq advances, a target phase is reached, or the timeout expires."
             .to_string(),
         strict: false,
@@ -125,19 +131,16 @@ fn agent_status_output_schema() -> Value {
 }
 
 fn phase_enum_schema() -> Value {
-    json!([
-        "pending",
-        "reasoning",
-        "message_drafting",
-        "command",
-        "tool_call",
-        "waiting_approval",
-        "waiting_user_input",
-        "completed",
-        "errored",
-        "interrupted",
-        "shutdown"
-    ])
+    json!(AGENT_PROGRESS_PHASE_NAMES)
+}
+
+fn blocked_on_enum_schema() -> Value {
+    let mut values = AGENT_BLOCK_REASON_NAMES
+        .iter()
+        .map(|value| json!(value))
+        .collect::<Vec<_>>();
+    values.push(Value::Null);
+    Value::Array(values)
 }
 
 fn agent_progress_snapshot_properties() -> Value {
@@ -153,14 +156,7 @@ fn agent_progress_snapshot_properties() -> Value {
         },
         "blocked_on": {
             "type": ["string", "null"],
-            "enum": [
-                "exec_approval",
-                "patch_approval",
-                "permissions_request",
-                "user_input_request",
-                "elicitation_request",
-                null
-            ],
+            "enum": blocked_on_enum_schema(),
             "description": "Blocking condition when the agent is waiting on an external decision."
         },
         "active_work": {
@@ -168,7 +164,7 @@ fn agent_progress_snapshot_properties() -> Value {
             "properties": {
                 "kind": {
                     "type": "string",
-                    "enum": ["reasoning", "message", "command", "tool"]
+                    "enum": AGENT_ACTIVE_WORK_KIND_NAMES
                 },
                 "label": {
                     "type": "string"
@@ -293,7 +289,7 @@ fn wait_for_agent_progress_output_schema() -> Value {
             },
             "match_reason": {
                 "type": "string",
-                "enum": ["already_satisfied", "seq_advanced", "phase_matched", "timed_out"]
+                "enum": WAIT_FOR_AGENT_PROGRESS_MATCH_REASON_NAMES
             },
             "canonical_target": canonical_target_output_schema(),
             "lifecycle_status": agent_progress_snapshot_properties()["lifecycle_status"].clone(),
@@ -366,18 +362,11 @@ mod tests {
         );
         assert_eq!(
             output_schema["properties"]["blocked_on"]["enum"],
-            json!([
-                "exec_approval",
-                "patch_approval",
-                "permissions_request",
-                "user_input_request",
-                "elicitation_request",
-                null
-            ])
+            blocked_on_enum_schema()
         );
         assert_eq!(
             output_schema["properties"]["active_work"]["properties"]["kind"]["enum"],
-            json!(["reasoning", "message", "command", "tool"])
+            json!(AGENT_ACTIVE_WORK_KIND_NAMES)
         );
         assert_eq!(
             output_schema["properties"]["ever_reported_progress"]["type"],
@@ -407,12 +396,7 @@ mod tests {
         let output_schema = output_schema.expect("wait_for_agent_progress output schema");
         assert_eq!(
             output_schema["properties"]["match_reason"]["enum"],
-            json!([
-                "already_satisfied",
-                "seq_advanced",
-                "phase_matched",
-                "timed_out"
-            ])
+            json!(WAIT_FOR_AGENT_PROGRESS_MATCH_REASON_NAMES)
         );
         assert_eq!(
             output_schema["properties"]["canonical_target"]["required"],

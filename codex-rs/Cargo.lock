@@ -1374,6 +1374,7 @@ dependencies = [
  "codex-utils-absolute-path",
  "pretty_assertions",
  "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -2886,6 +2887,7 @@ dependencies = [
 name = "codex-tools"
 version = "0.121.0"
 dependencies = [
+ "codex-agent-observability",
  "codex-app-server-protocol",
  "codex-code-mode",
  "codex-features",

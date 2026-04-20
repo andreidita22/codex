@@ -4,6 +4,8 @@ use crate::shell::ShellType;
 use crate::test_support::construct_model_info_offline;
 use crate::tools::ToolRouter;
 use crate::tools::router::ToolRouterParams;
+use codex_agent_observability::INSPECT_AGENT_PROGRESS_TOOL_NAME;
+use codex_agent_observability::WAIT_FOR_AGENT_PROGRESS_TOOL_NAME;
 use codex_app_server_protocol::AppInfo;
 use codex_features::Feature;
 use codex_features::Features;
@@ -382,15 +384,15 @@ fn assert_model_tools(
     let mut expected_tool_names = expected_tools.to_vec();
     if features.enabled(Feature::Collab)
         && !tools_config.code_mode_only_enabled
-        && !expected_tool_names.contains(&"inspect_agent_progress")
-        && !expected_tool_names.contains(&"wait_for_agent_progress")
+        && !expected_tool_names.contains(&INSPECT_AGENT_PROGRESS_TOOL_NAME)
+        && !expected_tool_names.contains(&WAIT_FOR_AGENT_PROGRESS_TOOL_NAME)
     {
         let insert_at = expected_tool_names
             .iter()
             .position(|name| *name == "spawn_agent")
             .unwrap_or(expected_tool_names.len());
-        expected_tool_names.insert(insert_at, "inspect_agent_progress");
-        expected_tool_names.insert(insert_at + 1, "wait_for_agent_progress");
+        expected_tool_names.insert(insert_at, INSPECT_AGENT_PROGRESS_TOOL_NAME);
+        expected_tool_names.insert(insert_at + 1, WAIT_FOR_AGENT_PROGRESS_TOOL_NAME);
     }
     assert_eq!(&tool_names, &expected_tool_names,);
 }
@@ -805,8 +807,8 @@ fn collab_tools_include_agent_progress_tools() {
     assert_contains_tool_names(
         &tools,
         &[
-            "inspect_agent_progress",
-            "wait_for_agent_progress",
+            INSPECT_AGENT_PROGRESS_TOOL_NAME,
+            WAIT_FOR_AGENT_PROGRESS_TOOL_NAME,
             "spawn_agent",
         ],
     );
@@ -825,7 +827,10 @@ fn thread_spawn_subagent_hides_spawn_agent_tool_v1() {
 
     assert_contains_tool_names(
         &tools,
-        &["inspect_agent_progress", "wait_for_agent_progress"],
+        &[
+            INSPECT_AGENT_PROGRESS_TOOL_NAME,
+            WAIT_FOR_AGENT_PROGRESS_TOOL_NAME,
+        ],
     );
     assert_lacks_tool_name(&tools, "spawn_agent");
     assert_lacks_tool_name(&tools, "request_user_input");
@@ -845,8 +850,8 @@ fn thread_spawn_subagent_hides_spawn_agent_tool_v2() {
     assert_contains_tool_names(
         &tools,
         &[
-            "inspect_agent_progress",
-            "wait_for_agent_progress",
+            INSPECT_AGENT_PROGRESS_TOOL_NAME,
+            WAIT_FOR_AGENT_PROGRESS_TOOL_NAME,
             "send_message",
             "followup_task",
             "wait_agent",

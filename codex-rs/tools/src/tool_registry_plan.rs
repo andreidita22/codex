@@ -63,6 +63,8 @@ use crate::mcp_tool_to_responses_api_tool;
 use crate::request_permissions_tool_description;
 use crate::request_user_input_tool_description;
 use crate::tool_registry_plan_types::agent_type_description;
+use codex_agent_observability::INSPECT_AGENT_PROGRESS_TOOL_NAME;
+use codex_agent_observability::WAIT_FOR_AGENT_PROGRESS_TOOL_NAME;
 use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::ConfigShellToolType;
 use std::collections::BTreeMap;
@@ -378,11 +380,11 @@ pub fn build_tool_registry_plan(
             config.code_mode_enabled,
         );
         plan.register_handler(
-            "inspect_agent_progress",
+            INSPECT_AGENT_PROGRESS_TOOL_NAME,
             ToolHandlerKind::InspectAgentProgress,
         );
         plan.register_handler(
-            "wait_for_agent_progress",
+            WAIT_FOR_AGENT_PROGRESS_TOOL_NAME,
             ToolHandlerKind::WaitForAgentProgress,
         );
 
