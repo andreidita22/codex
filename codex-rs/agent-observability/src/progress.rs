@@ -90,6 +90,14 @@ impl AgentProgressSnapshot {
             stalled: false,
         }
     }
+
+    pub fn phase(&self) -> AgentProgressPhase {
+        self.phase
+    }
+
+    pub fn seq(&self) -> u64 {
+        self.seq
+    }
 }
 
 #[derive(Clone, Debug)]

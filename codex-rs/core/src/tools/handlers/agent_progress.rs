@@ -16,6 +16,9 @@ use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 use codex_agent_observability::AgentProgressPhase;
 use codex_agent_observability::AgentProgressSnapshot;
+use codex_agent_observability::WaitForAgentProgressMatchReason;
+use codex_agent_observability::WaitObservationMoment;
+use codex_agent_observability::classify_wait_observation;
 use codex_protocol::ThreadId;
 use codex_protocol::models::ResponseInputItem;
 use serde::Deserialize;
@@ -110,18 +113,16 @@ impl ToolHandler for WaitForAgentProgressHandler {
             .inspect_agent_progress(agent_id, Duration::from_millis(stalled_after))
             .await;
 
-        if snapshot.seq > baseline_seq {
+        if let Some(match_reason) = classify_wait_observation(
+            &snapshot,
+            baseline_seq,
+            &until_phases,
+            WaitObservationMoment::Initial,
+        ) {
             return Ok(WaitForAgentProgressResult::matched(
                 canonical_target.clone(),
                 snapshot,
-                WaitForAgentProgressMatchReason::SeqAdvanced,
-            ));
-        }
-        if until_phases.contains(&snapshot.phase) {
-            return Ok(WaitForAgentProgressResult::matched(
-                canonical_target.clone(),
-                snapshot,
-                WaitForAgentProgressMatchReason::AlreadySatisfied,
+                match_reason,
             ));
         }
         if *progress_seq_rx.borrow() > baseline_seq {
@@ -147,9 +148,12 @@ impl ToolHandler for WaitForAgentProgressHandler {
                         .agent_control
                         .inspect_agent_progress(agent_id, Duration::from_millis(stalled_after))
                         .await;
-                    if let Some(match_reason) =
-                        classify_wait_match(&snapshot, baseline_seq, &until_phases)
-                    {
+                    if let Some(match_reason) = classify_wait_observation(
+                        &snapshot,
+                        baseline_seq,
+                        &until_phases,
+                        WaitObservationMoment::AfterProgress,
+                    ) {
                         return Ok(WaitForAgentProgressResult::matched(
                             canonical_target.clone(),
                             snapshot,
@@ -163,9 +167,12 @@ impl ToolHandler for WaitForAgentProgressHandler {
                         .agent_control
                         .inspect_agent_progress(agent_id, Duration::from_millis(stalled_after))
                         .await;
-                    if let Some(match_reason) =
-                        classify_wait_match(&snapshot, baseline_seq, &until_phases)
-                    {
+                    if let Some(match_reason) = classify_wait_observation(
+                        &snapshot,
+                        baseline_seq,
+                        &until_phases,
+                        WaitObservationMoment::AfterProgress,
+                    ) {
                         return Ok(WaitForAgentProgressResult::matched(
                             canonical_target.clone(),
                             snapshot,
@@ -209,15 +216,6 @@ pub(crate) struct InspectAgentProgressResult {
     canonical_target: CanonicalAgentTarget,
     #[serde(flatten)]
     snapshot: AgentProgressSnapshot,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum WaitForAgentProgressMatchReason {
-    AlreadySatisfied,
-    SeqAdvanced,
-    PhaseMatched,
-    TimedOut,
 }
 
 #[derive(Debug, Serialize)]
@@ -380,20 +378,6 @@ fn canonical_agent_target(
     }
 }
 
-fn classify_wait_match(
-    snapshot: &AgentProgressSnapshot,
-    baseline_seq: u64,
-    until_phases: &[AgentProgressPhase],
-) -> Option<WaitForAgentProgressMatchReason> {
-    if snapshot.seq > baseline_seq {
-        Some(WaitForAgentProgressMatchReason::SeqAdvanced)
-    } else if until_phases.contains(&snapshot.phase) {
-        Some(WaitForAgentProgressMatchReason::PhaseMatched)
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,26 +403,6 @@ mod tests {
     }
 
     #[test]
-    fn classify_wait_match_prefers_seq_advanced_over_phase_match() {
-        let snapshot = snapshot(2, AgentProgressPhase::WaitingApproval);
-
-        assert_eq!(
-            classify_wait_match(&snapshot, 1, &[AgentProgressPhase::WaitingApproval]),
-            Some(WaitForAgentProgressMatchReason::SeqAdvanced)
-        );
-    }
-
-    #[test]
-    fn classify_wait_match_returns_phase_matched_without_seq_advance() {
-        let snapshot = snapshot(3, AgentProgressPhase::WaitingUserInput);
-
-        assert_eq!(
-            classify_wait_match(&snapshot, 3, &[AgentProgressPhase::WaitingUserInput]),
-            Some(WaitForAgentProgressMatchReason::PhaseMatched)
-        );
-    }
-
-    #[test]
     fn timed_out_wait_result_is_marked_as_timed_out() {
         let result = WaitForAgentProgressResult::timed_out(
             CanonicalAgentTarget {
@@ -455,5 +419,36 @@ mod tests {
             WaitForAgentProgressMatchReason::TimedOut
         );
         assert_eq!(result.message, "Wait for agent progress timed out.");
+    }
+
+    #[test]
+    fn matched_wait_result_reports_already_satisfied_message() {
+        let snapshot = snapshot(2, AgentProgressPhase::WaitingApproval);
+        let result = WaitForAgentProgressResult::matched(
+            CanonicalAgentTarget {
+                thread_id: "thread-1".to_string(),
+                task_name: "/root/worker".to_string(),
+                nickname: Some("worker".to_string()),
+            },
+            snapshot,
+            WaitForAgentProgressMatchReason::AlreadySatisfied,
+        );
+
+        assert_eq!(result.message, "Agent already satisfied wait condition.");
+    }
+
+    #[test]
+    fn matched_wait_result_reports_observed_progress_message() {
+        let result = WaitForAgentProgressResult::matched(
+            CanonicalAgentTarget {
+                thread_id: "thread-1".to_string(),
+                task_name: "/root/worker".to_string(),
+                nickname: Some("worker".to_string()),
+            },
+            snapshot(3, AgentProgressPhase::WaitingUserInput),
+            WaitForAgentProgressMatchReason::PhaseMatched,
+        );
+
+        assert_eq!(result.message, "Observed agent progress.");
     }
 }
