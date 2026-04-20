@@ -1,6 +1,6 @@
 # Agent Observability 3rd Audit Review
 
-This note reviews [gptpro 3rd audit.md](/home/rose/work/codex/fork/docs/fork/gptpro%203rd%20audit.md) after narrowing scope to the E-witness / sub-agent observability feature family only.
+This note reviews [gptpro 3rd audit.md](gptpro%203rd%20audit.md) after narrowing scope to the E-witness / sub-agent observability feature family only.
 
 The cloud-task portion of that audit is intentionally not carried forward here. For the current fork state, it is not the right next modularization target.
 
