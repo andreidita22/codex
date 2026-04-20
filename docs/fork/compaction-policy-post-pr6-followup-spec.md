@@ -25,6 +25,7 @@ clearer:
 This spec should be read with:
 
 - [docs/compaction-policy-2nd-audit-review.md](compaction-policy-2nd-audit-review.md)
+- [docs/compaction-policy-thread-memory-current-semantics.md](compaction-policy-thread-memory-current-semantics.md)
 - [docs/gptpro 2nd audit.md](gptpro%202nd%20audit.md)
 - [docs/compaction-policy-hardening-plan.md](compaction-policy-hardening-plan.md)
 - [docs/compaction-policy-hardening-implementation-spec.md](compaction-policy-hardening-implementation-spec.md)
@@ -326,6 +327,10 @@ semantics decision:
 - or “drop and ignore existing thread memory too”
 
 Do not change this behavior accidentally as a side effect of unrelated cleanup.
+
+For the current implemented meaning, see:
+
+- [docs/compaction-policy-thread-memory-current-semantics.md](compaction-policy-thread-memory-current-semantics.md)
 
 ## Test Strategy
 

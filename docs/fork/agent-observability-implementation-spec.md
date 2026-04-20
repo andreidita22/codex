@@ -1,6 +1,6 @@
 # Agent Observability Implementation Spec
 
-This is the family-level implementation spec for the E-witness / sub-agent observability extraction described in [agent-observability-extraction-plan.md](/home/rose/work/codex/fork/docs/agent-observability-extraction-plan.md).
+This is the family-level implementation spec for the E-witness / sub-agent observability extraction described in [agent-observability-extraction-plan.md](/home/rose/work/codex/fork/docs/fork/agent-observability-extraction-plan.md).
 
 The worked-example reference pattern is the context-maintenance extraction/hardening family.
 
