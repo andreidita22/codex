@@ -26,6 +26,7 @@ use codex_analytics::CompactionStrategy;
 use codex_analytics::CompactionTrigger;
 use codex_analytics::now_unix_seconds;
 use codex_context_maintenance_policy::ArtifactKind;
+use codex_context_maintenance_policy::RetentionDirective;
 use codex_context_maintenance_policy::apply_retention_directive;
 use codex_context_maintenance_policy::insert_initial_context_before_last_real_user_or_summary as insert_initial_context_before_last_real_user_or_summary_impl;
 use codex_context_maintenance_policy::insert_items_before_last_summary_or_compaction as insert_items_before_last_summary_or_compaction_impl;
@@ -311,32 +312,21 @@ async fn run_compact_task_inner_impl(
     let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
     let user_messages = collect_user_messages(history_items);
 
-    let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
-
-    if matches!(
+    let initial_context = match injection_placement {
+        InitialContextInjection::DoNotInject => None,
+        InitialContextInjection::BeforeLastRealUserOrSummary => {
+            Some(sess.build_initial_context(turn_context.as_ref()).await)
+        }
+    };
+    let new_history = assemble_local_compacted_replacement_history(
+        history_items,
+        &user_messages,
+        &summary_text,
+        initial_context,
+        authoritative_items,
         injection_placement,
-        InitialContextInjection::BeforeLastRealUserOrSummary
-    ) {
-        let initial_context = sess.build_initial_context(turn_context.as_ref()).await;
-        new_history =
-            insert_initial_context_before_last_real_user_or_summary(new_history, initial_context);
-    }
-    if !authoritative_items.is_empty() {
-        new_history =
-            insert_items_before_last_summary_or_compaction(new_history, authoritative_items);
-    }
-    new_history = apply_retention_directive(
-        new_history,
         runtime_plan.retention_directive(),
-        is_raw_conversation_message,
-    )
-    .items;
-    let ghost_snapshots: Vec<ResponseItem> = history_items
-        .iter()
-        .filter(|item| matches!(item, ResponseItem::GhostSnapshot { .. }))
-        .cloned()
-        .collect();
-    new_history.extend(ghost_snapshots);
+    );
     let reference_context_item = match injection_placement {
         InitialContextInjection::DoNotInject => None,
         InitialContextInjection::BeforeLastRealUserOrSummary => {
@@ -599,6 +589,44 @@ fn build_compacted_history_with_limit(
     });
 
     history
+}
+
+pub(crate) fn assemble_local_compacted_replacement_history(
+    history_items: &[ResponseItem],
+    user_messages: &[String],
+    summary_text: &str,
+    initial_context: Option<Vec<ResponseItem>>,
+    authoritative_items: Vec<ResponseItem>,
+    injection_placement: InitialContextInjection,
+    retention_directive: RetentionDirective,
+) -> Vec<ResponseItem> {
+    let mut new_history = build_compacted_history(Vec::new(), user_messages, summary_text);
+
+    if matches!(
+        injection_placement,
+        InitialContextInjection::BeforeLastRealUserOrSummary
+    ) && let Some(initial_context) = initial_context
+    {
+        new_history =
+            insert_initial_context_before_last_real_user_or_summary(new_history, initial_context);
+    }
+    if !authoritative_items.is_empty() {
+        new_history =
+            insert_items_before_last_summary_or_compaction(new_history, authoritative_items);
+    }
+    new_history = apply_retention_directive(
+        new_history,
+        retention_directive,
+        is_raw_conversation_message,
+    )
+    .items;
+    let ghost_snapshots: Vec<ResponseItem> = history_items
+        .iter()
+        .filter(|item| matches!(item, ResponseItem::GhostSnapshot { .. }))
+        .cloned()
+        .collect();
+    new_history.extend(ghost_snapshots);
+    new_history
 }
 
 async fn drain_to_completed(

@@ -10,7 +10,6 @@ use crate::governance::thread_memory::generate_thread_memory_item;
 use codex_context_maintenance_policy::ArtifactKind;
 use codex_context_maintenance_policy::MaintenanceAction;
 use codex_context_maintenance_policy::apply_history_disposition;
-use codex_context_maintenance_policy::apply_history_disposition_with_summary_classifier;
 use codex_context_maintenance_policy::apply_retention_directive;
 use codex_context_maintenance_policy::build_prune_manifest_item;
 use codex_protocol::error::Result as CodexResult;
@@ -52,8 +51,10 @@ pub(crate) async fn run_refresh(
     )
     .await?;
 
-    let disposition =
-        apply_history_disposition(runtime_plan.history_disposition_request(raw_history));
+    let disposition = apply_history_disposition(
+        runtime_plan.history_disposition_request(raw_history),
+        is_compaction_summary_message,
+    );
     let mut new_history = disposition.items;
     let mut removed_count = disposition.removed_count;
 
@@ -104,7 +105,7 @@ pub(crate) async fn run_prune(
     let raw_history = history_snapshot.raw_items().to_vec();
 
     let original_len = raw_history.len();
-    let disposition = apply_history_disposition_with_summary_classifier(
+    let disposition = apply_history_disposition(
         runtime_plan.history_disposition_request(raw_history),
         is_compaction_summary_message,
     );
@@ -189,7 +190,7 @@ mod tests {
 
     #[test]
     fn prune_removes_all_but_latest_prune_manifest() {
-        let result = apply_history_disposition_with_summary_classifier(
+        let result = apply_history_disposition(
             HistoryDispositionRequest {
                 items: vec![
                     developer_message("<prune_manifest>old</prune_manifest>"),
@@ -223,7 +224,7 @@ mod tests {
             user_summary_message("latest summary"),
         ];
 
-        let result = apply_history_disposition_with_summary_classifier(
+        let result = apply_history_disposition(
             HistoryDispositionRequest {
                 items: raw_history,
                 policy: HistoryDispositionPolicy {

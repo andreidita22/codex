@@ -6,7 +6,7 @@ use crate::HistoryDispositionRequest;
 use crate::RemoteCompactedHistoryKeepPolicy;
 use crate::RetentionDirective;
 use crate::apply_retention_directive;
-use crate::artifact_codecs::apply_history_disposition_with_summary_classifier;
+use crate::artifact_codecs::apply_history_disposition;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RemoteCompactedHistoryShapeRequest {
@@ -108,7 +108,7 @@ where
     FSummary: Fn(&ResponseItem) -> bool,
     FRawConversation: Fn(&ResponseItem) -> bool,
 {
-    let disposition = apply_history_disposition_with_summary_classifier(
+    let disposition = apply_history_disposition(
         HistoryDispositionRequest {
             items: request.compacted_history,
             policy: request.history_disposition.clone(),
