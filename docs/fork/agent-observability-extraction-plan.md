@@ -1,6 +1,6 @@
 # Agent Observability Extraction Plan
 
-This plan takes the accepted E-witness findings from [agent-observability-3rd-audit-review.md](/home/rose/work/codex/fork/docs/fork/agent-observability-3rd-audit-review.md) and turns them into a concrete extraction program.
+This plan takes the accepted E-witness findings from [agent-observability-3rd-audit-review.md](agent-observability-3rd-audit-review.md) and turns them into a concrete extraction program.
 
 This is the next extraction family after context-maintenance.
 
