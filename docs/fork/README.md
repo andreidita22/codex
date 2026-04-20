@@ -9,7 +9,7 @@ Use it for materials that describe:
 - custom module inventories and build/update guidance
 - upstream-ingest watchlists specific to fork-owned behavior
 
-The root [`docs/`](/home/rose/work/codex/fork/docs) directory should stay
+The root [`docs/`](../) directory should stay
 focused on repo-wide or vanilla-aligned documentation.
 
 Current fork-local families documented here include:
