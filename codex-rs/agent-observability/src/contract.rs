@@ -90,20 +90,72 @@ mod tests {
     #[test]
     fn progress_contract_constants_match_serialized_enum_values() {
         assert_eq!(
-            serde_json::to_value(AgentProgressPhase::WaitingApproval).unwrap(),
-            json!("waiting_approval")
+            [
+                AgentProgressPhase::Pending,
+                AgentProgressPhase::Reasoning,
+                AgentProgressPhase::MessageDrafting,
+                AgentProgressPhase::Command,
+                AgentProgressPhase::ToolCall,
+                AgentProgressPhase::WaitingApproval,
+                AgentProgressPhase::WaitingUserInput,
+                AgentProgressPhase::Completed,
+                AgentProgressPhase::Errored,
+                AgentProgressPhase::Interrupted,
+                AgentProgressPhase::Shutdown,
+            ]
+            .iter()
+            .map(|phase| serde_json::to_value(phase).unwrap())
+            .collect::<Vec<_>>(),
+            AGENT_PROGRESS_PHASE_NAMES
+                .iter()
+                .map(|name| json!(name))
+                .collect::<Vec<_>>()
         );
         assert_eq!(
-            serde_json::to_value(AgentBlockReason::PermissionsRequest).unwrap(),
-            json!("permissions_request")
+            [
+                AgentBlockReason::ExecApproval,
+                AgentBlockReason::PatchApproval,
+                AgentBlockReason::PermissionsRequest,
+                AgentBlockReason::UserInputRequest,
+                AgentBlockReason::ElicitationRequest,
+            ]
+            .iter()
+            .map(|reason| serde_json::to_value(reason).unwrap())
+            .collect::<Vec<_>>(),
+            AGENT_BLOCK_REASON_NAMES
+                .iter()
+                .map(|name| json!(name))
+                .collect::<Vec<_>>()
         );
         assert_eq!(
-            serde_json::to_value(AgentActiveWorkKind::Command).unwrap(),
-            json!("command")
+            [
+                AgentActiveWorkKind::Reasoning,
+                AgentActiveWorkKind::Message,
+                AgentActiveWorkKind::Command,
+                AgentActiveWorkKind::Tool,
+            ]
+            .iter()
+            .map(|kind| serde_json::to_value(kind).unwrap())
+            .collect::<Vec<_>>(),
+            AGENT_ACTIVE_WORK_KIND_NAMES
+                .iter()
+                .map(|name| json!(name))
+                .collect::<Vec<_>>()
         );
         assert_eq!(
-            serde_json::to_value(WaitForAgentProgressMatchReason::PhaseMatched).unwrap(),
-            json!("phase_matched")
+            [
+                WaitForAgentProgressMatchReason::AlreadySatisfied,
+                WaitForAgentProgressMatchReason::SeqAdvanced,
+                WaitForAgentProgressMatchReason::PhaseMatched,
+                WaitForAgentProgressMatchReason::TimedOut,
+            ]
+            .iter()
+            .map(|reason| serde_json::to_value(reason).unwrap())
+            .collect::<Vec<_>>(),
+            WAIT_FOR_AGENT_PROGRESS_MATCH_REASON_NAMES
+                .iter()
+                .map(|name| json!(name))
+                .collect::<Vec<_>>()
         );
     }
 }
