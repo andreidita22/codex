@@ -104,7 +104,7 @@ fn agent_status_output_schema() -> Value {
         "oneOf": [
             {
                 "type": "string",
-                "enum": ["pending_init", "running", "shutdown", "not_found"]
+                "enum": ["pending_init", "running", "interrupted", "shutdown", "not_found"]
             },
             {
                 "type": "object",
@@ -332,6 +332,7 @@ fn wait_for_agent_progress_output_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_protocol::protocol::AgentStatus;
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
@@ -372,6 +373,29 @@ mod tests {
             output_schema["properties"]["ever_reported_progress"]["type"],
             json!("boolean")
         );
+    }
+
+    #[test]
+    fn lifecycle_status_schema_covers_all_simple_agent_status_values() {
+        let schema = agent_status_output_schema();
+        let allowed = schema["oneOf"][0]["enum"]
+            .as_array()
+            .expect("simple lifecycle statuses should be an enum array");
+
+        for status in [
+            AgentStatus::PendingInit,
+            AgentStatus::Running,
+            AgentStatus::Interrupted,
+            AgentStatus::Shutdown,
+            AgentStatus::NotFound,
+        ] {
+            let serialized =
+                serde_json::to_value(status).expect("simple lifecycle status should serialize");
+            assert!(
+                allowed.contains(&serialized),
+                "missing lifecycle status {serialized} from agent progress tool schema"
+            );
+        }
     }
 
     #[test]
