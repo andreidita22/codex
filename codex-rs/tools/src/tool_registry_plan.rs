@@ -230,7 +230,7 @@ pub fn build_tool_registry_plan(
         plan.register_handler("js_repl_reset", ToolHandlerKind::JsReplReset);
     }
 
-    if config.request_user_input_enabled {
+    if config.agent_tool_surface_policy.request_user_input_enabled {
         plan.push_spec(
             create_request_user_input_tool(request_user_input_tool_description(
                 config.default_mode_request_user_input,
@@ -368,7 +368,7 @@ pub fn build_tool_registry_plan(
         plan.register_handler("view_image", ToolHandlerKind::ViewImage);
     }
 
-    if config.collab_tools {
+    if config.agent_tool_surface_policy.collaboration_enabled {
         plan.push_spec(
             create_inspect_agent_progress_tool(),
             /*supports_parallel_tool_calls*/ false,
@@ -391,7 +391,7 @@ pub fn build_tool_registry_plan(
         if config.multi_agent_v2 {
             let agent_type_description =
                 agent_type_description(config, params.default_agent_type_description);
-            if config.spawn_agent_enabled {
+            if config.agent_tool_surface_policy.spawn_agent_enabled {
                 plan.push_spec(
                     create_spawn_agent_tool_v2(SpawnAgentToolOptions {
                         available_models: &config.available_models,
@@ -429,7 +429,7 @@ pub fn build_tool_registry_plan(
                 /*supports_parallel_tool_calls*/ false,
                 config.code_mode_enabled,
             );
-            if config.spawn_agent_enabled {
+            if config.agent_tool_surface_policy.spawn_agent_enabled {
                 plan.register_handler("spawn_agent", ToolHandlerKind::SpawnAgentV2);
             }
             plan.register_handler("send_message", ToolHandlerKind::SendMessageV2);
@@ -440,7 +440,7 @@ pub fn build_tool_registry_plan(
         } else {
             let agent_type_description =
                 agent_type_description(config, params.default_agent_type_description);
-            if config.spawn_agent_enabled {
+            if config.agent_tool_surface_policy.spawn_agent_enabled {
                 plan.push_spec(
                     create_spawn_agent_tool_v1(SpawnAgentToolOptions {
                         available_models: &config.available_models,
@@ -474,7 +474,7 @@ pub fn build_tool_registry_plan(
                 /*supports_parallel_tool_calls*/ false,
                 config.code_mode_enabled,
             );
-            if config.spawn_agent_enabled {
+            if config.agent_tool_surface_policy.spawn_agent_enabled {
                 plan.register_handler("spawn_agent", ToolHandlerKind::SpawnAgentV1);
             }
             plan.register_handler("send_input", ToolHandlerKind::SendInputV1);

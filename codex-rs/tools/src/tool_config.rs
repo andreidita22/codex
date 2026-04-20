@@ -37,6 +37,27 @@ pub enum UnifiedExecShellMode {
     ZshFork(ZshForkConfig),
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct AgentToolSurfacePolicy {
+    pub collaboration_enabled: bool,
+    pub spawn_agent_enabled: bool,
+    pub request_user_input_enabled: bool,
+}
+
+impl AgentToolSurfacePolicy {
+    fn for_session(session_source: &SessionSource, collab_enabled: bool) -> Self {
+        Self {
+            collaboration_enabled: collab_enabled,
+            spawn_agent_enabled: collab_enabled
+                && !matches!(
+                    session_source,
+                    SessionSource::SubAgent(SubAgentSource::ThreadSpawn { .. })
+                ),
+            request_user_input_enabled: !matches!(session_source, SessionSource::SubAgent(_)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ZshForkConfig {
     pub shell_zsh_path: AbsolutePathBuf,
@@ -102,10 +123,8 @@ pub struct ToolsConfig {
     pub js_repl_enabled: bool,
     pub js_repl_tools_only: bool,
     pub can_request_original_image_detail: bool,
-    pub collab_tools: bool,
     pub multi_agent_v2: bool,
-    pub spawn_agent_enabled: bool,
-    pub request_user_input_enabled: bool,
+    pub agent_tool_surface_policy: AgentToolSurfacePolicy,
     pub hide_spawn_agent_metadata: bool,
     pub spawn_agent_usage_hint: bool,
     pub spawn_agent_usage_hint_text: Option<String>,
@@ -148,12 +167,8 @@ impl ToolsConfig {
         let include_collab_tools = features.enabled(Feature::Collab);
         let include_multi_agent_v2 = features.enabled(Feature::MultiAgentV2);
         let include_agent_jobs = features.enabled(Feature::SpawnCsv);
-        let include_spawn_agent = include_collab_tools
-            && !matches!(
-                session_source,
-                SessionSource::SubAgent(SubAgentSource::ThreadSpawn { .. })
-            );
-        let include_request_user_input = !matches!(session_source, SessionSource::SubAgent(_));
+        let agent_tool_surface_policy =
+            AgentToolSurfacePolicy::for_session(session_source, include_collab_tools);
         let include_default_mode_request_user_input =
             features.enabled(Feature::DefaultModeRequestUserInput);
         let include_search_tool =
@@ -231,10 +246,8 @@ impl ToolsConfig {
             js_repl_enabled: include_js_repl,
             js_repl_tools_only: include_js_repl_tools_only,
             can_request_original_image_detail: include_original_image_detail,
-            collab_tools: include_collab_tools,
             multi_agent_v2: include_multi_agent_v2,
-            spawn_agent_enabled: include_spawn_agent,
-            request_user_input_enabled: include_request_user_input,
+            agent_tool_surface_policy,
             hide_spawn_agent_metadata: false,
             spawn_agent_usage_hint: true,
             spawn_agent_usage_hint_text: None,
