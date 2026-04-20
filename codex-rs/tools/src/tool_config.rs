@@ -39,7 +39,7 @@ pub enum UnifiedExecShellMode {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct AgentToolSurfacePolicy {
-    pub progress_observability_enabled: bool,
+    pub collaboration_enabled: bool,
     pub spawn_agent_enabled: bool,
     pub request_user_input_enabled: bool,
 }
@@ -47,7 +47,7 @@ pub struct AgentToolSurfacePolicy {
 impl AgentToolSurfacePolicy {
     fn for_session(session_source: &SessionSource, collab_enabled: bool) -> Self {
         Self {
-            progress_observability_enabled: collab_enabled,
+            collaboration_enabled: collab_enabled,
             spawn_agent_enabled: collab_enabled
                 && !matches!(
                     session_source,

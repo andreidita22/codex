@@ -103,10 +103,7 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
     ] {
         expected.insert(spec.name().to_string(), spec);
     }
-    if config
-        .agent_tool_surface_policy
-        .progress_observability_enabled
-    {
+    if config.agent_tool_surface_policy.collaboration_enabled {
         let mut collab_specs = vec![
             create_inspect_agent_progress_tool(),
             create_wait_for_agent_progress_tool(),

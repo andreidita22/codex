@@ -158,7 +158,7 @@ fn subagents_keep_request_user_input_mode_config_and_agent_jobs_workers_opt_in_b
     assert_eq!(
         tools_config.agent_tool_surface_policy,
         AgentToolSurfacePolicy {
-            progress_observability_enabled: true,
+            collaboration_enabled: true,
             spawn_agent_enabled: true,
             request_user_input_enabled: false,
         }
@@ -193,7 +193,7 @@ fn thread_spawn_subagents_keep_observability_but_hide_spawn_and_request_user_inp
     assert_eq!(
         tools_config.agent_tool_surface_policy,
         AgentToolSurfacePolicy {
-            progress_observability_enabled: true,
+            collaboration_enabled: true,
             spawn_agent_enabled: false,
             request_user_input_enabled: false,
         }

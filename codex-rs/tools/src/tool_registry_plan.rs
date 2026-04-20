@@ -368,10 +368,7 @@ pub fn build_tool_registry_plan(
         plan.register_handler("view_image", ToolHandlerKind::ViewImage);
     }
 
-    if config
-        .agent_tool_surface_policy
-        .progress_observability_enabled
-    {
+    if config.agent_tool_surface_policy.collaboration_enabled {
         plan.push_spec(
             create_inspect_agent_progress_tool(),
             /*supports_parallel_tool_calls*/ false,
