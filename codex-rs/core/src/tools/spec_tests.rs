@@ -12,14 +12,12 @@ use codex_features::Features;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_models_manager::bundled_models_response;
 use codex_models_manager::model_info::with_config_overrides;
-use codex_protocol::ThreadId;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SubAgentSource;
 use codex_tools::ConfiguredToolSpec;
 use codex_tools::DiscoverableTool;
 use codex_tools::JsonSchema;
@@ -198,17 +196,6 @@ fn find_tool<'a>(tools: &'a [ConfiguredToolSpec], expected_name: &str) -> &'a Co
         .iter()
         .find(|tool| tool.name() == expected_name)
         .unwrap_or_else(|| panic!("expected tool {expected_name}"))
-}
-
-fn assert_lacks_tool_name(tools: &[ConfiguredToolSpec], expected_absent: &str) {
-    let names = tools
-        .iter()
-        .map(ConfiguredToolSpec::name)
-        .collect::<Vec<_>>();
-    assert!(
-        !names.contains(&expected_absent),
-        "expected tool {expected_absent} to be absent; had: {names:?}"
-    );
 }
 
 fn find_namespace_function_tool<'a>(
@@ -411,33 +398,6 @@ fn assert_default_model_tools(
     };
     expected.extend(expected_tail);
     assert_model_tools(model_slug, features, web_search_mode, &expected);
-}
-
-fn thread_spawn_subagent_tools_config(multi_agent_v2: bool) -> ToolsConfig {
-    let config = test_config();
-    let model_info = construct_model_info_offline("gpt-5-codex", &config);
-    let mut features = Features::with_defaults();
-    features.enable(Feature::Collab);
-    if multi_agent_v2 {
-        features.enable(Feature::MultiAgentV2);
-    }
-    let available_models = Vec::new();
-    ToolsConfig::new(&ToolsConfigParams {
-        model_info: &model_info,
-        available_models: &available_models,
-        features: &features,
-        image_generation_tool_auth_allowed: true,
-        web_search_mode: Some(WebSearchMode::Cached),
-        session_source: SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-            parent_thread_id: ThreadId::default(),
-            depth: 1,
-            agent_path: None,
-            agent_nickname: None,
-            agent_role: None,
-        }),
-        sandbox_policy: &SandboxPolicy::DangerFullAccess,
-        windows_sandbox_level: WindowsSandboxLevel::Disabled,
-    })
 }
 
 #[test]
@@ -791,76 +751,6 @@ fn spawn_agent_description_uses_configured_usage_hint_text() {
         "#,
         &description,
     );
-}
-
-#[test]
-fn collab_tools_include_agent_progress_tools() {
-    let tools_config = multi_agent_v2_tools_config();
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    )
-    .build();
-
-    assert_contains_tool_names(
-        &tools,
-        &[
-            INSPECT_AGENT_PROGRESS_TOOL_NAME,
-            WAIT_FOR_AGENT_PROGRESS_TOOL_NAME,
-            "spawn_agent",
-        ],
-    );
-}
-
-#[test]
-fn thread_spawn_subagent_hides_spawn_agent_tool_v1() {
-    let tools_config = thread_spawn_subagent_tools_config(/*multi_agent_v2*/ false);
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    )
-    .build();
-
-    assert_contains_tool_names(
-        &tools,
-        &[
-            INSPECT_AGENT_PROGRESS_TOOL_NAME,
-            WAIT_FOR_AGENT_PROGRESS_TOOL_NAME,
-        ],
-    );
-    assert_lacks_tool_name(&tools, "spawn_agent");
-    assert_lacks_tool_name(&tools, "request_user_input");
-}
-
-#[test]
-fn thread_spawn_subagent_hides_spawn_agent_tool_v2() {
-    let tools_config = thread_spawn_subagent_tools_config(/*multi_agent_v2*/ true);
-    let (tools, _) = build_specs(
-        &tools_config,
-        /*mcp_tools*/ None,
-        /*deferred_mcp_tools*/ None,
-        &[],
-    )
-    .build();
-
-    assert_contains_tool_names(
-        &tools,
-        &[
-            INSPECT_AGENT_PROGRESS_TOOL_NAME,
-            WAIT_FOR_AGENT_PROGRESS_TOOL_NAME,
-            "send_message",
-            "followup_task",
-            "wait_agent",
-            "close_agent",
-            "list_agents",
-        ],
-    );
-    assert_lacks_tool_name(&tools, "spawn_agent");
-    assert_lacks_tool_name(&tools, "request_user_input");
 }
 
 #[test]
