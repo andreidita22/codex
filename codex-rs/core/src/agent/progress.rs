@@ -709,6 +709,7 @@ mod tests {
     use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
     use codex_protocol::protocol::ExecCommandStatus;
     use codex_protocol::protocol::ExecOutputStream;
+    use codex_protocol::protocol::StreamErrorEvent;
     use codex_protocol::protocol::TurnAbortReason;
     use codex_protocol::protocol::TurnAbortedEvent;
     use codex_protocol::protocol::TurnCompleteEvent;
@@ -940,6 +941,20 @@ mod tests {
 
         registry.record_event(
             thread_id,
+            &EventMsg::StreamError(StreamErrorEvent {
+                message: "temporary disconnect".to_string(),
+                codex_error_info: None,
+                additional_details: None,
+            }),
+        );
+        assert!(
+            timeout(Duration::from_millis(20), seq_rx.changed())
+                .await
+                .is_err()
+        );
+
+        registry.record_event(
+            thread_id,
             &EventMsg::AgentReasoning(AgentReasoningEvent {
                 text: "scanning repo".to_string(),
             }),
@@ -949,6 +964,18 @@ mod tests {
             .await
             .expect("material progress should wake watchers");
         assert_eq!(*seq_rx.borrow(), 1);
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::AgentReasoningDelta(codex_protocol::protocol::AgentReasoningDeltaEvent {
+                delta: " and cataloging modules".to_string(),
+            }),
+        );
+        assert!(
+            timeout(Duration::from_millis(20), seq_rx.changed())
+                .await
+                .is_err()
+        );
 
         registry.record_event(
             thread_id,
@@ -1027,8 +1054,8 @@ mod tests {
         assert_eq!(
             ended.recent_updates,
             vec![
-                "turn started".to_string(),
                 "warning: still initializing".to_string(),
+                "stream error: temporary disconnect".to_string(),
                 "reasoning: scanning repo".to_string(),
                 "running command: rg --files".to_string(),
                 "command finished: rg --files".to_string(),

@@ -365,6 +365,21 @@ mod tests {
             phase_enum_schema()
         );
         assert_eq!(
+            output_schema["properties"]["blocked_on"]["enum"],
+            json!([
+                "exec_approval",
+                "patch_approval",
+                "permissions_request",
+                "user_input_request",
+                "elicitation_request",
+                null
+            ])
+        );
+        assert_eq!(
+            output_schema["properties"]["active_work"]["properties"]["kind"]["enum"],
+            json!(["reasoning", "message", "command", "tool"])
+        );
+        assert_eq!(
             output_schema["properties"]["ever_reported_progress"]["type"],
             json!("boolean")
         );
