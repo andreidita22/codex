@@ -16,6 +16,8 @@ use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 use codex_agent_observability::AgentProgressPhase;
 use codex_agent_observability::AgentProgressSnapshot;
+use codex_agent_observability::INSPECT_AGENT_PROGRESS_TOOL_NAME;
+use codex_agent_observability::WAIT_FOR_AGENT_PROGRESS_TOOL_NAME;
 use codex_agent_observability::WaitForAgentProgressMatchReason;
 use codex_agent_observability::WaitObservationMoment;
 use codex_agent_observability::classify_wait_observation;
@@ -264,25 +266,7 @@ impl WaitForAgentProgressResult {
 
 impl ToolOutput for InspectAgentProgressResult {
     fn log_preview(&self) -> String {
-        tool_output_json_text(self, "inspect_agent_progress")
-    }
-
-    fn success_for_logging(&self) -> bool {
-        true
-    }
-
-    fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
-        tool_output_response_item(call_id, payload, self, Some(true), "inspect_agent_progress")
-    }
-
-    fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
-        tool_output_code_mode_result(self, "inspect_agent_progress")
-    }
-}
-
-impl ToolOutput for WaitForAgentProgressResult {
-    fn log_preview(&self) -> String {
-        tool_output_json_text(self, "wait_for_agent_progress")
+        tool_output_json_text(self, INSPECT_AGENT_PROGRESS_TOOL_NAME)
     }
 
     fn success_for_logging(&self) -> bool {
@@ -295,12 +279,36 @@ impl ToolOutput for WaitForAgentProgressResult {
             payload,
             self,
             Some(true),
-            "wait_for_agent_progress",
+            INSPECT_AGENT_PROGRESS_TOOL_NAME,
         )
     }
 
     fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
-        tool_output_code_mode_result(self, "wait_for_agent_progress")
+        tool_output_code_mode_result(self, INSPECT_AGENT_PROGRESS_TOOL_NAME)
+    }
+}
+
+impl ToolOutput for WaitForAgentProgressResult {
+    fn log_preview(&self) -> String {
+        tool_output_json_text(self, WAIT_FOR_AGENT_PROGRESS_TOOL_NAME)
+    }
+
+    fn success_for_logging(&self) -> bool {
+        true
+    }
+
+    fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
+        tool_output_response_item(
+            call_id,
+            payload,
+            self,
+            Some(true),
+            WAIT_FOR_AGENT_PROGRESS_TOOL_NAME,
+        )
+    }
+
+    fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
+        tool_output_code_mode_result(self, WAIT_FOR_AGENT_PROGRESS_TOOL_NAME)
     }
 }
 

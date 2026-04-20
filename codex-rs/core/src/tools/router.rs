@@ -8,6 +8,8 @@ use crate::tools::context::ToolPayload;
 use crate::tools::registry::AnyToolResult;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::spec::build_specs_with_discoverable_tools;
+use codex_agent_observability::INSPECT_AGENT_PROGRESS_TOOL_NAME;
+use codex_agent_observability::WAIT_FOR_AGENT_PROGRESS_TOOL_NAME;
 use codex_mcp::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::LocalShellAction;
@@ -31,7 +33,7 @@ fn model_visible_in_code_mode_only(tool_name: &str) -> bool {
     !codex_code_mode::is_code_mode_nested_tool(tool_name)
         && !matches!(
             tool_name,
-            "inspect_agent_progress" | "wait_for_agent_progress"
+            INSPECT_AGENT_PROGRESS_TOOL_NAME | WAIT_FOR_AGENT_PROGRESS_TOOL_NAME
         )
 }
 
