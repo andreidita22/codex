@@ -48,7 +48,7 @@ The primary semantic split lives in the maintenance route matrix:
 
 Relevant owner:
 
-- [route_matrix.rs](/home/rose/work/codex/fork/codex-rs/context-maintenance-policy/src/route_matrix.rs)
+- [route_matrix.rs](../../codex-rs/context-maintenance-policy/src/route_matrix.rs)
 
 This means `ThreadMemory` is already inactive mid-turn **by timing law**.
 
