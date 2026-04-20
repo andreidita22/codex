@@ -1,6 +1,4 @@
 use crate::agent::agent_resolver::resolve_agent_target;
-use crate::agent::progress::AgentProgressPhase;
-use crate::agent::progress::AgentProgressSnapshot;
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
@@ -16,6 +14,8 @@ use crate::tools::handlers::multi_agents_common::tool_output_response_item;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
+use codex_agent_observability::AgentProgressPhase;
+use codex_agent_observability::AgentProgressSnapshot;
 use codex_protocol::ThreadId;
 use codex_protocol::models::ResponseInputItem;
 use serde::Deserialize;
@@ -391,5 +391,69 @@ fn classify_wait_match(
         Some(WaitForAgentProgressMatchReason::PhaseMatched)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_protocol::protocol::AgentStatus;
+    use pretty_assertions::assert_eq;
+
+    fn snapshot(seq: u64, phase: AgentProgressPhase) -> AgentProgressSnapshot {
+        AgentProgressSnapshot {
+            lifecycle_status: AgentStatus::Running,
+            phase,
+            blocked_on: None,
+            active_work: None,
+            recent_updates: Vec::new(),
+            latest_visible_message: None,
+            final_message: None,
+            error_message: None,
+            ever_entered_turn: true,
+            ever_reported_progress: true,
+            last_progress_age_ms: Some(10),
+            seq,
+            stalled: false,
+        }
+    }
+
+    #[test]
+    fn classify_wait_match_prefers_seq_advanced_over_phase_match() {
+        let snapshot = snapshot(2, AgentProgressPhase::WaitingApproval);
+
+        assert_eq!(
+            classify_wait_match(&snapshot, 1, &[AgentProgressPhase::WaitingApproval]),
+            Some(WaitForAgentProgressMatchReason::SeqAdvanced)
+        );
+    }
+
+    #[test]
+    fn classify_wait_match_returns_phase_matched_without_seq_advance() {
+        let snapshot = snapshot(3, AgentProgressPhase::WaitingUserInput);
+
+        assert_eq!(
+            classify_wait_match(&snapshot, 3, &[AgentProgressPhase::WaitingUserInput]),
+            Some(WaitForAgentProgressMatchReason::PhaseMatched)
+        );
+    }
+
+    #[test]
+    fn timed_out_wait_result_is_marked_as_timed_out() {
+        let result = WaitForAgentProgressResult::timed_out(
+            CanonicalAgentTarget {
+                thread_id: "thread-1".to_string(),
+                task_name: "/root/worker".to_string(),
+                nickname: Some("worker".to_string()),
+            },
+            snapshot(0, AgentProgressPhase::Pending),
+        );
+
+        assert_eq!(result.timed_out, true);
+        assert_eq!(
+            result.match_reason,
+            WaitForAgentProgressMatchReason::TimedOut
+        );
+        assert_eq!(result.message, "Wait for agent progress timed out.");
     }
 }
