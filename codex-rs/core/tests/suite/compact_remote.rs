@@ -35,8 +35,10 @@ use core_test_support::test_codex::TestCodexHarness;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
+use core_test_support::wait_for_event_with_timeout;
 use pretty_assertions::assert_eq;
 use serde_json::json;
+use tokio::time::Duration;
 use wiremock::ResponseTemplate;
 
 fn approx_token_count(text: &str) -> i64 {
@@ -56,6 +58,7 @@ fn estimate_compact_payload_tokens(request: &responses::ResponsesRequest) -> i64
 
 const PRETURN_CONTEXT_DIFF_CWD: &str = "/tmp/PRETURN_CONTEXT_DIFF_CWD";
 const DUMMY_FUNCTION_NAME: &str = "test_tool";
+const REMOTE_COMPACT_TURN_COMPLETE_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn summary_with_prefix(summary: &str) -> String {
     format!("{SUMMARY_PREFIX}\n{summary}")
@@ -76,6 +79,19 @@ fn format_labeled_requests_snapshot(
         sections,
         &context_snapshot_options(),
     )
+}
+
+fn is_continuation_bridge_request(request: &responses::ResponsesRequest) -> bool {
+    request
+        .body_json()
+        .pointer("/text/format/schema/properties/schema/enum/0")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|schema| {
+            matches!(
+                schema,
+                "continuation_bridge_baton_v1" | "continuation_bridge_v2"
+            )
+        })
 }
 
 fn compacted_summary_only_output(summary: &str) -> Vec<ResponseItem> {
@@ -198,6 +214,15 @@ fn assert_request_contains_realtime_end(request: &responses::ResponsesRequest) {
     );
 }
 
+async fn wait_for_turn_complete(codex: &codex_core::CodexThread) {
+    wait_for_event_with_timeout(
+        codex,
+        |ev| matches!(ev, EventMsg::TurnComplete(_)),
+        REMOTE_COMPACT_TURN_COMPLETE_TIMEOUT,
+    )
+    .await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_compact_replaces_history_for_followups() -> Result<()> {
     skip_if_no_network!(Ok(()));
@@ -243,10 +268,10 @@ async fn remote_compact_replaces_history_for_followups() -> Result<()> {
             responsesapi_client_metadata: None,
         })
         .await?;
-    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+    wait_for_turn_complete(&codex).await;
 
     codex.submit(Op::Compact).await?;
-    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+    wait_for_turn_complete(&codex).await;
 
     codex
         .submit(Op::UserInput {
@@ -258,7 +283,7 @@ async fn remote_compact_replaces_history_for_followups() -> Result<()> {
             responsesapi_client_metadata: None,
         })
         .await?;
-    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+    wait_for_turn_complete(&codex).await;
 
     let compact_request = compact_mock.single_request();
     assert_eq!(compact_request.path(), "/v1/responses/compact");
@@ -346,109 +371,7 @@ async fn remote_compact_replaces_history_for_followups() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn remote_compact_keeps_continuation_bridge_when_bridge_response_has_trailing_text()
--> Result<()> {
-    skip_if_no_network!(Ok(()));
-
-    let server = wiremock::MockServer::start().await;
-    let _bridge_mock = responses::mount_default_continuation_bridge_responder_with_suffix(
-        &server,
-        "\nTrailing commentary that should be ignored.",
-    )
-    .await;
-
-    let mut builder = test_codex().with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-    let test = builder.build(&server).await?;
-
-    let responses_mock = responses::mount_sse_sequence(
-        &server,
-        vec![
-            responses::sse(vec![
-                responses::ev_assistant_message("m1", "BASELINE_REPLY"),
-                responses::ev_completed("resp-1"),
-            ]),
-            responses::sse(vec![
-                responses::ev_assistant_message("m2", "AFTER_COMPACT_REPLY"),
-                responses::ev_completed("resp-2"),
-            ]),
-        ],
-    )
-    .await;
-
-    let compact_mock = responses::mount_compact_json_once(
-        &server,
-        serde_json::json!({
-            "output": compacted_summary_only_output("REMOTE_COMPACTED_SUMMARY")
-        }),
-    )
-    .await;
-
-    test.codex
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "start remote compact flow".into(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-        })
-        .await?;
-    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
-
-    test.codex.submit(Op::Compact).await?;
-    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
-
-    test.codex
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "after compact in same session".into(),
-                text_elements: Vec::new(),
-            }],
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-        })
-        .await?;
-    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
-
-    assert_eq!(compact_mock.requests().len(), 1);
-    let requests = responses_mock.requests();
-    assert_eq!(requests.len(), 2, "expected two model requests");
-
-    let after_compact_body = requests[1].body_json();
-    let has_bridge = after_compact_body
-        .get("input")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|item| item.get("role").and_then(serde_json::Value::as_str) == Some("developer"))
-        .flat_map(|item| {
-            item.get("content")
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
-        })
-        .any(|content| {
-            content
-                .get("text")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|text| text.contains("<continuation_bridge schema=\""))
-        });
-    assert!(
-        has_bridge,
-        "expected follow-up request to include continuation bridge despite trailing bridge output"
-    );
-    assert!(
-        !after_compact_body
-            .to_string()
-            .contains("Trailing commentary that should be ignored."),
-        "expected trailing bridge output to be excluded from follow-up history"
-    );
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn remote_compact_uses_bridge_model_override_only_for_bridge_request() -> Result<()> {
+async fn remote_compact_does_not_issue_bridge_request_when_override_is_configured() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = wiremock::MockServer::start().await;
@@ -493,21 +416,14 @@ async fn remote_compact_uses_bridge_model_override_only_for_bridge_request() -> 
     test.codex.submit(Op::Compact).await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    let bridge_requests = bridge_mock.requests();
+    let bridge_requests = bridge_mock
+        .requests()
+        .into_iter()
+        .filter(is_continuation_bridge_request)
+        .collect::<Vec<_>>();
     assert!(
-        !bridge_requests.is_empty(),
-        "expected at least one continuation bridge request"
-    );
-    let bridge_request = bridge_requests
-        .last()
-        .expect("bridge requests should contain a final request");
-    assert_eq!(
-        bridge_request.body_json()["model"].as_str(),
-        Some("gpt-5-codex-mini")
-    );
-    assert_eq!(
-        bridge_request.body_json()["reasoning"]["effort"].as_str(),
-        Some("high")
+        bridge_requests.is_empty(),
+        "turn-boundary remote compact should not issue a continuation bridge request"
     );
 
     let compact_request = compact_mock.single_request();

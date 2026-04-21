@@ -1,7 +1,7 @@
 use crate::Prompt;
-use crate::codex::Session;
-use crate::codex::TurnContext;
 use crate::context_maintenance_config::resolve_context_maintenance_request_context;
+use crate::session::session::Session;
+use crate::session::turn_context::TurnContext;
 use codex_api::ResponseEvent;
 use codex_context_maintenance_policy::build_thread_memory_update_message;
 use codex_context_maintenance_policy::limit_thread_memory_source_items;
@@ -95,6 +95,7 @@ pub(crate) async fn generate_thread_memory_item(
             | ResponseEvent::OutputItemAdded(_)
             | ResponseEvent::ServerModel(_)
             | ResponseEvent::ServerReasoningIncluded(_)
+            | ResponseEvent::ToolCallInputDelta { .. }
             | ResponseEvent::ReasoningSummaryDelta { .. }
             | ResponseEvent::ReasoningContentDelta { .. }
             | ResponseEvent::ReasoningSummaryPartAdded { .. }

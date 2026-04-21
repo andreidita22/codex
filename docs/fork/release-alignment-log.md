@@ -87,6 +87,159 @@ Copy this shape for future releases.
 - post-ingest cleanup
 ```
 
+## 0.121.0 -> 0.122.0 (prep)
+
+### Refs
+
+- fork main at prep time: `b67200fbfa`
+- upstream target: `rust-v0.122.0` / `230dcadee6` (tag object `9e1c5b0352`)
+- live upstream inspection ref at prep time: `upstream-main` / `ca3246f77a`
+- comparison range for upstream release delta: `rust-v0.121.0..rust-v0.122.0`
+- comparison range for fork ingest surface: `main..upstream-latest-release`
+
+### Scale
+
+- upstream release delta (`rust-v0.121.0..rust-v0.122.0`): `778` files changed, `62857` insertions, `18347` deletions
+- current fork-main vs upstream target (`main..upstream-latest-release`): `892` files changed, `63507` insertions, `47791` deletions
+- direct overlap (`main...upstream-latest-release`): `778` files
+- known fork seam overlap candidates present in upstream delta: `15` files
+  - `codex-rs/protocol/src/protocol.rs`
+  - `codex-rs/protocol/src/models.rs`
+  - `codex-rs/core/src/agent/control.rs`
+  - `codex-rs/core/src/compact.rs`
+  - `codex-rs/core/src/compact_remote.rs`
+  - `codex-rs/core/src/context_manager/history.rs`
+  - `codex-rs/core/src/context_manager/updates.rs`
+  - `codex-rs/core/src/event_mapping.rs`
+  - `codex-rs/core/src/thread_manager.rs`
+  - `codex-rs/core/src/tools/spec.rs`
+  - `codex-rs/core/src/tools/router.rs`
+  - `codex-rs/tools/src/tool_registry_plan.rs`
+  - `codex-rs/config/src/config_toml.rs`
+  - `codex-rs/app-server-protocol/src/protocol/v2.rs`
+  - `codex-rs/app-server/src/codex_message_processor.rs`
+
+### High-level read (pre-alignment)
+
+`0.122` is not primarily a compaction-law rewrite. The main challenge is
+runtime ownership movement around the seams we already extracted.
+
+Highest-risk themes before ingest:
+
+- upstream deleted `core/src/codex.rs` and moved large runtime ownership into
+  new `core/src/session/*` modules
+- observability now has a new protocol event to classify:
+  `EventMsg::PatchApplyUpdated`
+- session-source handling changed with
+  `SubAgentSource::MemoryConsolidation`, which can affect
+  `AgentToolSurfacePolicy`
+- tool planning changed around deferred dynamic tools and unavailable-tool
+  placeholders, so our A3/A4 observability alignment points need review
+- context-maintenance executor files changed only lightly, but protocol and
+  runtime carrier types changed enough that source-selection, rollout, and
+  replacement-history assumptions need another pass
+
+### Seam table (initial prep)
+
+| File | Fork-owned bundles affected | Initial risk | Decision | Rationale | Validation |
+| --- | --- | --- | --- | --- | --- |
+| `codex-rs/core/src/{codex.rs -> session/*}` | context-maintenance runtime adapters, observability runtime adapters | very high | `merge_both` | Upstream runtime ownership moved into `session/*`; we kept module-owned law in the extracted crates and reattached the fork through `session::turn`, `session::turn_context`, `session::mod`, and `session::handlers`. The critical correction was restoring `RefreshContext` / `PruneContext` dispatch in `session/handlers.rs` after upstream dropped those ops during the split. | `cargo check -p codex-core`; `cargo test -p codex-core context_maintenance --lib`; `cargo test -p codex-tui slash_refresh_dispatches_refresh_context_op --lib`; `cargo test -p codex-tui slash_prune_dispatches_prune_context_op --lib` |
+| `codex-rs/protocol/src/protocol.rs` | observability event classification, session-source/tool-surface policy, rollout carrier types | high | `defer` | New protocol surface includes `EventMsg::PatchApplyUpdated`, `SubAgentSource::MemoryConsolidation`, `RolloutItem::SessionState`, and extra turn-context fields; these can compile while silently changing our adapter assumptions. | pre-ingest only |
+| `codex-rs/protocol/src/models.rs` | context-maintenance source selection, history shaping, protocol utility expectations | high | `defer` | `ContentItem::InputImage` and `GhostCommit` moved or changed in ways that may affect source filtering, image-detail handling, and rollout-related helpers. | pre-ingest only |
+| `codex-rs/core/src/compact.rs` | local compact assembly, artifact reinsertion, timing/injection adapters | medium-high | `merge_both` | Kept the fork-owned compaction engine routing, timing classification, authoritative artifact generation, and deterministic local replacement-history assembly while absorbing the new session host paths. Also revalidated the local compact invariants after the ingest to make sure stale bridge/thread-memory items still drop by construction. | `cargo test -p codex-core compact::tests --lib`; `cargo test -p codex-core context_maintenance --lib` |
+| `codex-rs/core/src/compact_remote.rs` | remote compact shaping, summary classification, artifact reinsertion | medium-high | `merge_both` | Remote compact itself changed lightly in `0.122`; the ingest preserved the fork's policy-owned shaping and classifier adapters while switching to the new session runtime entry points. | `cargo check -p codex-core`; `cargo test -p codex-core compact::tests --lib` |
+| `codex-rs/core/src/context_manager/{history.rs,updates.rs}` | prompt/history visibility and final-history validity for maintenance artifacts | medium-high | `defer` | Source-selection and replacement-history assumptions depend on what prompt/history APIs expose and normalize. Small upstream changes here can bypass policy expectations without obvious compile failures. | pre-ingest only |
+| `codex-rs/core/src/event_mapping.rs` | context-maintenance classifiers for user/contextual/summary items | medium-high | `defer` | Fork history-shape decisions still depend on core-supplied classification logic; this remains a review point even though the raw diff is small. | pre-ingest only |
+| `codex-rs/core/src/{agent/control.rs,thread_manager.rs}` | observability registry lifetime, progress seeding/inspection/removal | high | `defer` | Upstream control-plane and thread-manager changes must still seed, update, inspect, and remove progress state correctly after the new session refactor. | pre-ingest only |
+| `codex-rs/core/src/tools/{spec.rs,router.rs}` and `codex-rs/tools/src/tool_registry_plan.rs` | E-witness tool contract wiring, tool-surface containment, unavailable/deferred tool exposure | high | `defer` | Upstream introduced new tool-planning behavior around deferred dynamic tools and unavailable tool placeholders; our observability contract and explicit tool-surface policy need to be realigned there. | pre-ingest only |
+| `codex-rs/config/src/config_toml.rs` | context-maintenance adapter translation from config | medium | `defer` | Config churn appears secondary to the runtime split, but the policy crate must remain config-decoupled and the adapter translation still needs review. | pre-ingest only |
+| `codex-rs/app-server-protocol/src/protocol/v2.rs` and `codex-rs/app-server/src/codex_message_processor.rs` | refresh/prune/thread maintenance protocol surfaces | medium | `merge_both` | The `thread/refresh/start` and `thread/prune/start` protocol surfaces survived the release and still submit the fork ops through app-server. No extra fork-specific app-server rewrite was needed once the core/session dispatcher was restored. | `cargo test -p codex-app-server suite::v2::compaction::thread_refresh_start_triggers_compaction_and_returns_empty_response --test all -- --exact`; `cargo test -p codex-app-server suite::v2::compaction::thread_prune_start_triggers_compaction_and_returns_empty_response --test all -- --exact` |
+
+### Notes (prep)
+
+- Local mirror refs were updated before prep:
+  - `upstream-latest-release` -> `rust-v0.122.0` / `230dcadee6`
+  - `upstream-main` -> `upstream/main` / `ca3246f77a`
+- Pushing the read-only mirror branches back to `origin` is blocked by repo
+  policy, so the mirror refresh is currently local-only.
+- Immediate manual review questions for this ingest:
+  - how should `EventMsg::PatchApplyUpdated` classify in
+    `codex-agent-observability`?
+  - what tool-surface policy should apply to
+    `SubAgentSource::MemoryConsolidation`?
+  - where did the old `codex.rs`-level context-maintenance hooks move inside
+    `core/src/session/*`?
+- Start from fork `main`; do not build the ingest branch from
+  `upstream-latest-release`.
+
+### Alignment progress (in flight)
+
+- Resolved the main `codex.rs` -> `session/*` migration by reattaching fork
+  adapters instead of reopening module law:
+  - `core/src/session/turn.rs` now passes explicit
+    `CompactInvocationTiming` for intra-turn vs turn-boundary auto-compact
+  - `core/src/session/turn_context.rs` regained the fork adapter helpers for
+    continuation-bridge and governance config lookup
+  - `core/src/session/mod.rs` now rebuilds the settings-update overlay with
+    the fork-owned governance/prompt sections on top of the new upstream
+    settings-diff API
+  - `core/src/session/handlers.rs` again dispatches `RefreshContext` and
+    `PruneContext` through `ContextMaintenanceTask`
+- TUI/app-side fallout from the session split was small but real:
+  - `/refresh` and `/prune` slash commands needed to be restored in queued
+    drain behavior
+  - the stale `DEFAULT_PROJECT_DOC_FILENAME` import was removed after
+    upstream fully converged on `AGENTS.md`
+- New upstream stream/protocol surface already absorbed during this pass:
+  - `ResponseEvent::ToolCallInputDelta` is now explicitly ignored in the
+    continuation-bridge and thread-memory stream readers
+  - `ContentItem::InputImage` test fixtures now include the new `detail`
+    field required by `0.122`
+
+### Validation (current)
+
+- `cargo check -p codex-core`
+- `cargo test -p codex-context-maintenance-policy`
+- `cargo test -p codex-agent-observability`
+- `cargo test -p codex-core compact::tests --lib`
+- `cargo test -p codex-core context_maintenance --lib`
+- `cargo test -p codex-core tools::handlers::agent_progress::tests --lib`
+- `cargo test -p codex-tools agent_progress_tool --lib`
+- `cargo test -p codex-tui slash_refresh_dispatches_refresh_context_op --lib`
+- `cargo test -p codex-tui slash_prune_dispatches_prune_context_op --lib`
+
+### Remaining watchpoints
+
+- broader protocol churn in `protocol.rs` / `models.rs` still needs a final
+  sweep before the ingest can be called complete, but the concrete
+  `PatchApplyUpdated`, `ToolCallInputDelta`, `MemoryConsolidation`, and
+  `InputImage.detail` deltas are already aligned
+
+### Post-prep follow-up decisions already landed on the ingest branch
+
+- `EventMsg::PatchApplyUpdated` is now explicitly reduced by
+  `codex-agent-observability` as patch-tool progress:
+  - the first update promotes tool-call progress and bumps `seq`
+  - subsequent updates stay heartbeat-only while still refreshing the active
+    work label as the patch grows
+- `SubAgentSource::MemoryConsolidation` now has an explicit
+  `AgentToolSurfacePolicy`:
+  - no collaboration surface
+  - no `spawn_agent`
+  - no `request_user_input`
+  This keeps the internal memory-consolidation agent from inheriting the broad
+  generic subagent tool surface by accident.
+- deferred/unavailable tool planning was rechecked against the A3/A4
+  observability alignment:
+  - code-mode-only still hides the nested tool surface correctly
+  - deferred dynamic tool search still registers and describes the deferred
+    tools correctly
+  - no additional observability-specific rewrite was needed beyond the current
+    router/tool-surface alignment
+- app-server refresh/prune surfaces were revalidated end-to-end through the
+  `tests/all.rs` compaction suite, so the remaining ingest work is no longer in
+  the thread-maintenance transport layer
+
 ## 0.119.0 -> 0.120.0
 
 ### Refs

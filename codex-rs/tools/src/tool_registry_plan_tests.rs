@@ -97,6 +97,7 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
             search_context_size: None,
             search_content_types: None,
         },
+        create_image_generation_tool("png"),
         create_view_image_tool(ViewImageToolOptions {
             can_request_original_image_detail: config.can_request_original_image_detail,
         }),
@@ -518,6 +519,41 @@ fn test_build_specs_agent_job_worker_tools_enabled() {
             "report_agent_job_result",
         ],
     );
+    assert_lacks_tool_name(&tools, REQUEST_USER_INPUT_TOOL_NAME);
+}
+
+#[test]
+fn memory_consolidation_subagents_do_not_receive_collaboration_tools() {
+    let model_info = model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::Collab);
+    features.enable(Feature::MultiAgentV2);
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::SubAgent(SubAgentSource::MemoryConsolidation),
+        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let (tools, _) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    assert_lacks_tool_name(&tools, "inspect_agent_progress");
+    assert_lacks_tool_name(&tools, "wait_for_agent_progress");
+    assert_lacks_tool_name(&tools, "spawn_agent");
+    assert_lacks_tool_name(&tools, "send_message");
+    assert_lacks_tool_name(&tools, "followup_task");
+    assert_lacks_tool_name(&tools, "wait_agent");
+    assert_lacks_tool_name(&tools, "close_agent");
+    assert_lacks_tool_name(&tools, "list_agents");
     assert_lacks_tool_name(&tools, REQUEST_USER_INPUT_TOOL_NAME);
 }
 
@@ -1345,7 +1381,7 @@ fn search_tool_description_lists_each_mcp_source_once() {
 }
 
 #[test]
-fn search_tool_requires_model_capability_and_feature_flag() {
+fn search_tool_requires_model_capability_and_enabled_feature() {
     let model_info = search_capable_model_info();
     let deferred_mcp_tools = Some(vec![deferred_mcp_tool(
         "_create_event",
@@ -1378,10 +1414,12 @@ fn search_tool_requires_model_capability_and_feature_flag() {
     );
     assert_lacks_tool_name(&tools, TOOL_SEARCH_TOOL_NAME);
 
+    let mut features_without_tool_search = Features::with_defaults();
+    features_without_tool_search.disable(Feature::ToolSearch);
     let tools_config = ToolsConfig::new(&ToolsConfigParams {
         model_info: &model_info,
         available_models: &available_models,
-        features: &features,
+        features: &features_without_tool_search,
         image_generation_tool_auth_allowed: true,
         web_search_mode: Some(WebSearchMode::Cached),
         session_source: SessionSource::Cli,
@@ -1396,8 +1434,6 @@ fn search_tool_requires_model_capability_and_feature_flag() {
     );
     assert_lacks_tool_name(&tools, TOOL_SEARCH_TOOL_NAME);
 
-    let mut features = Features::with_defaults();
-    features.enable(Feature::ToolSearch);
     let tools_config = ToolsConfig::new(&ToolsConfigParams {
         model_info: &model_info,
         available_models: &available_models,
@@ -1415,6 +1451,57 @@ fn search_tool_requires_model_capability_and_feature_flag() {
         &[],
     );
     assert_contains_tool_names(&tools, &[TOOL_SEARCH_TOOL_NAME]);
+}
+
+#[test]
+fn search_tool_registers_for_deferred_dynamic_tools() {
+    let model_info = search_capable_model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::ToolSearch);
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let dynamic_tool = DynamicToolSpec {
+        name: "automation_update".to_string(),
+        description: "Create, update, view, or delete recurring automations.".to_string(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "mode": { "type": "string" },
+            },
+        }),
+        defer_loading: true,
+    };
+
+    let (tools, handlers) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[dynamic_tool],
+    );
+
+    let search_tool = find_tool(&tools, TOOL_SEARCH_TOOL_NAME);
+    let ToolSpec::ToolSearch { description, .. } = &search_tool.spec else {
+        panic!("expected tool_search tool");
+    };
+    assert!(description.contains("- Dynamic tools: Tools provided by the current Codex thread."));
+    assert_contains_tool_names(&tools, &[TOOL_SEARCH_TOOL_NAME, "automation_update"]);
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::plain(TOOL_SEARCH_TOOL_NAME),
+        kind: ToolHandlerKind::ToolSearch,
+    }));
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::plain("automation_update"),
+        kind: ToolHandlerKind::DynamicTool,
+    }));
 }
 
 #[test]

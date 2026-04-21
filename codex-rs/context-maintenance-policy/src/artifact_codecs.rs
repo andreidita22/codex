@@ -297,7 +297,10 @@ mod tests {
     use codex_protocol::models::ContentItem;
     use codex_protocol::models::ResponseItem;
     use pretty_assertions::assert_eq;
+    use serde_json::json;
 
+    use super::PRUNE_MANIFEST_SCHEMA;
+    use super::PRUNE_MANIFEST_TAG;
     use super::apply_history_disposition;
     use super::apply_history_disposition_without_summary_retention;
     use super::build_prune_manifest_item;
@@ -314,6 +317,7 @@ mod tests {
     use crate::LegacyCompactionMarkerPolicy;
     use crate::RemoteCompactedHistoryKeepPolicy;
     use crate::SummaryDispositionPolicy;
+    use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
     use codex_protocol::models::content_items_to_text;
 
     #[test]
@@ -324,6 +328,7 @@ mod tests {
             },
             ContentItem::InputImage {
                 image_url: "ignored".to_string(),
+                detail: Some(DEFAULT_IMAGE_DETAIL),
             },
             ContentItem::OutputText {
                 text: "output".to_string(),
@@ -465,12 +470,21 @@ mod tests {
             panic!("expected prune manifest developer message");
         };
         assert_eq!(role, "developer");
+        let text = content_items_to_text(&content).expect("prune manifest text should exist");
+        assert!(text.starts_with("<prune_manifest schema=\"prune_manifest_v1\">\n{"));
+        assert!(text.ends_with("\n</prune_manifest>"));
+        let manifest_payload = extract_tagged_payload(&text, PRUNE_MANIFEST_TAG)
+            .expect("prune manifest payload should be tagged");
+        let manifest_json: serde_json::Value =
+            serde_json::from_str(manifest_payload).expect("prune manifest payload should be json");
         assert_eq!(
-            content_items_to_text(&content),
-            Some(
-                "<prune_manifest schema=\"prune_manifest_v1\">\n{\n  \"final_history_len\": 7,\n  \"original_history_len\": 10,\n  \"removed_item_count\": 3,\n  \"schema\": \"prune_manifest_v1\"\n}\n</prune_manifest>"
-                    .to_string()
-            )
+            manifest_json,
+            json!({
+                "schema": PRUNE_MANIFEST_SCHEMA,
+                "removed_item_count": 3,
+                "original_history_len": 10,
+                "final_history_len": 7,
+            })
         );
     }
 

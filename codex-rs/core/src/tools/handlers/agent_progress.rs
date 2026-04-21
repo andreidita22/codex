@@ -355,8 +355,8 @@ fn parse_wait_timeout_ms(timeout_ms: Option<i64>) -> Result<u64, FunctionCallErr
 }
 
 async fn inspect_progress_target(
-    session: &std::sync::Arc<crate::codex::Session>,
-    turn: &std::sync::Arc<crate::codex::TurnContext>,
+    session: &std::sync::Arc<crate::session::session::Session>,
+    turn: &std::sync::Arc<crate::session::turn_context::TurnContext>,
     target: &str,
     stalled_after_ms: u64,
 ) -> Result<(CanonicalAgentTarget, AgentProgressSnapshot), FunctionCallError> {
@@ -371,7 +371,7 @@ async fn inspect_progress_target(
 }
 
 fn canonical_agent_target(
-    session: &std::sync::Arc<crate::codex::Session>,
+    session: &std::sync::Arc<crate::session::session::Session>,
     agent_id: ThreadId,
 ) -> CanonicalAgentTarget {
     let metadata = session.services.agent_control.get_agent_metadata(agent_id);

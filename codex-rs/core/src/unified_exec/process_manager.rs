@@ -26,6 +26,7 @@ use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::runtimes::unified_exec::UnifiedExecRequest as UnifiedExecToolRequest;
 use crate::tools::runtimes::unified_exec::UnifiedExecRuntime;
 use crate::tools::sandboxing::ToolCtx;
+use crate::tools::sandboxing::ToolError;
 use crate::unified_exec::ExecCommandRequest;
 use crate::unified_exec::MAX_UNIFIED_EXEC_PROCESSES;
 use crate::unified_exec::MAX_YIELD_TIME_MS;
@@ -50,6 +51,8 @@ use crate::unified_exec::process::OutputHandles;
 use crate::unified_exec::process::SpawnLifecycleHandle;
 use crate::unified_exec::process::UnifiedExecProcess;
 use codex_config::types::ShellEnvironmentPolicy;
+use codex_protocol::error::CodexErr;
+use codex_protocol::error::SandboxErr;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::approx_token_count;
@@ -66,6 +69,8 @@ const UNIFIED_EXEC_ENV: [(&str, &str); 10] = [
     ("GH_PAGER", "cat"),
     ("CODEX_CI", "1"),
 ];
+
+const POST_CLOSE_EXIT_GRACE_PERIOD: Duration = Duration::from_millis(500);
 
 /// Test-only override for deterministic unified exec process IDs.
 ///
@@ -152,6 +157,7 @@ fn exec_server_params_for_request(
         env_policy,
         env,
         tty,
+        pipe_stdin: false,
         arg0: request.arg0.clone(),
     }
 }
@@ -313,10 +319,23 @@ impl UnifiedExecProcessManager {
         .await;
         let wall_time = Instant::now().saturating_duration_since(start);
 
+        if process_started_alive
+            && !process.has_exited()
+            && (output_closed.load(Ordering::Acquire) || cancellation_token.is_cancelled())
+        {
+            let grace_deadline = Instant::now() + POST_CLOSE_EXIT_GRACE_PERIOD;
+            while !process.has_exited()
+                && process.failure_message().is_none()
+                && Instant::now() < grace_deadline
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+
         let text = String::from_utf8_lossy(&collected).to_string();
         let chunk_id = generate_chunk_id();
         if let Some(message) = process.failure_message() {
-            if !process_started_alive {
+            if !process_started_alive && process.try_mark_end_event_emitted() {
                 emit_failed_exec_end_for_unified_exec(
                     Arc::clone(&context.session),
                     Arc::clone(&context.turn),
@@ -347,6 +366,26 @@ impl UnifiedExecProcessManager {
                     ..
                 } => (Some(process_id), exit_code),
                 ProcessStatus::Exited { exit_code, .. } => {
+                    if process.try_mark_end_event_emitted() {
+                        emit_exec_end_for_unified_exec(
+                            Arc::clone(&context.session),
+                            Arc::clone(&context.turn),
+                            context.call_id.clone(),
+                            request.command.clone(),
+                            cwd.clone(),
+                            Some(process_id.to_string()),
+                            Arc::clone(&transcript),
+                            text.clone(),
+                            exit_code.unwrap_or(-1),
+                            wall_time,
+                        )
+                        .await;
+                    }
+                    finish_deferred_network_approval(
+                        context.session.as_ref(),
+                        deferred_network_approval.take(),
+                    )
+                    .await;
                     process.check_for_sandbox_denial_with_text(&text).await?;
                     (None, exit_code)
                 }
@@ -360,19 +399,21 @@ impl UnifiedExecProcessManager {
             // one implementation.
             let exit_code = process.exit_code();
             let exit = exit_code.unwrap_or(-1);
-            emit_exec_end_for_unified_exec(
-                Arc::clone(&context.session),
-                Arc::clone(&context.turn),
-                context.call_id.clone(),
-                request.command.clone(),
-                cwd.clone(),
-                Some(process_id.to_string()),
-                Arc::clone(&transcript),
-                text.clone(),
-                exit,
-                wall_time,
-            )
-            .await;
+            if process.try_mark_end_event_emitted() {
+                emit_exec_end_for_unified_exec(
+                    Arc::clone(&context.session),
+                    Arc::clone(&context.turn),
+                    context.call_id.clone(),
+                    request.command.clone(),
+                    cwd.clone(),
+                    Some(process_id.to_string()),
+                    Arc::clone(&transcript),
+                    text.clone(),
+                    exit,
+                    wall_time,
+                )
+                .await;
+            }
 
             self.release_process_id(request.process_id).await;
             finish_deferred_network_approval(
@@ -747,6 +788,7 @@ impl UnifiedExecProcessManager {
             .await;
         let req = UnifiedExecToolRequest {
             command: request.command.clone(),
+            hook_command: request.hook_command.clone(),
             process_id: request.process_id,
             cwd,
             env,
@@ -777,7 +819,19 @@ impl UnifiedExecProcessManager {
             )
             .await
             .map(|result| (result.output, result.deferred_network_approval))
-            .map_err(|e| UnifiedExecError::create_process(format!("{e:?}")))
+            .map_err(|err| match err {
+                ToolError::Codex(CodexErr::Sandbox(SandboxErr::Denied { output, .. })) => {
+                    let output = *output;
+                    let message = if output.aggregated_output.text.is_empty() {
+                        let exit_code = output.exit_code;
+                        format!("Process exited with code {exit_code}")
+                    } else {
+                        output.aggregated_output.text.clone()
+                    };
+                    UnifiedExecError::sandbox_denied(message, output)
+                }
+                other => UnifiedExecError::create_process(format!("{other:?}")),
+            })
     }
 
     pub(super) async fn collect_output_until_deadline(
@@ -789,7 +843,11 @@ impl UnifiedExecProcessManager {
         mut pause_state: Option<watch::Receiver<bool>>,
         mut deadline: Instant,
     ) -> Vec<u8> {
-        const POST_EXIT_CLOSE_WAIT_CAP: Duration = Duration::from_millis(50);
+        // Short-lived commands can report exit slightly before the final
+        // output chunk is drained under heavy test load. Give the pipe a
+        // slightly longer post-exit grace period so the initial response
+        // still captures the last output without waiting for the full yield.
+        const POST_EXIT_CLOSE_WAIT_CAP: Duration = Duration::from_millis(250);
 
         let mut collected: Vec<u8> = Vec::with_capacity(4096);
         let mut exit_signal_received = cancellation_token.is_cancelled();

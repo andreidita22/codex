@@ -1,7 +1,7 @@
-use crate::codex::Session;
-use crate::codex::TurnContext;
 use crate::config::CURRENT_THREAD_MODEL_SELECTOR;
 use crate::config::ContextMaintenanceReasoningEffort;
+use crate::session::session::Session;
+use crate::session::turn_context::TurnContext;
 use codex_otel::SessionTelemetry;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ReasoningEffort;

@@ -1,11 +1,11 @@
 mod subagent_context;
 
 use crate::Prompt;
-use crate::codex::Session;
-use crate::codex::TurnContext;
 use crate::config::ContinuationBridgeVariant;
 use crate::context_maintenance_config::ContextMaintenanceRequestContext;
 use crate::context_maintenance_config::resolve_context_maintenance_request_context;
+use crate::session::session::Session;
+use crate::session::turn_context::TurnContext;
 use codex_api::ResponseEvent;
 use codex_context_maintenance_policy::BridgeVariant;
 use codex_context_maintenance_policy::ContinuationBridgeModelInput;
@@ -128,6 +128,7 @@ pub(crate) async fn generate_continuation_bridge_item(
             | ResponseEvent::OutputItemAdded(_)
             | ResponseEvent::ServerModel(_)
             | ResponseEvent::ServerReasoningIncluded(_)
+            | ResponseEvent::ToolCallInputDelta { .. }
             | ResponseEvent::ReasoningSummaryDelta { .. }
             | ResponseEvent::ReasoningContentDelta { .. }
             | ResponseEvent::ReasoningSummaryPartAdded { .. }

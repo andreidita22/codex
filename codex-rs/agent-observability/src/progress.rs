@@ -406,6 +406,33 @@ impl ProgressRegistry {
                 push_update(&mut state.snapshot, format!("running tool: {label}"));
                 note_progress_event(state, now, ProgressEventKind::Milestone);
             }
+            EventMsg::PatchApplyUpdated(event) => {
+                state.snapshot.phase = AgentProgressPhase::ToolCall;
+                state.snapshot.blocked_on = None;
+                let label = truncate_preview(&format!(
+                    "apply_patch ({} file{})",
+                    event.changes.len(),
+                    if event.changes.len() == 1 { "" } else { "s" }
+                ));
+                let already_tracking_patch_apply = matches!(
+                    state.snapshot.active_work.as_ref(),
+                    Some(AgentActiveWork {
+                        kind: AgentActiveWorkKind::Tool,
+                        label,
+                    }) if label.starts_with("apply_patch (")
+                );
+                set_active_work(
+                    &mut state.snapshot,
+                    AgentActiveWorkKind::Tool,
+                    label.clone(),
+                );
+                if already_tracking_patch_apply {
+                    note_progress_event(state, now, ProgressEventKind::Heartbeat);
+                } else {
+                    push_update(&mut state.snapshot, format!("running tool: {label}"));
+                    note_progress_event(state, now, ProgressEventKind::Milestone);
+                }
+            }
             EventMsg::McpToolCallEnd(_)
             | EventMsg::DynamicToolCallResponse(_)
             | EventMsg::WebSearchEnd(_)
@@ -741,6 +768,8 @@ mod tests {
     use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
     use codex_protocol::protocol::ExecCommandStatus;
     use codex_protocol::protocol::ExecOutputStream;
+    use codex_protocol::protocol::FileChange;
+    use codex_protocol::protocol::PatchApplyUpdatedEvent;
     use codex_protocol::protocol::StreamErrorEvent;
     use codex_protocol::protocol::TurnAbortReason;
     use codex_protocol::protocol::TurnAbortedEvent;
@@ -936,6 +965,72 @@ mod tests {
         assert_eq!(interrupted.phase, AgentProgressPhase::Interrupted);
         assert_eq!(interrupted.active_work, None);
         assert_eq!(interrupted.stalled, false);
+    }
+
+    #[test]
+    fn patch_apply_updates_are_explicitly_classified() {
+        let registry = ProgressRegistry::default();
+        let thread_id = thread_id();
+        registry.seed(thread_id);
+        registry.record_event(
+            thread_id,
+            &EventMsg::PatchApplyUpdated(PatchApplyUpdatedEvent {
+                call_id: "call-1".to_string(),
+                changes: HashMap::from([(
+                    "src/lib.rs".into(),
+                    FileChange::Add {
+                        content: "fn main() {}".to_string(),
+                    },
+                )]),
+            }),
+        );
+
+        let snapshot = registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
+        assert_eq!(snapshot.phase, AgentProgressPhase::ToolCall);
+        assert_eq!(snapshot.seq, 1);
+        assert_eq!(
+            snapshot.active_work,
+            Some(AgentActiveWork {
+                kind: AgentActiveWorkKind::Tool,
+                label: "apply_patch (1 file)".to_string(),
+            })
+        );
+        assert_eq!(
+            snapshot.recent_updates,
+            vec!["running tool: apply_patch (1 file)".to_string()]
+        );
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::PatchApplyUpdated(PatchApplyUpdatedEvent {
+                call_id: "call-1".to_string(),
+                changes: HashMap::from([
+                    (
+                        "src/lib.rs".into(),
+                        FileChange::Add {
+                            content: "fn main() {}".to_string(),
+                        },
+                    ),
+                    (
+                        "src/main.rs".into(),
+                        FileChange::Delete {
+                            content: String::new(),
+                        },
+                    ),
+                ]),
+            }),
+        );
+
+        let updated = registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
+        assert_eq!(updated.phase, AgentProgressPhase::ToolCall);
+        assert_eq!(updated.seq, 1);
+        assert_eq!(
+            updated.active_work,
+            Some(AgentActiveWork {
+                kind: AgentActiveWorkKind::Tool,
+                label: "apply_patch (2 files)".to_string(),
+            })
+        );
     }
 
     #[tokio::test]

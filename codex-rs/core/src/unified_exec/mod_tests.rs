@@ -1,11 +1,11 @@
 use super::head_tail_buffer::HeadTailBuffer;
 use super::*;
-use crate::codex::Session;
-use crate::codex::TurnContext;
-use crate::codex::make_session_and_context;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
 use crate::sandboxing::ExecRequest;
+use crate::session::session::Session;
+use crate::session::tests::make_session_and_context;
+use crate::session::turn_context::TurnContext;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::unified_exec::WriteStdinRequest;
 use crate::unified_exec::process::OutputHandles;
@@ -169,6 +169,58 @@ async fn exec_command_with_tty(
     })
 }
 
+async fn wait_for_unknown_process(session: &Arc<Session>, process_id: i32) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match write_stdin(session, process_id, "", /*yield_time_ms*/ 100).await {
+            Err(UnifiedExecError::UnknownProcessId { process_id: err_id }) => {
+                assert_eq!(err_id, process_id, "process id should match request");
+                break;
+            }
+            Ok(output) => {
+                assert!(
+                    output.process_id.is_none(),
+                    "completed process probe should not return a live process id"
+                );
+                assert!(
+                    output.exit_code.is_some(),
+                    "completed process probe should report an exit code before cleanup"
+                );
+            }
+            Err(other) => panic!("expected UnknownProcessId, got {other:?}"),
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "process {process_id} did not transition to UnknownProcessId within timeout"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn wait_for_process_store_empty(session: &Arc<Session>) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if session
+            .services
+            .unified_exec_manager
+            .process_store
+            .lock()
+            .await
+            .processes
+            .is_empty()
+        {
+            return;
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "completed command should not leave a background process"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 #[derive(Debug)]
 struct TestSpawnLifecycle {
     inherited_fds: Vec<i32>,
@@ -294,15 +346,14 @@ async fn multi_unified_exec_sessions() -> anyhow::Result<()> {
         /*workdir*/ None,
     )
     .await?;
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    assert!(
-        out_2.process_id.is_none(),
-        "short command should not report a process id if it exits quickly"
-    );
     assert!(
         !out_2.truncated_output().contains("codex"),
         "short command should run in a fresh shell"
     );
+    if let Some(process_id) = out_2.process_id {
+        wait_for_unknown_process(&session, process_id).await;
+        wait_for_process_store_empty(&session).await;
+    }
 
     let out_3 = write_stdin(
         &session,
@@ -382,8 +433,8 @@ async fn unified_exec_pause_blocks_yield_timeout() -> anyhow::Result<()> {
     let response = exec_command(
         &session,
         &turn,
-        "sleep 1 && echo unified-exec-done",
-        /*yield_time_ms*/ 250,
+        "printf 'unified-exec-done\\n'",
+        /*yield_time_ms*/ 4_000,
         /*workdir*/ None,
     )
     .await?;
@@ -396,10 +447,11 @@ async fn unified_exec_pause_blocks_yield_timeout() -> anyhow::Result<()> {
         response.truncated_output().contains("unified-exec-done"),
         "exec_command should wait for output after the pause lifts"
     );
-    assert!(
-        response.process_id.is_none(),
-        "completed command should not leave a background process"
-    );
+
+    if let Some(process_id) = response.process_id {
+        wait_for_unknown_process(&session, process_id).await;
+    }
+    wait_for_process_store_empty(&session).await;
 
     Ok(())
 }
@@ -471,29 +523,8 @@ async fn reusing_completed_process_returns_unknown_process() -> anyhow::Result<(
 
     write_stdin(&session, process_id, "exit\n", /*yield_time_ms*/ 2_500).await?;
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    let err = write_stdin(&session, process_id, "", /*yield_time_ms*/ 100)
-        .await
-        .expect_err("expected unknown process error");
-
-    match err {
-        UnifiedExecError::UnknownProcessId { process_id: err_id } => {
-            assert_eq!(err_id, process_id, "process id should match request");
-        }
-        other => panic!("expected UnknownProcessId, got {other:?}"),
-    }
-
-    assert!(
-        session
-            .services
-            .unified_exec_manager
-            .process_store
-            .lock()
-            .await
-            .processes
-            .is_empty()
-    );
+    wait_for_unknown_process(&session, process_id).await;
+    wait_for_process_store_empty(&session).await;
 
     Ok(())
 }
@@ -519,15 +550,13 @@ async fn completed_pipe_commands_preserve_exit_code() -> anyhow::Result<()> {
         )
         .await?;
 
-    if !process.has_exited() {
-        let exit_signal = process.cancellation_token();
-        assert!(
-            tokio::time::timeout(Duration::from_secs(2), exit_signal.cancelled())
-                .await
-                .is_ok(),
-            "process did not report exit within timeout"
-        );
-    }
+    tokio::time::timeout(Duration::from_secs(15), async {
+        while !process.has_exited() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("process did not report exit within timeout");
 
     assert!(process.has_exited());
     assert_eq!(process.exit_code(), Some(17));

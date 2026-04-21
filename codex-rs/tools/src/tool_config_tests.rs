@@ -201,6 +201,35 @@ fn thread_spawn_subagents_keep_observability_but_hide_spawn_and_request_user_inp
 }
 
 #[test]
+fn memory_consolidation_subagents_hide_collaboration_surface() {
+    let model_info = model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::Collab);
+    features.enable(Feature::MultiAgentV2);
+
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::SubAgent(SubAgentSource::MemoryConsolidation),
+        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+
+    assert_eq!(
+        tools_config.agent_tool_surface_policy,
+        AgentToolSurfacePolicy {
+            collaboration_enabled: false,
+            spawn_agent_enabled: false,
+            request_user_input_enabled: false,
+        }
+    );
+}
+
+#[test]
 fn image_generation_requires_feature_and_supported_model() {
     let supported_model_info = model_info();
     let mut unsupported_model_info = supported_model_info.clone();

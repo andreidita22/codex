@@ -35,6 +35,8 @@ use serde_json::json;
 use std::fs;
 use std::path::Path;
 
+const REQUEST_PERMISSIONS_TOOL_TIMEOUT_MS: u64 = 5_000;
+
 fn absolute_path(path: &Path) -> AbsolutePathBuf {
     AbsolutePathBuf::try_from(path).expect("absolute path")
 }
@@ -55,7 +57,7 @@ fn request_permissions_tool_event(
 fn exec_command_event(call_id: &str, command: &str) -> Result<Value> {
     let args = json!({
         "cmd": command,
-        "yield_time_ms": 1_000_u64,
+        "yield_time_ms": REQUEST_PERMISSIONS_TOOL_TIMEOUT_MS,
     });
     let args_str = serde_json::to_string(&args)?;
     Ok(ev_function_call(call_id, "exec_command", &args_str))

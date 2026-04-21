@@ -614,12 +614,12 @@ impl RemoteAppServerClient {
             .is_ok()
             && let Ok(command_result) = timeout(SHUTDOWN_TIMEOUT, response_rx).await
         {
-            command_result.map_err(|_| {
-                IoError::new(
-                    ErrorKind::BrokenPipe,
-                    "remote app-server shutdown channel is closed",
-                )
-            })??;
+            match command_result {
+                Ok(close_result) => close_result?,
+                // The worker can exit before it services the explicit shutdown command
+                // if the remote endpoint already closed cleanly.
+                Err(_recv_err) => {}
+            }
         }
 
         if let Err(_elapsed) = timeout(SHUTDOWN_TIMEOUT, &mut worker_handle).await {

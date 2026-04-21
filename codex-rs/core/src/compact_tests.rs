@@ -4,11 +4,13 @@ use crate::content_items_to_text;
 use crate::context_maintenance_runtime::CompactInvocationTiming;
 use crate::context_maintenance_runtime::compaction_engine;
 use crate::context_maintenance_runtime::live_compact_route_behavior_for_tests;
+use crate::session::PreviousTurnSettings;
 use codex_context_maintenance_policy::HistoryDispositionPolicy;
 use codex_context_maintenance_policy::RemoteCompactedHistoryKeepPolicy;
 use codex_context_maintenance_policy::RetentionDirective;
 use codex_context_maintenance_policy::SummaryDispositionPolicy;
 use codex_git_utils::GhostCommit;
+use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 
@@ -17,7 +19,7 @@ async fn process_compacted_history_with_test_session(
     previous_turn_settings: Option<&PreviousTurnSettings>,
     legacy_compaction_marker_policy: codex_context_maintenance_policy::LegacyCompactionMarkerPolicy,
 ) -> (Vec<ResponseItem>, Vec<ResponseItem>) {
-    let (session, turn_context) = crate::codex::make_session_and_context().await;
+    let (session, turn_context) = crate::session::tests::make_session_and_context().await;
     session
         .set_previous_turn_settings(previous_turn_settings.cloned())
         .await;
@@ -47,7 +49,7 @@ async fn process_compacted_history_with_test_session(
 
 #[tokio::test]
 async fn compaction_engine_defaults_to_remote_hybrid() {
-    let (_session, turn_context) = crate::codex::make_session_and_context().await;
+    let (_session, turn_context) = crate::session::tests::make_session_and_context().await;
 
     assert_eq!(
         compaction_engine(&turn_context),
@@ -58,7 +60,7 @@ async fn compaction_engine_defaults_to_remote_hybrid() {
 
 #[tokio::test]
 async fn local_pure_compaction_engine_uses_local_compaction_path() {
-    let (_session, mut turn_context) = crate::codex::make_session_and_context().await;
+    let (_session, mut turn_context) = crate::session::tests::make_session_and_context().await;
     let mut config = (*turn_context.config).clone();
     config.compaction_engine = Some(CompactionEngine::LocalPure);
     turn_context.config = Arc::new(config);
@@ -93,6 +95,7 @@ fn content_items_to_text_joins_non_empty_segments() {
 fn content_items_to_text_ignores_image_only_content() {
     let items = vec![ContentItem::InputImage {
         image_url: "file://image.png".to_string(),
+        detail: Some(DEFAULT_IMAGE_DETAIL),
     }];
 
     let joined = content_items_to_text(&items);

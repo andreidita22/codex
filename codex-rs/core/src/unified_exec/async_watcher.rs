@@ -1,5 +1,6 @@
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use tokio::sync::Mutex;
 use tokio::time::Duration;
@@ -8,9 +9,9 @@ use tokio::time::Sleep;
 
 use super::UnifiedExecContext;
 use super::process::UnifiedExecProcess;
-use crate::codex::Session;
-use crate::codex::TurnContext;
 use crate::exec::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
+use crate::session::session::Session;
+use crate::session::turn_context::TurnContext;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
 use crate::tools::events::ToolEventFailure;
@@ -43,7 +44,7 @@ pub(crate) fn start_streaming_output(
     transcript: Arc<Mutex<HeadTailBuffer>>,
 ) {
     let mut receiver = process.output_receiver();
-    let output_drained = process.output_drained_notify();
+    let (output_drained, output_drained_notify) = process.output_drained_handles();
     let exit_token = process.cancellation_token();
 
     let session_ref = Arc::clone(&context.session);
@@ -70,7 +71,8 @@ pub(crate) fn start_streaming_output(
                         sleep.as_mut().await;
                     }
                 }, if grace_sleep.is_some() => {
-                    output_drained.notify_one();
+                    output_drained.store(true, Ordering::Release);
+                    output_drained_notify.notify_waiters();
                     break;
                 }
 
@@ -81,7 +83,8 @@ pub(crate) fn start_streaming_output(
                             continue;
                         },
                         Err(RecvError::Closed) => {
-                            output_drained.notify_one();
+                            output_drained.store(true, Ordering::Release);
+                            output_drained_notify.notify_waiters();
                             break;
                         }
                     };
@@ -116,11 +119,16 @@ pub(crate) fn spawn_exit_watcher(
     started_at: Instant,
 ) {
     let exit_token = process.cancellation_token();
-    let output_drained = process.output_drained_notify();
+    let (output_drained, output_drained_notify) = process.output_drained_handles();
 
     tokio::spawn(async move {
         exit_token.cancelled().await;
-        output_drained.notified().await;
+        while !output_drained.load(Ordering::Acquire) {
+            output_drained_notify.notified().await;
+        }
+        if !process.try_mark_end_event_emitted() {
+            return;
+        }
 
         let duration = Instant::now().saturating_duration_since(started_at);
         if let Some(message) = process.failure_message() {

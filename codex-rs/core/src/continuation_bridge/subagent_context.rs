@@ -1,5 +1,5 @@
 use crate::agent::AgentStatus;
-use crate::codex::Session;
+use crate::session::session::Session;
 use codex_context_maintenance_policy::ContinuationBridgeSubagentSnapshot;
 use codex_context_maintenance_policy::ContinuationBridgeSubagentStatus;
 

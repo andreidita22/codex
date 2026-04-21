@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use crate::codex::Session;
-use crate::codex::TurnContext;
 use crate::compact::insert_items_before_last_summary_or_compaction;
 use crate::compact::is_summary_message;
 use crate::context_maintenance_runtime::execute_requested_artifact;
 use crate::context_maintenance_runtime::runtime_plan_for_turn_boundary_maintenance;
 use crate::governance::thread_memory::generate_thread_memory_item;
+use crate::session::session::Session;
+use crate::session::turn_context::TurnContext;
 use codex_context_maintenance_policy::ArtifactKind;
 use codex_context_maintenance_policy::MaintenanceAction;
 use codex_context_maintenance_policy::apply_history_disposition;
@@ -246,15 +246,13 @@ mod tests {
         )
         .expect("prune manifest should serialize");
         let pruned_history =
-            insert_items_before_last_summary_or_compaction(pruned_history, vec![manifest]);
+            insert_items_before_last_summary_or_compaction(pruned_history, vec![manifest.clone()]);
 
         assert_eq!(
             pruned_history,
             vec![
                 developer_message("<thread_memory>new memory</thread_memory>"),
-                developer_message(
-                    "<prune_manifest schema=\"prune_manifest_v1\">\n{\n  \"final_history_len\": 2,\n  \"original_history_len\": 5,\n  \"removed_item_count\": 3,\n  \"schema\": \"prune_manifest_v1\"\n}\n</prune_manifest>"
-                ),
+                manifest,
                 user_summary_message("latest summary"),
             ]
         );

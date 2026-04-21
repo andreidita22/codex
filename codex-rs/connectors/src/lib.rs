@@ -10,9 +10,14 @@ use codex_app_server_protocol::AppInfo;
 use codex_app_server_protocol::AppMetadata;
 use serde::Deserialize;
 
+pub mod accessible;
+pub mod filter;
+pub mod merge;
+pub mod metadata;
+
 pub const CONNECTORS_CACHE_TTL: Duration = Duration::from_secs(3600);
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AllConnectorsCacheKey {
     chatgpt_base_url: String,
     account_id: Option<String>,
@@ -38,13 +43,13 @@ impl AllConnectorsCacheKey {
 
 #[derive(Clone)]
 struct CachedAllConnectors {
-    key: AllConnectorsCacheKey,
     expires_at: Instant,
     connectors: Vec<AppInfo>,
 }
 
-static ALL_CONNECTORS_CACHE: LazyLock<StdMutex<Option<CachedAllConnectors>>> =
-    LazyLock::new(|| StdMutex::new(None));
+static ALL_CONNECTORS_CACHE: LazyLock<
+    StdMutex<HashMap<AllConnectorsCacheKey, CachedAllConnectors>>,
+> = LazyLock::new(|| StdMutex::new(HashMap::new()));
 
 #[derive(Debug, Deserialize)]
 pub struct DirectoryListResponse {
@@ -77,14 +82,13 @@ pub fn cached_all_connectors(cache_key: &AllConnectorsCacheKey) -> Option<Vec<Ap
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let now = Instant::now();
 
-    if let Some(cached) = cache_guard.as_ref() {
-        if now < cached.expires_at && cached.key == *cache_key {
-            return Some(cached.connectors.clone());
-        }
-        if now >= cached.expires_at {
-            *cache_guard = None;
-        }
+    if let Some(cached) = cache_guard.get(cache_key)
+        && now < cached.expires_at
+    {
+        return Some(cached.connectors.clone());
     }
+
+    cache_guard.retain(|_, cached| now < cached.expires_at);
 
     None
 }
@@ -135,11 +139,13 @@ fn write_cached_all_connectors(cache_key: AllConnectorsCacheKey, connectors: &[A
     let mut cache_guard = ALL_CONNECTORS_CACHE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    *cache_guard = Some(CachedAllConnectors {
-        key: cache_key,
-        expires_at: Instant::now() + CONNECTORS_CACHE_TTL,
-        connectors: connectors.to_vec(),
-    });
+    cache_guard.insert(
+        cache_key,
+        CachedAllConnectors {
+            expires_at: Instant::now() + CONNECTORS_CACHE_TTL,
+            connectors: connectors.to_vec(),
+        },
+    );
 }
 
 async fn list_directory_connectors<F, Fut>(fetch_page: &mut F) -> anyhow::Result<Vec<DirectoryApp>>
@@ -153,11 +159,9 @@ where
         let path = match next_token.as_deref() {
             Some(token) => {
                 let encoded_token = urlencoding::encode(token);
-                format!(
-                    "/connectors/directory/list?tier=categorized&token={encoded_token}&external_logos=true"
-                )
+                format!("/connectors/directory/list?token={encoded_token}&external_logos=true")
             }
-            None => "/connectors/directory/list?tier=categorized&external_logos=true".to_string(),
+            None => "/connectors/directory/list?external_logos=true".to_string(),
         };
         let response = fetch_page(path).await?;
         apps.extend(
@@ -411,6 +415,7 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
 
@@ -544,6 +549,54 @@ mod tests {
         );
         assert_eq!(connectors[1].id, "beta");
         assert_eq!(connectors[1].name, "Beta");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_directory_connectors_omits_tier_for_all_pages() -> anyhow::Result<()> {
+        let requested_paths: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let paths = Arc::clone(&requested_paths);
+
+        let apps = list_directory_connectors(&mut move |path| {
+            let paths = Arc::clone(&paths);
+            async move {
+                paths
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(path.clone());
+                if path == "/connectors/directory/list?external_logos=true" {
+                    Ok(DirectoryListResponse {
+                        apps: vec![app("alpha", "Alpha")],
+                        next_token: Some("page 2".to_string()),
+                    })
+                } else {
+                    assert_eq!(
+                        path,
+                        "/connectors/directory/list?token=page%202&external_logos=true"
+                    );
+                    Ok(DirectoryListResponse {
+                        apps: vec![app("beta", "Beta")],
+                        next_token: None,
+                    })
+                }
+            }
+        })
+        .await?;
+
+        assert_eq!(
+            apps.iter().map(|app| app.id.as_str()).collect::<Vec<_>>(),
+            vec!["alpha", "beta"]
+        );
+        assert_eq!(
+            requested_paths
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_slice(),
+            &[
+                "/connectors/directory/list?external_logos=true".to_string(),
+                "/connectors/directory/list?token=page%202&external_logos=true".to_string(),
+            ]
+        );
         Ok(())
     }
 }
