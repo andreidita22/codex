@@ -172,6 +172,22 @@ async fn spawn_worker_backed_session(
     (session, turn, manager, child_thread, child_turn)
 }
 
+async fn start_worker_turn(child_thread: &Arc<CodexThread>, child_turn: &Arc<TurnContext>) {
+    child_thread
+        .codex
+        .session
+        .send_event(
+            child_turn.as_ref(),
+            EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: child_turn.sub_id.clone(),
+                started_at: None,
+                model_context_window: Some(256_000),
+                collaboration_mode_kind: Default::default(),
+            }),
+        )
+        .await;
+}
+
 async fn install_role_with_model_override(turn: &mut TurnContext) -> String {
     let role_name = "fork-context-role".to_string();
     tokio::fs::create_dir_all(&turn.config.codex_home)
@@ -1569,19 +1585,7 @@ async fn wait_for_agent_progress_returns_on_material_progress() {
 async fn wait_for_agent_progress_returns_on_reasoning_content_delta() {
     let (session, turn, _manager, child_thread, child_turn) =
         spawn_worker_backed_session("worker").await;
-    child_thread
-        .codex
-        .session
-        .send_event(
-            child_turn.as_ref(),
-            EventMsg::TurnStarted(TurnStartedEvent {
-                turn_id: child_turn.sub_id.clone(),
-                started_at: None,
-                model_context_window: Some(256_000),
-                collaboration_mode_kind: Default::default(),
-            }),
-        )
-        .await;
+    start_worker_turn(&child_thread, &child_turn).await;
 
     let worker = Arc::clone(&child_thread);
     let worker_turn = Arc::clone(&child_turn);
@@ -1610,6 +1614,7 @@ async fn wait_for_agent_progress_returns_on_reasoning_content_delta() {
             "wait_for_agent_progress",
             function_payload(json!({
                 "target": "worker",
+                "since_seq": 0,
                 "timeout_ms": 10_000,
                 "until_phases": ["waiting_approval", "waiting_user_input", "completed", "errored"]
             })),
@@ -1631,19 +1636,7 @@ async fn wait_for_agent_progress_returns_on_reasoning_content_delta() {
 async fn wait_for_agent_progress_returns_on_web_search_item_started() {
     let (session, turn, _manager, child_thread, child_turn) =
         spawn_worker_backed_session("worker").await;
-    child_thread
-        .codex
-        .session
-        .send_event(
-            child_turn.as_ref(),
-            EventMsg::TurnStarted(TurnStartedEvent {
-                turn_id: child_turn.sub_id.clone(),
-                started_at: None,
-                model_context_window: Some(256_000),
-                collaboration_mode_kind: Default::default(),
-            }),
-        )
-        .await;
+    start_worker_turn(&child_thread, &child_turn).await;
 
     let worker = Arc::clone(&child_thread);
     let worker_turn = Arc::clone(&child_turn);
@@ -1677,6 +1670,7 @@ async fn wait_for_agent_progress_returns_on_web_search_item_started() {
             "wait_for_agent_progress",
             function_payload(json!({
                 "target": "worker",
+                "since_seq": 0,
                 "timeout_ms": 10_000,
                 "until_phases": ["tool_call"]
             })),
@@ -1705,19 +1699,7 @@ async fn wait_for_agent_progress_returns_on_web_search_item_started() {
 async fn wait_for_agent_progress_returns_on_image_generation_item_started() {
     let (session, turn, _manager, child_thread, child_turn) =
         spawn_worker_backed_session("worker").await;
-    child_thread
-        .codex
-        .session
-        .send_event(
-            child_turn.as_ref(),
-            EventMsg::TurnStarted(TurnStartedEvent {
-                turn_id: child_turn.sub_id.clone(),
-                started_at: None,
-                model_context_window: Some(256_000),
-                collaboration_mode_kind: Default::default(),
-            }),
-        )
-        .await;
+    start_worker_turn(&child_thread, &child_turn).await;
 
     let worker = Arc::clone(&child_thread);
     let worker_turn = Arc::clone(&child_turn);
@@ -1750,6 +1732,7 @@ async fn wait_for_agent_progress_returns_on_image_generation_item_started() {
             "wait_for_agent_progress",
             function_payload(json!({
                 "target": "worker",
+                "since_seq": 0,
                 "timeout_ms": 10_000,
                 "until_phases": ["tool_call"]
             })),
@@ -1805,6 +1788,7 @@ async fn wait_for_agent_progress_returns_on_observed_raw_error() {
             "wait_for_agent_progress",
             function_payload(json!({
                 "target": "worker",
+                "since_seq": 0,
                 "timeout_ms": 10_000,
                 "until_phases": ["errored"]
             })),
