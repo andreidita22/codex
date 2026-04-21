@@ -1,9 +1,9 @@
 use std::future::Future;
 
-use crate::codex::TurnContext;
 use crate::compact::InitialContextInjection;
 use crate::config::CompactionEngine;
 use crate::config::GovernancePathVariant;
+use crate::session::turn_context::TurnContext;
 use codex_context_maintenance_policy::ArtifactKind;
 use codex_context_maintenance_policy::ArtifactRequest;
 use codex_context_maintenance_policy::ArtifactRequiredness;

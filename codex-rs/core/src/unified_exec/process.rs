@@ -30,7 +30,12 @@ use super::UnifiedExecError;
 use super::head_tail_buffer::HeadTailBuffer;
 use super::process_state::ProcessState;
 
-const EARLY_EXIT_GRACE_PERIOD: Duration = Duration::from_millis(150);
+// Short-lived commands can take a few hundred milliseconds to surface their
+// exit on busy CI/full-suite runs even when they have already finished
+// producing output. Give the local/exec-server startup path a bit more time to
+// classify truly short-lived commands before treating them as background
+// sessions.
+const EARLY_EXIT_GRACE_PERIOD: Duration = Duration::from_millis(500);
 
 pub(crate) trait SpawnLifecycle: std::fmt::Debug + Send + Sync {
     /// Returns file descriptors that must stay open across the child `exec()`.
@@ -79,7 +84,9 @@ pub(crate) struct UnifiedExecProcess {
     output_closed: Arc<AtomicBool>,
     output_closed_notify: Arc<Notify>,
     cancellation_token: CancellationToken,
-    output_drained: Arc<Notify>,
+    output_drained: Arc<AtomicBool>,
+    output_drained_notify: Arc<Notify>,
+    end_event_emitted: AtomicBool,
     state_tx: watch::Sender<ProcessState>,
     state_rx: watch::Receiver<ProcessState>,
     output_task: Option<JoinHandle<()>>,
@@ -108,7 +115,8 @@ impl UnifiedExecProcess {
         let output_closed = Arc::new(AtomicBool::new(false));
         let output_closed_notify = Arc::new(Notify::new());
         let cancellation_token = CancellationToken::new();
-        let output_drained = Arc::new(Notify::new());
+        let output_drained = Arc::new(AtomicBool::new(false));
+        let output_drained_notify = Arc::new(Notify::new());
         let (output_tx, _) = broadcast::channel(64);
         let (state_tx, state_rx) = watch::channel(ProcessState::default());
 
@@ -121,6 +129,8 @@ impl UnifiedExecProcess {
             output_closed_notify,
             cancellation_token,
             output_drained,
+            output_drained_notify,
+            end_event_emitted: AtomicBool::new(false),
             state_tx,
             state_rx,
             output_task: None,
@@ -172,8 +182,15 @@ impl UnifiedExecProcess {
         self.cancellation_token.clone()
     }
 
-    pub(super) fn output_drained_notify(&self) -> Arc<Notify> {
-        Arc::clone(&self.output_drained)
+    pub(super) fn output_drained_handles(&self) -> (Arc<AtomicBool>, Arc<Notify>) {
+        (
+            Arc::clone(&self.output_drained),
+            Arc::clone(&self.output_drained_notify),
+        )
+    }
+
+    pub(super) fn try_mark_end_event_emitted(&self) -> bool {
+        !self.end_event_emitted.swap(true, Ordering::AcqRel)
     }
 
     pub(super) fn has_exited(&self) -> bool {

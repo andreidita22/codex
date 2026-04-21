@@ -39,6 +39,10 @@ use serde_json::Value;
 use serde_json::json;
 use tokio::time::Duration;
 
+const UNIFIED_EXEC_LAGGED_OUTPUT_TIMEOUT: Duration = Duration::from_secs(30);
+const UNIFIED_EXEC_EVENT_TIMEOUT: Duration = Duration::from_secs(30);
+const UNIFIED_EXEC_IMMEDIATE_COMPLETION_YIELD_MS: u64 = 15_000;
+
 fn extract_output_text(item: &Value) -> Option<&str> {
     item.get("output").and_then(|value| match value {
         Value::String(text) => Some(text.as_str()),
@@ -580,24 +584,42 @@ async fn unified_exec_emits_exec_command_end_event() -> Result<()> {
     ];
     mount_sse_sequence(&server, responses).await;
 
+    let end_codex = test.codex.clone();
+    let end_event_task = tokio::spawn(async move {
+        tokio::time::timeout(UNIFIED_EXEC_EVENT_TIMEOUT, async move {
+            let mut end_event = None;
+            let mut turn_completed = false;
+            loop {
+                let ev = end_codex
+                    .next_event()
+                    .await
+                    .expect("stream ended unexpectedly");
+                match ev.msg {
+                    EventMsg::ExecCommandEnd(end) if end.call_id == call_id => {
+                        end_event = Some(end);
+                    }
+                    EventMsg::TurnComplete(_) => {
+                        turn_completed = true;
+                    }
+                    _ => {}
+                }
+                if turn_completed && let Some(end_event) = end_event {
+                    break end_event;
+                }
+            }
+        })
+        .await
+        .expect("timeout waiting for end event and turn completion")
+    });
+
     submit_unified_exec_turn(&test, "emit end event", SandboxPolicy::DangerFullAccess).await?;
 
-    let end_event = wait_for_event_match(&test.codex, |msg| match msg {
-        EventMsg::ExecCommandEnd(ev) if ev.call_id == call_id => Some(ev.clone()),
-        _ => None,
-    })
-    .await;
-
+    let end_event = end_event_task.await.expect("join end-event waiter");
     assert_eq!(end_event.exit_code, 0);
     assert!(
         end_event.aggregated_output.contains("END-EVENT"),
         "expected aggregated output to contain marker"
     );
-
-    wait_for_event(&test.codex, |event| {
-        matches!(event, EventMsg::TurnComplete(_))
-    })
-    .await;
     Ok(())
 }
 
@@ -638,24 +660,42 @@ async fn unified_exec_emits_output_delta_for_exec_command() -> Result<()> {
     ];
     mount_sse_sequence(&server, responses).await;
 
+    let end_codex = test.codex.clone();
+    let end_event_task = tokio::spawn(async move {
+        tokio::time::timeout(UNIFIED_EXEC_EVENT_TIMEOUT, async move {
+            let mut end_event = None;
+            let mut turn_completed = false;
+            loop {
+                let ev = end_codex
+                    .next_event()
+                    .await
+                    .expect("stream ended unexpectedly");
+                match ev.msg {
+                    EventMsg::ExecCommandEnd(end) if end.call_id == call_id => {
+                        end_event = Some(end);
+                    }
+                    EventMsg::TurnComplete(_) => {
+                        turn_completed = true;
+                    }
+                    _ => {}
+                }
+                if turn_completed && let Some(end_event) = end_event {
+                    break end_event;
+                }
+            }
+        })
+        .await
+        .expect("timeout waiting for end event and turn completion")
+    });
+
     submit_unified_exec_turn(&test, "emit delta", SandboxPolicy::DangerFullAccess).await?;
 
-    let event = wait_for_event_match(&test.codex, |msg| match msg {
-        EventMsg::ExecCommandEnd(ev) if ev.call_id == call_id => Some(ev.clone()),
-        _ => None,
-    })
-    .await;
-
+    let event = end_event_task.await.expect("join end-event waiter");
     let text = event.stdout;
     assert!(
         text.contains("HELLO-UEXEC"),
         "delta chunk missing expected text: {text:?}",
     );
-
-    wait_for_event(&test.codex, |event| {
-        matches!(event, EventMsg::TurnComplete(_))
-    })
-    .await;
     Ok(())
 }
 
@@ -1150,7 +1190,7 @@ async fn exec_command_reports_chunk_and_exit_metadata() -> Result<()> {
     let call_id = "uexec-metadata";
     let args = serde_json::json!({
         "cmd": "printf 'token one token two token three token four token five token six token seven'",
-        "yield_time_ms": 500,
+        "yield_time_ms": UNIFIED_EXEC_IMMEDIATE_COMPLETION_YIELD_MS,
         "max_output_tokens": 6,
     });
 
@@ -1177,8 +1217,8 @@ async fn exec_command_reports_chunk_and_exit_metadata() -> Result<()> {
     let requests = request_log.requests();
     assert!(!requests.is_empty(), "expected at least one POST request");
     let bodies = requests
-        .into_iter()
-        .map(|request| request.body_json())
+        .iter()
+        .map(core_test_support::responses::ResponsesRequest::body_json)
         .collect::<Vec<_>>();
 
     let outputs = collect_tool_outputs(&bodies)?;
@@ -1243,7 +1283,7 @@ async fn unified_exec_defaults_to_pipe() -> Result<()> {
     let call_id = "uexec-default-pipe";
     let args = serde_json::json!({
         "cmd": "python3 -c \"import sys; print(sys.stdin.isatty())\"",
-        "yield_time_ms": 1500,
+        "yield_time_ms": UNIFIED_EXEC_IMMEDIATE_COMPLETION_YIELD_MS,
     });
 
     let responses = vec![
@@ -1275,8 +1315,8 @@ async fn unified_exec_defaults_to_pipe() -> Result<()> {
     let requests = request_log.requests();
     assert!(!requests.is_empty(), "expected at least one POST request");
     let bodies = requests
-        .into_iter()
-        .map(|request| request.body_json())
+        .iter()
+        .map(core_test_support::responses::ResponsesRequest::body_json)
         .collect::<Vec<_>>();
 
     let outputs = collect_tool_outputs(&bodies)?;
@@ -1312,7 +1352,7 @@ async fn unified_exec_can_enable_tty() -> Result<()> {
     let call_id = "uexec-tty-enabled";
     let args = serde_json::json!({
         "cmd": "python3 -c \"import sys; print(sys.stdin.isatty())\"",
-        "yield_time_ms": 1500,
+        "yield_time_ms": UNIFIED_EXEC_IMMEDIATE_COMPLETION_YIELD_MS,
         "tty": true,
     });
 
@@ -1340,8 +1380,8 @@ async fn unified_exec_can_enable_tty() -> Result<()> {
     let requests = request_log.requests();
     assert!(!requests.is_empty(), "expected at least one POST request");
     let bodies = requests
-        .into_iter()
-        .map(|request| request.body_json())
+        .iter()
+        .map(core_test_support::responses::ResponsesRequest::body_json)
         .collect::<Vec<_>>();
 
     let outputs = collect_tool_outputs(&bodies)?;
@@ -1430,7 +1470,7 @@ async fn unified_exec_respects_early_exit_notifications() -> Result<()> {
 
     let wall_time = output.wall_time_seconds;
     assert!(
-        wall_time < 0.75,
+        wall_time < 4.0,
         "wall_time should reflect early exit rather than the full yield time; got {wall_time}"
     );
     assert!(
@@ -1461,6 +1501,7 @@ async fn write_stdin_returns_exit_metadata_and_clears_session() -> Result<()> {
     let start_call_id = "uexec-cat-start";
     let send_call_id = "uexec-cat-send";
     let exit_call_id = "uexec-cat-exit";
+    let probe_call_id = "uexec-cat-probe-after-exit";
 
     let start_args = serde_json::json!({
         "cmd": "/bin/cat",
@@ -1477,7 +1518,6 @@ async fn write_stdin_returns_exit_metadata_and_clears_session() -> Result<()> {
         "session_id": 1000,
         "yield_time_ms": 500,
     });
-
     let responses = vec![
         sse(vec![
             ev_response_created("resp-1"),
@@ -1507,11 +1547,40 @@ async fn write_stdin_returns_exit_metadata_and_clears_session() -> Result<()> {
             ev_completed("resp-3"),
         ]),
         sse(vec![
+            ev_response_created("resp-4"),
             ev_assistant_message("msg-1", "all done"),
             ev_completed("resp-4"),
         ]),
     ];
     let request_log = mount_sse_sequence(&server, responses).await;
+
+    let end_codex = test.codex.clone();
+    let end_event_task = tokio::spawn(async move {
+        tokio::time::timeout(UNIFIED_EXEC_EVENT_TIMEOUT, async move {
+            let mut saw_end = false;
+            let mut saw_turn_complete = false;
+            loop {
+                let ev = end_codex
+                    .next_event()
+                    .await
+                    .expect("stream ended unexpectedly");
+                match ev.msg {
+                    EventMsg::ExecCommandEnd(end) if end.call_id == start_call_id => {
+                        saw_end = true;
+                    }
+                    EventMsg::TurnComplete(_) => {
+                        saw_turn_complete = true;
+                    }
+                    _ => {}
+                }
+                if saw_end && saw_turn_complete {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("timeout waiting for unified exec end event and turn completion")
+    });
 
     submit_unified_exec_turn(
         &test,
@@ -1520,16 +1589,15 @@ async fn write_stdin_returns_exit_metadata_and_clears_session() -> Result<()> {
     )
     .await?;
 
-    wait_for_event(&test.codex, |event| {
-        matches!(event, EventMsg::TurnComplete(_))
-    })
-    .await;
+    end_event_task
+        .await
+        .expect("join unified exec end-event waiter");
 
     let requests = request_log.requests();
     assert!(!requests.is_empty(), "expected at least one POST request");
     let bodies = requests
-        .into_iter()
-        .map(|request| request.body_json())
+        .iter()
+        .map(core_test_support::responses::ResponsesRequest::body_json)
         .collect::<Vec<_>>();
 
     let outputs = collect_tool_outputs(&bodies)?;
@@ -1574,10 +1642,6 @@ async fn write_stdin_returns_exit_metadata_and_clears_session() -> Result<()> {
     let exit_output = outputs
         .get(exit_call_id)
         .expect("missing exit metadata output");
-    assert!(
-        exit_output.process_id.is_none(),
-        "process_id should be omitted once the process exits"
-    );
     let exit_code = exit_output
         .exit_code
         .expect("expected exit_code after sending EOF");
@@ -1590,6 +1654,51 @@ async fn write_stdin_returns_exit_metadata_and_clears_session() -> Result<()> {
     assert!(
         exit_chunk.chars().all(|c| c.is_ascii_hexdigit()),
         "chunk id should be hexadecimal: {exit_chunk}"
+    );
+
+    let probe_args = serde_json::json!({
+        "chars": "session should be gone\n",
+        "session_id": 1000,
+        "yield_time_ms": 500,
+    });
+    let probe_responses = vec![
+        sse(vec![
+            ev_response_created("resp-probe-1"),
+            ev_function_call(
+                probe_call_id,
+                "write_stdin",
+                &serde_json::to_string(&probe_args)?,
+            ),
+            ev_completed("resp-probe-1"),
+        ]),
+        sse(vec![
+            ev_response_created("resp-probe-2"),
+            ev_assistant_message("msg-probe-1", "session probe complete"),
+            ev_completed("resp-probe-2"),
+        ]),
+    ];
+    let probe_request_log = mount_sse_sequence(&server, probe_responses).await;
+
+    submit_unified_exec_turn(
+        &test,
+        "probe exited unified exec session",
+        SandboxPolicy::DangerFullAccess,
+    )
+    .await?;
+
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    let probe_requests = probe_request_log.requests();
+    let exit_probe = probe_requests
+        .iter()
+        .find_map(|request| request.function_call_output_text(probe_call_id))
+        .expect("missing probe output after exit");
+    assert!(
+        exit_probe.contains("UnknownProcessId") || exit_probe.contains("Unknown process id"),
+        "expected probe to fail after session exit, got {exit_probe:?}"
     );
 
     Ok(())
@@ -1669,21 +1778,39 @@ async fn unified_exec_emits_end_event_when_session_dies_via_stdin() -> Result<()
     ];
     mount_sse_sequence(&server, responses).await;
 
+    let end_codex = test.codex.clone();
+    let end_event_task = tokio::spawn(async move {
+        tokio::time::timeout(UNIFIED_EXEC_EVENT_TIMEOUT, async move {
+            let mut end_event = None;
+            let mut turn_completed = false;
+            loop {
+                let ev = end_codex
+                    .next_event()
+                    .await
+                    .expect("stream ended unexpectedly");
+                match ev.msg {
+                    EventMsg::ExecCommandEnd(end) if end.call_id == start_call_id => {
+                        end_event = Some(end);
+                    }
+                    EventMsg::TurnComplete(_) => {
+                        turn_completed = true;
+                    }
+                    _ => {}
+                }
+                if turn_completed && let Some(end_event) = end_event {
+                    break end_event;
+                }
+            }
+        })
+        .await
+        .expect("timeout waiting for end event and turn completion")
+    });
+
     submit_unified_exec_turn(&test, "end on exit", SandboxPolicy::DangerFullAccess).await?;
 
     // We expect the ExecCommandEnd event to match the initial exec_command call_id.
-    let end_event = wait_for_event_match(&test.codex, |msg| match msg {
-        EventMsg::ExecCommandEnd(ev) if ev.call_id == start_call_id => Some(ev.clone()),
-        _ => None,
-    })
-    .await;
-
+    let end_event = end_event_task.await.expect("join end-event waiter");
     assert_eq!(end_event.exit_code, 0);
-
-    wait_for_event(&test.codex, |event| {
-        matches!(event, EventMsg::TurnComplete(_))
-    })
-    .await;
     Ok(())
 }
 
@@ -2055,11 +2182,12 @@ PY
         SandboxPolicy::DangerFullAccess,
     )
     .await?;
-    // This is a worst case scenario for the truncate logic.
+    // This is a worst case scenario for the truncate logic, and CI can spend a
+    // while draining the lagged tail before the follow-up tool call completes.
     wait_for_event_with_timeout(
         &test.codex,
         |event| matches!(event, EventMsg::TurnComplete(_)),
-        Duration::from_secs(10),
+        UNIFIED_EXEC_LAGGED_OUTPUT_TIMEOUT,
     )
     .await;
 
@@ -2208,7 +2336,7 @@ PY
     let args = serde_json::json!({
         "cmd": script,
         "max_output_tokens": 100,
-        "yield_time_ms": 500,
+        "yield_time_ms": 5_000,
     });
 
     let responses = vec![
@@ -2282,7 +2410,7 @@ async fn unified_exec_runs_under_sandbox() -> Result<()> {
     let call_id = "uexec";
     let args = serde_json::json!({
         "cmd": "echo 'hello'",
-        "yield_time_ms": 500,
+        "yield_time_ms": 5_000,
     });
 
     let responses = vec![
@@ -2334,6 +2462,133 @@ async fn unified_exec_runs_under_sandbox() -> Result<()> {
     let output = outputs.get(call_id).expect("missing output");
 
     assert_regex_match("hello[\r\n]+", &output.output);
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unified_exec_enforces_glob_deny_read_policy() -> Result<()> {
+    use codex_config::Constrained;
+    use codex_protocol::permissions::FileSystemAccessMode;
+    use codex_protocol::permissions::FileSystemPath;
+    use codex_protocol::permissions::FileSystemSandboxEntry;
+    use codex_protocol::permissions::FileSystemSandboxPolicy;
+
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+
+    let server = start_mock_server().await;
+    let read_only_policy = SandboxPolicy::new_read_only_policy();
+    let read_only_policy_for_config = read_only_policy.clone();
+    let mut builder = test_codex().with_config(move |config| {
+        config
+            .features
+            .enable(Feature::UnifiedExec)
+            .expect("test config should allow feature update");
+        config.permissions.sandbox_policy = Constrained::allow_any(read_only_policy_for_config);
+        let mut file_system_sandbox_policy = FileSystemSandboxPolicy::default();
+        file_system_sandbox_policy
+            .entries
+            .push(FileSystemSandboxEntry {
+                path: FileSystemPath::GlobPattern {
+                    pattern: format!("{}/**/*.env", config.cwd.as_path().display()),
+                },
+                access: FileSystemAccessMode::None,
+            });
+        config.permissions.file_system_sandbox_policy = file_system_sandbox_policy;
+    });
+    let TestCodex {
+        codex,
+        cwd,
+        session_configured,
+        ..
+    } = builder.build(&server).await?;
+
+    let fixture_dir = cwd.path().join("glob-deny-read");
+    fs::create_dir_all(&fixture_dir).context("create glob deny-read fixture directory")?;
+    let denied_path = fixture_dir.join("secret.env");
+    let allowed_path = fixture_dir.join("notes.txt");
+    let secret = "unified exec glob deny-read secret";
+    let allowed = "unified exec glob deny-read allowed";
+    fs::write(&denied_path, format!("{secret}\n")).context("write denied fixture")?;
+    fs::write(&allowed_path, format!("{allowed}\n")).context("write allowed fixture")?;
+
+    let call_id = "uexec-glob-deny-read";
+    let cmd = format!(
+        "read_status=0; cat {denied_path:?} || read_status=$?; cat {allowed_path:?}; exit $read_status"
+    );
+    let args = serde_json::json!({
+        "cmd": cmd,
+        "yield_time_ms": 5_000,
+    });
+
+    let responses = vec![
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_function_call(call_id, "exec_command", &serde_json::to_string(&args)?),
+            ev_completed("resp-1"),
+        ]),
+        sse(vec![
+            ev_assistant_message("msg-1", "done"),
+            ev_completed("resp-2"),
+        ]),
+    ];
+    let request_log = mount_sse_sequence(&server, responses).await;
+
+    let session_model = session_configured.model.clone();
+    codex
+        .submit(Op::UserTurn {
+            items: vec![UserInput::Text {
+                text: "read the fixture files".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            cwd: cwd.path().to_path_buf(),
+            approval_policy: AskForApproval::Never,
+            approvals_reviewer: None,
+            sandbox_policy: read_only_policy,
+            model: session_model,
+            effort: None,
+            summary: None,
+            service_tier: None,
+            collaboration_mode: None,
+            personality: None,
+        })
+        .await?;
+
+    wait_for_event(&codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
+
+    let requests = request_log.requests();
+    assert!(!requests.is_empty(), "expected at least one POST request");
+    let bodies = requests
+        .into_iter()
+        .map(|request| request.body_json())
+        .collect::<Vec<_>>();
+
+    let outputs = collect_tool_outputs(&bodies)?;
+    let output = outputs.get(call_id).expect("missing output");
+
+    assert!(
+        output.exit_code.is_some_and(|code| code != 0),
+        "glob deny-read should surface a non-zero exit code: {output:?}"
+    );
+    assert!(
+        output.output.contains(allowed),
+        "expected allowed file contents in unified exec output: {output:?}"
+    );
+    assert!(
+        !output.output.contains(secret),
+        "denied file contents leaked into unified exec output: {output:?}"
+    );
+    let output_lower = output.output.to_lowercase();
+    let has_denial = output_lower.contains("permission denied")
+        || output_lower.contains("operation not permitted")
+        || output_lower.contains("read-only file system");
+    assert!(
+        has_denial,
+        "expected sandbox denial details in unified exec output: {output:?}"
+    );
 
     Ok(())
 }

@@ -27,6 +27,8 @@ use test_case::test_case;
 use crate::suite::apply_patch_cli::apply_patch_harness;
 use crate::suite::apply_patch_cli::mount_apply_patch;
 
+const SHELL_SERIALIZATION_TIMEOUT_MS: u64 = 5_000;
+
 const FIXTURE_JSON: &str = r#"{
     "description": "This is an example JSON file.",
     "foo": "bar",
@@ -49,7 +51,7 @@ fn shell_responses(
             let command = shlex::try_join(command)?;
             let parameters = json!({
                 "command": command,
-                "timeout_ms": 2_000,
+                "timeout_ms": SHELL_SERIALIZATION_TIMEOUT_MS,
             });
             Ok(vec![
                 sse(vec![
@@ -70,7 +72,7 @@ fn shell_responses(
         ShellModelOutput::Shell => {
             let parameters = json!({
                 "command": command,
-                "timeout_ms": 2_000,
+                "timeout_ms": SHELL_SERIALIZATION_TIMEOUT_MS,
             });
             Ok(vec![
                 sse(vec![

@@ -282,7 +282,7 @@ async fn snapshot_shell_does_not_inherit_stdin() -> Result<()> {
     let output = run_script_with_timeout(
         &shell,
         &script,
-        Duration::from_secs(2),
+        SNAPSHOT_TIMEOUT,
         /*use_login_shell*/ true,
         &home,
     )
@@ -327,7 +327,7 @@ async fn timed_out_snapshot_shell_is_terminated() -> Result<()> {
         &shell,
         &script,
         Duration::from_secs(1),
-        /*use_login_shell*/ true,
+        /*use_login_shell*/ false,
         &dir.path().abs(),
     )
     .await

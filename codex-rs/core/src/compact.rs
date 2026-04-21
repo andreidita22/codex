@@ -4,11 +4,6 @@ use std::time::Instant;
 use crate::Prompt;
 use crate::client::ModelClientSession;
 use crate::client_common::ResponseEvent;
-#[cfg(test)]
-use crate::codex::PreviousTurnSettings;
-use crate::codex::Session;
-use crate::codex::TurnContext;
-use crate::codex::get_last_assistant_message_from_turn;
 use crate::config::CompactionEngine;
 use crate::context_maintenance_config::resolve_context_maintenance_request_context;
 use crate::context_maintenance_runtime::CompactInvocationTiming;
@@ -16,6 +11,9 @@ use crate::context_maintenance_runtime::execute_requested_artifact;
 use crate::context_maintenance_runtime::runtime_plan_for_compact;
 use crate::continuation_bridge::generate_continuation_bridge_item;
 use crate::governance::thread_memory::generate_thread_memory_item;
+use crate::session::session::Session;
+use crate::session::turn::get_last_assistant_message_from_turn;
+use crate::session::turn_context::TurnContext;
 use crate::util::backoff;
 use codex_analytics::CodexCompactionEvent;
 use codex_analytics::CompactionImplementation;
@@ -69,10 +67,14 @@ pub(crate) enum InitialContextInjection {
 }
 
 pub(crate) fn should_use_remote_compact_task(turn_context: &TurnContext) -> bool {
-    !matches!(
+    if matches!(
         turn_context.config.compaction_engine.unwrap_or_default(),
         CompactionEngine::LocalPure
-    )
+    ) {
+        return false;
+    }
+
+    turn_context.provider.info().supports_remote_compaction()
 }
 
 pub(crate) async fn run_inline_auto_compact_task(
@@ -223,7 +225,7 @@ async fn run_compact_task_inner_impl(
 
     let mut truncated_count = 0usize;
 
-    let max_retries = turn_context.provider.stream_max_retries();
+    let max_retries = turn_context.provider.info().stream_max_retries();
     let mut retries = 0;
     let mut client_session = sess.services.model_client.new_session();
     // Reuse one client session so turn-scoped state (sticky routing, websocket incremental

@@ -179,6 +179,8 @@ async fn prompt_tools_are_consistent_across_requests() -> anyhow::Result<()> {
         "apply_patch",
         "web_search",
         "view_image",
+        "inspect_agent_progress",
+        "wait_for_agent_progress",
         "spawn_agent",
         "send_input",
         "resume_agent",

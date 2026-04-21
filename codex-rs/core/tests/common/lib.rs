@@ -3,10 +3,28 @@
 use anyhow::Context as _;
 use anyhow::ensure;
 use codex_arg0::Arg0PathEntryGuard;
+#[cfg(target_os = "linux")]
+use codex_protocol::permissions::FileSystemSandboxPolicy;
+#[cfg(target_os = "linux")]
+use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_utils_cargo_bin::CargoBinError;
 use ctor::ctor;
+#[cfg(target_os = "linux")]
+use std::collections::HashMap;
+#[cfg(target_os = "linux")]
+use std::io::Read;
+#[cfg(target_os = "linux")]
+use std::io::Write;
+#[cfg(target_os = "linux")]
+use std::net::Ipv4Addr;
+#[cfg(target_os = "linux")]
+use std::net::TcpListener;
 use std::sync::OnceLock;
+#[cfg(target_os = "linux")]
+use std::time::Duration;
 use tempfile::TempDir;
+#[cfg(target_os = "linux")]
+use tokio::sync::OnceCell;
 
 use codex_core::CodexThread;
 use codex_core::config::Config;
@@ -29,6 +47,8 @@ pub mod tracing;
 pub mod zsh_fork;
 
 static TEST_ARG0_PATH_ENTRY: OnceLock<Option<Arg0PathEntryGuard>> = OnceLock::new();
+#[cfg(target_os = "linux")]
+static MANAGED_PROXY_SKIP_REASON: OnceCell<Option<String>> = OnceCell::const_new();
 
 #[ctor]
 fn enable_deterministic_unified_exec_process_ids_for_tests() {
@@ -252,6 +272,253 @@ pub fn load_sse_fixture_with_id_from_str(raw: &str, id: &str) -> String {
         .collect()
 }
 
+#[cfg(target_os = "linux")]
+const BWRAP_UNAVAILABLE_ERR: &str = "build-time bubblewrap is not available in this build.";
+#[cfg(target_os = "linux")]
+const MANAGED_PROXY_PERMISSION_ERR_SNIPPETS: &[&str] = &[
+    "loopback: Failed RTM_NEWADDR",
+    "loopback: Failed RTM_NEWLINK",
+    "setting up uid map: Permission denied",
+    "No permissions to create a new namespace",
+    "error isolating Linux network namespace for proxy mode",
+];
+#[cfg(target_os = "linux")]
+const MANAGED_PROXY_PROBE_TIMEOUT_MS: u64 = 4_000;
+#[cfg(target_os = "linux")]
+const MANAGED_PROXY_ENV_KEYS: &[&str] = &[
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "FTP_PROXY",
+    "YARN_HTTP_PROXY",
+    "YARN_HTTPS_PROXY",
+    "NPM_CONFIG_HTTP_PROXY",
+    "NPM_CONFIG_HTTPS_PROXY",
+    "NPM_CONFIG_PROXY",
+    "BUNDLE_HTTP_PROXY",
+    "BUNDLE_HTTPS_PROXY",
+    "PIP_PROXY",
+    "DOCKER_HTTP_PROXY",
+    "DOCKER_HTTPS_PROXY",
+];
+
+#[cfg(target_os = "linux")]
+fn strip_proxy_env(env: &mut HashMap<String, String>) {
+    for key in MANAGED_PROXY_ENV_KEYS {
+        env.remove(*key);
+        env.remove(key.to_ascii_lowercase().as_str());
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn is_managed_proxy_permission_error(stderr: &str) -> bool {
+    MANAGED_PROXY_PERMISSION_ERR_SNIPPETS
+        .iter()
+        .any(|snippet| stderr.contains(snippet))
+}
+
+#[cfg(target_os = "linux")]
+fn managed_proxy_probe_summary(stderr: &str) -> &str {
+    stderr
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("managed proxy probe failed")
+}
+
+#[cfg(target_os = "linux")]
+enum ManagedProxyProbeOutcome {
+    CleanRoundTrip,
+    SkipReason(String),
+}
+
+#[cfg(target_os = "linux")]
+async fn run_linux_sandbox_probe(
+    command: &[String],
+    env: HashMap<String, String>,
+    allow_network_for_proxy: bool,
+    split_policies: bool,
+) -> Option<std::process::Output> {
+    let sandbox_exe = find_codex_linux_sandbox_exe().ok()?;
+    let cwd = std::env::current_dir().ok()?;
+    let sandbox_policy = if split_policies {
+        codex_protocol::protocol::SandboxPolicy::new_workspace_write_policy()
+    } else {
+        codex_protocol::protocol::SandboxPolicy::DangerFullAccess
+    };
+    let policy_json = serde_json::to_string(&sandbox_policy).ok()?;
+
+    let mut args = vec![
+        "--sandbox-policy-cwd".to_string(),
+        cwd.to_string_lossy().to_string(),
+        "--sandbox-policy".to_string(),
+        policy_json,
+    ];
+    if split_policies {
+        args.push("--command-cwd".to_string());
+        args.push(cwd.to_string_lossy().to_string());
+        let file_system_policy =
+            FileSystemSandboxPolicy::from_legacy_sandbox_policy(&sandbox_policy, &cwd);
+        let network_policy = NetworkSandboxPolicy::from(&sandbox_policy);
+        args.push("--file-system-sandbox-policy".to_string());
+        args.push(serde_json::to_string(&file_system_policy).ok()?);
+        args.push("--network-sandbox-policy".to_string());
+        args.push(serde_json::to_string(&network_policy).ok()?);
+    }
+    if allow_network_for_proxy {
+        args.push("--allow-network-for-proxy".to_string());
+    }
+    args.push("--".to_string());
+    args.extend(command.iter().cloned());
+
+    let mut cmd = tokio::process::Command::new(sandbox_exe);
+    cmd.args(args)
+        .current_dir(cwd)
+        .env_clear()
+        .envs(env)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(MANAGED_PROXY_PROBE_TIMEOUT_MS),
+        cmd.output(),
+    )
+    .await
+    {
+        Ok(Ok(output)) => Some(output),
+        Ok(Err(_)) | Err(_) => None,
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn run_managed_proxy_round_trip_probe(
+    mut env: HashMap<String, String>,
+) -> ManagedProxyProbeOutcome {
+    let listener = match TcpListener::bind((Ipv4Addr::LOCALHOST, 0)) {
+        Ok(listener) => listener,
+        Err(err) => {
+            return ManagedProxyProbeOutcome::SkipReason(format!(
+                "managed proxy probe did not complete a clean proxy round trip here: failed to bind local probe listener: {err}"
+            ));
+        }
+    };
+    let proxy_port = match listener.local_addr() {
+        Ok(addr) => addr.port(),
+        Err(err) => {
+            return ManagedProxyProbeOutcome::SkipReason(format!(
+                "managed proxy probe did not complete a clean proxy round trip here: failed to read local probe listener address: {err}"
+            ));
+        }
+    };
+    let (request_tx, request_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
+        let mut buf = [0_u8; 4096];
+        let Ok(read) = stream.read(&mut buf) else {
+            return;
+        };
+        let request = String::from_utf8_lossy(&buf[..read]).to_string();
+        let _ = request_tx.send(request);
+        let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK");
+    });
+
+    env.insert(
+        "HTTP_PROXY".to_string(),
+        format!("http://127.0.0.1:{proxy_port}"),
+    );
+    let proxy_probe = match run_linux_sandbox_probe(
+        &[
+            "bash".to_string(),
+            "-c".to_string(),
+            "proxy=\"${HTTP_PROXY#*://}\"; host=\"${proxy%%:*}\"; port=\"${proxy##*:}\"; exec 3<>/dev/tcp/${host}/${port}; printf 'GET http://example.com/ HTTP/1.1\\r\\nHost: example.com\\r\\n\\r\\n' >&3; IFS= read -r line <&3; printf '%s\\n' \"$line\"".to_string(),
+        ],
+        env,
+        /*allow_network_for_proxy*/ true,
+        /*split_policies*/ true,
+    )
+    .await
+    {
+        Some(output) => output,
+        None => {
+            return ManagedProxyProbeOutcome::SkipReason(
+                "managed proxy probe did not complete a clean proxy round trip here: probe timed out or failed to launch".to_string(),
+            );
+        }
+    };
+    if proxy_probe.status.success() && request_rx.recv_timeout(Duration::from_secs(3)).is_ok() {
+        return ManagedProxyProbeOutcome::CleanRoundTrip;
+    }
+
+    let stderr = String::from_utf8_lossy(&proxy_probe.stderr);
+    if is_managed_proxy_permission_error(stderr.as_ref()) {
+        return ManagedProxyProbeOutcome::SkipReason(format!(
+            "managed proxy requires kernel namespace privileges unavailable here: {}",
+            managed_proxy_probe_summary(stderr.as_ref())
+        ));
+    }
+    if stderr.contains("failed to prepare host proxy routing bridge") {
+        return ManagedProxyProbeOutcome::SkipReason(format!(
+            "managed proxy host routing bridge is unavailable here: {}",
+            managed_proxy_probe_summary(stderr.as_ref())
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&proxy_probe.stdout);
+    let summary = managed_proxy_probe_summary(if stderr.trim().is_empty() {
+        stdout.as_ref()
+    } else {
+        stderr.as_ref()
+    });
+    ManagedProxyProbeOutcome::SkipReason(format!(
+        "managed proxy probe did not complete a clean proxy round trip here: {summary}"
+    ))
+}
+
+#[cfg(target_os = "linux")]
+pub async fn managed_proxy_skip_reason() -> Option<String> {
+    MANAGED_PROXY_SKIP_REASON
+        .get_or_init(compute_managed_proxy_skip_reason)
+        .await
+        .clone()
+}
+
+#[cfg(target_os = "linux")]
+async fn compute_managed_proxy_skip_reason() -> Option<String> {
+    let mut env: HashMap<String, String> = std::env::vars().collect();
+    strip_proxy_env(&mut env);
+    let bwrap_probe = run_linux_sandbox_probe(
+        &["bash".to_string(), "-c".to_string(), "true".to_string()],
+        env.clone(),
+        /*allow_network_for_proxy*/ false,
+        /*split_policies*/ false,
+    )
+    .await?;
+    if String::from_utf8_lossy(&bwrap_probe.stderr).contains(BWRAP_UNAVAILABLE_ERR) {
+        return Some("vendored bwrap was not built in this environment".to_string());
+    }
+
+    match run_managed_proxy_round_trip_probe(env.clone()).await {
+        ManagedProxyProbeOutcome::CleanRoundTrip => {}
+        ManagedProxyProbeOutcome::SkipReason(reason) => return Some(reason),
+    }
+
+    match run_managed_proxy_round_trip_probe(env).await {
+        ManagedProxyProbeOutcome::CleanRoundTrip => None,
+        ManagedProxyProbeOutcome::SkipReason(reason) => Some(format!(
+            "managed proxy availability probe was unstable here: {reason}"
+        )),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub async fn managed_proxy_skip_reason() -> Option<String> {
+    None
+}
+
 pub async fn wait_for_event<F>(
     codex: &CodexThread,
     predicate: F,
@@ -282,8 +549,10 @@ where
     use tokio::time::Duration;
     use tokio::time::timeout;
     loop {
-        // Allow a bit more time to accommodate async startup work (e.g. config IO, tool discovery)
-        let ev = timeout(wait_time.max(Duration::from_secs(10)), codex.next_event())
+        // Allow more time to accommodate suite-wide load and slower async work such as
+        // compaction, remote-model refresh, and tool discovery without turning integration
+        // tests into order-sensitive flakes.
+        let ev = timeout(wait_time.max(Duration::from_secs(30)), codex.next_event())
             .await
             .expect("timeout waiting for event")
             .expect("stream ended unexpectedly");

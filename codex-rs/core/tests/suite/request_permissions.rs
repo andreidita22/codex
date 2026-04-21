@@ -39,6 +39,8 @@ use serde_json::json;
 use std::fs;
 use std::path::Path;
 
+const REQUEST_PERMISSIONS_TOOL_TIMEOUT_MS: u64 = 5_000;
+
 fn absolute_path(path: &Path) -> AbsolutePathBuf {
     AbsolutePathBuf::try_from(path).expect("absolute path")
 }
@@ -94,7 +96,7 @@ fn shell_event_with_request_permissions<S: serde::Serialize>(
 ) -> Result<Value> {
     let args = json!({
         "command": command,
-        "timeout_ms": 1_000_u64,
+        "timeout_ms": REQUEST_PERMISSIONS_TOOL_TIMEOUT_MS,
         "sandbox_permissions": SandboxPermissions::WithAdditionalPermissions,
         "additional_permissions": additional_permissions,
     });
@@ -118,7 +120,7 @@ fn request_permissions_tool_event(
 fn shell_command_event(call_id: &str, command: &str) -> Result<Value> {
     let args = json!({
         "command": command,
-        "timeout_ms": 1_000_u64,
+        "timeout_ms": REQUEST_PERMISSIONS_TOOL_TIMEOUT_MS,
     });
     let args_str = serde_json::to_string(&args)?;
     Ok(ev_function_call(call_id, "shell_command", &args_str))
@@ -127,7 +129,7 @@ fn shell_command_event(call_id: &str, command: &str) -> Result<Value> {
 fn exec_command_event(call_id: &str, command: &str) -> Result<Value> {
     let args = json!({
         "cmd": command,
-        "yield_time_ms": 1_000_u64,
+        "yield_time_ms": REQUEST_PERMISSIONS_TOOL_TIMEOUT_MS,
     });
     let args_str = serde_json::to_string(&args)?;
     Ok(ev_function_call(call_id, "exec_command", &args_str))
@@ -140,7 +142,7 @@ fn exec_command_event_with_request_permissions<S: serde::Serialize>(
 ) -> Result<Value> {
     let args = json!({
         "cmd": command,
-        "yield_time_ms": 1_000_u64,
+        "yield_time_ms": REQUEST_PERMISSIONS_TOOL_TIMEOUT_MS,
         "sandbox_permissions": SandboxPermissions::WithAdditionalPermissions,
         "additional_permissions": additional_permissions,
     });
@@ -154,7 +156,7 @@ fn exec_command_event_with_missing_additional_permissions(
 ) -> Result<Value> {
     let args = json!({
         "cmd": command,
-        "yield_time_ms": 1_000_u64,
+        "yield_time_ms": REQUEST_PERMISSIONS_TOOL_TIMEOUT_MS,
         "sandbox_permissions": SandboxPermissions::WithAdditionalPermissions,
     });
     let args_str = serde_json::to_string(&args)?;
@@ -170,7 +172,7 @@ fn shell_event_with_raw_request_permissions(
     let args = json!({
         "command": command,
         "workdir": workdir,
-        "timeout_ms": 1_000_u64,
+        "timeout_ms": REQUEST_PERMISSIONS_TOOL_TIMEOUT_MS,
         "sandbox_permissions": SandboxPermissions::WithAdditionalPermissions,
         "additional_permissions": additional_permissions,
     });

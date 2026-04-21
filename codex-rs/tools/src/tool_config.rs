@@ -46,12 +46,18 @@ pub struct AgentToolSurfacePolicy {
 
 impl AgentToolSurfacePolicy {
     fn for_session(session_source: &SessionSource, collab_enabled: bool) -> Self {
+        let memory_consolidation_session = matches!(
+            session_source,
+            SessionSource::SubAgent(SubAgentSource::MemoryConsolidation)
+        );
         Self {
-            collaboration_enabled: collab_enabled,
+            collaboration_enabled: collab_enabled && !memory_consolidation_session,
             spawn_agent_enabled: collab_enabled
                 && !matches!(
                     session_source,
-                    SessionSource::SubAgent(SubAgentSource::ThreadSpawn { .. })
+                    SessionSource::SubAgent(
+                        SubAgentSource::ThreadSpawn { .. } | SubAgentSource::MemoryConsolidation
+                    )
                 ),
             request_user_input_enabled: !matches!(session_source, SessionSource::SubAgent(_)),
         }

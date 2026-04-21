@@ -49,7 +49,7 @@ struct SnapshotRunOptions {
 
 async fn wait_for_snapshot(codex_home: &Path) -> Result<PathBuf> {
     let snapshot_dir = codex_home.join("shell_snapshots");
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         if let Ok(mut entries) = fs::read_dir(&snapshot_dir).await {
             while let Some(entry) = entries.next_entry().await? {
@@ -132,7 +132,7 @@ async fn run_snapshot_command_with_options(
     let harness = TestCodexHarness::with_builder(builder).await?;
     let args = json!({
         "cmd": command,
-        "yield_time_ms": 1000,
+        "yield_time_ms": SHELL_SNAPSHOT_TIMEOUT_MS,
     });
     let call_id = "shell-snapshot-exec";
     let responses = vec![
@@ -223,7 +223,7 @@ async fn run_shell_command_snapshot_with_options(
     let harness = TestCodexHarness::with_builder(builder).await?;
     let args = json!({
         "command": command,
-        "timeout_ms": 1000,
+        "timeout_ms": SHELL_SNAPSHOT_TIMEOUT_MS,
     });
     let call_id = "shell-snapshot-command";
     let responses = vec![
@@ -355,6 +355,8 @@ fn normalize_newlines(text: &str) -> String {
     text.replace("\r\n", "\n")
 }
 
+const SHELL_SNAPSHOT_TIMEOUT_MS: u64 = 10_000;
+
 fn assert_posix_snapshot_sections(snapshot: &str) {
     assert!(snapshot.contains("# Snapshot file"));
     assert!(snapshot.contains("aliases "));
@@ -426,7 +428,7 @@ async fn shell_command_snapshot_preserves_shell_environment_policy_set() -> Resu
         "shell_command",
         json!({
             "command": "printf warmup",
-            "timeout_ms": 1_000,
+            "timeout_ms": SHELL_SNAPSHOT_TIMEOUT_MS,
         }),
     )
     .await?;
@@ -441,7 +443,7 @@ async fn shell_command_snapshot_preserves_shell_environment_policy_set() -> Resu
         "shell_command",
         json!({
             "command": command,
-            "timeout_ms": 1_000,
+            "timeout_ms": SHELL_SNAPSHOT_TIMEOUT_MS,
         }),
     )
     .await?;
@@ -480,7 +482,7 @@ async fn linux_unified_exec_snapshot_preserves_shell_environment_policy_set() ->
         "exec_command",
         json!({
             "cmd": "printf warmup",
-            "yield_time_ms": 1_000,
+            "yield_time_ms": SHELL_SNAPSHOT_TIMEOUT_MS,
         }),
     )
     .await?;
@@ -495,7 +497,7 @@ async fn linux_unified_exec_snapshot_preserves_shell_environment_policy_set() ->
         "exec_command",
         json!({
             "cmd": command,
-            "yield_time_ms": 1_000,
+            "yield_time_ms": SHELL_SNAPSHOT_TIMEOUT_MS,
         }),
     )
     .await?;
