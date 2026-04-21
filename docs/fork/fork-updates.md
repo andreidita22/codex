@@ -10,12 +10,14 @@ rebase the fork away onto.
 Use this document together with:
 
 - [fork-update-checklist.md](fork-update-checklist.md)
+- [upstream-ingest-watchlist.md](upstream-ingest-watchlist.md)
 - [custom-fork-module-inventory.md](custom-fork-module-inventory.md)
 - [release-alignment-log.md](release-alignment-log.md)
 
 Those documents answer:
 
 - the short operational release-ingest sequence
+- the semantic watchlist and grep gates for new upstream releases
 - what custom modules the fork owns
 - which shared upstream seam files those modules depend on
 - what alignment decisions were made on previous release ingests
@@ -122,6 +124,14 @@ The most important files are usually the shared seam files already tracked in
 [custom-fork-module-inventory.md](custom-fork-module-inventory.md) and prior
 entries in [release-alignment-log.md](release-alignment-log.md).
 
+At this stage, also run the watchlist review from
+[upstream-ingest-watchlist.md](upstream-ingest-watchlist.md):
+
+- diff old vanilla vs new vanilla first
+- manually review enum and operation-surface changes
+- run the grep gates for context maintenance and agent observability
+- note any likely bypass-path or ownership-regression risks in the release log
+
 ### 5. Align upstream changes into the ingest branch
 
 Resolve the upstream delta from inside the branch that was created from fork
@@ -177,6 +187,12 @@ example:
 - governance prompt-layer insertion
 - E-witness tool exposure
 - thread-spawn tool containment
+
+The watchlist document also defines the required validation order:
+
+1. semantic-owner tests first
+2. then high-signal adapter/runtime tests
+3. then any broader integration checks justified by the touched upstream seams
 
 ### 7. Land the ingest step locally, without a PR
 

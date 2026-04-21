@@ -1,7 +1,8 @@
 # Fork Update Checklist
 
 Use this as the fast refresh for release ingests. For rationale and edge cases,
-see [fork-updates.md](fork-updates.md).
+see [fork-updates.md](fork-updates.md) and
+[upstream-ingest-watchlist.md](upstream-ingest-watchlist.md).
 
 ## Canonical rule
 
@@ -49,6 +50,9 @@ git diff --name-only main...upstream-main
 
 - Use [custom-fork-module-inventory.md](custom-fork-module-inventory.md) to
   prioritize seam files.
+- Run the grep gates and enum review in
+  [upstream-ingest-watchlist.md](upstream-ingest-watchlist.md).
+- Record likely bypass-path and ownership-regression risks in the release log.
 
 ### 5. Align into the ingest branch
 
@@ -80,6 +84,12 @@ cd ..
 just bazel-lock-update
 just bazel-lock-check
 ```
+
+Required validation order:
+
+1. semantic-owner tests first
+2. then high-signal adapter/runtime tests
+3. manually review any compaction snapshot churn
 
 ### 7. Land the ingest branch directly on `main`
 
