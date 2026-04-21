@@ -1,4 +1,8 @@
 use codex_protocol::ThreadId;
+use codex_protocol::items::AgentMessageContent;
+use codex_protocol::items::AgentMessageItem;
+use codex_protocol::items::ReasoningItem;
+use codex_protocol::items::TurnItem;
 use codex_protocol::protocol::AgentReasoningEvent;
 use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::EventMsg;
@@ -311,6 +315,39 @@ impl ProgressRegistry {
                     },
                 );
             }
+            EventMsg::ReasoningContentDelta(event) => {
+                let promotes_initial_progress = state.snapshot.first_progress_at.is_none();
+                state.snapshot.phase = AgentProgressPhase::Reasoning;
+                state.snapshot.blocked_on = None;
+                append_active_work(
+                    &mut state.snapshot,
+                    AgentActiveWorkKind::Reasoning,
+                    &event.delta,
+                );
+                if promotes_initial_progress {
+                    push_update(
+                        &mut state.snapshot,
+                        format!("reasoning: {}", truncate_preview(&event.delta)),
+                    );
+                }
+                note_progress_event(
+                    state,
+                    now,
+                    if promotes_initial_progress {
+                        ProgressEventKind::Milestone
+                    } else {
+                        ProgressEventKind::Heartbeat
+                    },
+                );
+            }
+            EventMsg::ReasoningRawContentDelta(_) => {}
+            EventMsg::ItemStarted(event) => {
+                record_item_started(state, now, &event.item);
+            }
+            EventMsg::ItemCompleted(event) => {
+                record_item_completed(state, now, &event.item);
+            }
+            EventMsg::PlanDelta(_) => {}
             EventMsg::ExecCommandBegin(event) => {
                 state.snapshot.phase = AgentProgressPhase::Command;
                 state.snapshot.blocked_on = None;
@@ -647,6 +684,169 @@ fn apply_reasoning_event(
     note_progress_event(state, now, ProgressEventKind::Milestone);
 }
 
+fn record_item_started(state: &mut TrackedProgressState, now: Instant, item: &TurnItem) {
+    match item {
+        TurnItem::UserMessage(_)
+        | TurnItem::HookPrompt(_)
+        | TurnItem::AgentMessage(_)
+        | TurnItem::Plan(_)
+        | TurnItem::Reasoning(_)
+        | TurnItem::ContextCompaction(_) => {}
+        TurnItem::WebSearch(item) => {
+            record_tool_start(state, now, item, "web_search");
+        }
+        TurnItem::ImageGeneration(item) => {
+            record_tool_start(state, now, item, "image_generation");
+        }
+    }
+}
+
+fn record_item_completed(state: &mut TrackedProgressState, now: Instant, item: &TurnItem) {
+    match item {
+        TurnItem::UserMessage(_)
+        | TurnItem::HookPrompt(_)
+        | TurnItem::Plan(_)
+        | TurnItem::ContextCompaction(_) => {}
+        TurnItem::AgentMessage(item) => {
+            record_agent_message_completed(state, now, item);
+        }
+        TurnItem::Reasoning(item) => {
+            record_reasoning_completed(state, now, item);
+        }
+        TurnItem::WebSearch(item) => {
+            record_tool_completed(state, now, item, "web_search");
+        }
+        TurnItem::ImageGeneration(item) => {
+            record_tool_completed(state, now, item, "image_generation");
+        }
+    }
+}
+
+fn record_tool_start<T>(
+    state: &mut TrackedProgressState,
+    now: Instant,
+    _item: &T,
+    tool_label: &str,
+) {
+    state.snapshot.phase = AgentProgressPhase::ToolCall;
+    state.snapshot.blocked_on = None;
+    set_active_work(
+        &mut state.snapshot,
+        AgentActiveWorkKind::Tool,
+        tool_label.to_string(),
+    );
+    push_update(&mut state.snapshot, format!("running tool: {tool_label}"));
+    note_progress_event(state, now, ProgressEventKind::Milestone);
+}
+
+fn record_tool_completed<T>(
+    state: &mut TrackedProgressState,
+    now: Instant,
+    _item: &T,
+    fallback_label: &str,
+) {
+    push_finished_update(
+        &mut state.snapshot,
+        AgentActiveWorkKind::Tool,
+        fallback_label.to_string(),
+    );
+    state.snapshot.phase = AgentProgressPhase::Pending;
+    state.snapshot.blocked_on = None;
+    state.snapshot.active_work = None;
+    note_progress_event(state, now, ProgressEventKind::Milestone);
+}
+
+fn record_agent_message_completed(
+    state: &mut TrackedProgressState,
+    now: Instant,
+    item: &AgentMessageItem,
+) {
+    let text = agent_message_item_text(item);
+    if text.trim().is_empty() {
+        return;
+    }
+
+    let preview = truncate_preview(&text);
+    let continuing_same_message = matches!(
+        state.snapshot.active_work.as_ref(),
+        Some(AgentActiveWork {
+            kind: AgentActiveWorkKind::Message,
+            ..
+        })
+    ) && state.snapshot.latest_visible_message.as_deref()
+        == Some(preview.as_str());
+
+    state.snapshot.phase = AgentProgressPhase::MessageDrafting;
+    state.snapshot.blocked_on = None;
+    state.snapshot.latest_visible_message = Some(preview.clone());
+    set_active_work(
+        &mut state.snapshot,
+        AgentActiveWorkKind::Message,
+        preview.clone(),
+    );
+    push_update(&mut state.snapshot, format!("drafting response: {preview}"));
+    note_progress_event(
+        state,
+        now,
+        if continuing_same_message {
+            ProgressEventKind::Heartbeat
+        } else {
+            ProgressEventKind::Milestone
+        },
+    );
+}
+
+fn record_reasoning_completed(
+    state: &mut TrackedProgressState,
+    now: Instant,
+    item: &ReasoningItem,
+) {
+    let text = reasoning_summary_text(item);
+    if text.trim().is_empty() {
+        return;
+    }
+
+    let preview = truncate_preview(&text);
+    let already_tracking_reasoning = matches!(
+        state.snapshot.active_work.as_ref(),
+        Some(AgentActiveWork {
+            kind: AgentActiveWorkKind::Reasoning,
+            ..
+        })
+    );
+
+    state.snapshot.phase = AgentProgressPhase::Reasoning;
+    state.snapshot.blocked_on = None;
+    set_active_work(
+        &mut state.snapshot,
+        AgentActiveWorkKind::Reasoning,
+        preview.clone(),
+    );
+    push_update(&mut state.snapshot, format!("reasoning: {preview}"));
+    note_progress_event(
+        state,
+        now,
+        if already_tracking_reasoning {
+            ProgressEventKind::Heartbeat
+        } else {
+            ProgressEventKind::Milestone
+        },
+    );
+}
+
+fn agent_message_item_text(item: &AgentMessageItem) -> String {
+    item.content
+        .iter()
+        .map(|entry| match entry {
+            AgentMessageContent::Text { text } => text.as_str(),
+        })
+        .collect()
+}
+
+fn reasoning_summary_text(item: &ReasoningItem) -> String {
+    item.summary_text.join("\n")
+}
+
 fn phase_for_status(status: &AgentStatus) -> Option<AgentProgressPhase> {
     match status {
         AgentStatus::PendingInit => Some(AgentProgressPhase::Pending),
@@ -763,13 +963,24 @@ fn duration_millis_u64(duration: Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_protocol::items::AgentMessageItem;
+    use codex_protocol::items::ImageGenerationItem;
+    use codex_protocol::items::ReasoningItem;
+    use codex_protocol::items::TurnItem;
+    use codex_protocol::items::WebSearchItem;
+    use codex_protocol::models::WebSearchAction;
     use codex_protocol::protocol::ExecCommandBeginEvent;
     use codex_protocol::protocol::ExecCommandEndEvent;
     use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
     use codex_protocol::protocol::ExecCommandStatus;
     use codex_protocol::protocol::ExecOutputStream;
     use codex_protocol::protocol::FileChange;
+    use codex_protocol::protocol::ItemCompletedEvent;
+    use codex_protocol::protocol::ItemStartedEvent;
     use codex_protocol::protocol::PatchApplyUpdatedEvent;
+    use codex_protocol::protocol::PlanDeltaEvent;
+    use codex_protocol::protocol::ReasoningContentDeltaEvent;
+    use codex_protocol::protocol::ReasoningRawContentDeltaEvent;
     use codex_protocol::protocol::StreamErrorEvent;
     use codex_protocol::protocol::TurnAbortReason;
     use codex_protocol::protocol::TurnAbortedEvent;
@@ -784,6 +995,24 @@ mod tests {
 
     fn thread_id() -> ThreadId {
         ThreadId::from_string("019638d2-f60c-707b-a76d-5ba289fa0d5f").expect("valid thread id")
+    }
+
+    fn web_search_item() -> WebSearchItem {
+        WebSearchItem {
+            id: "search-1".to_string(),
+            query: "codex".to_string(),
+            action: WebSearchAction::Other,
+        }
+    }
+
+    fn image_generation_item() -> ImageGenerationItem {
+        ImageGenerationItem {
+            id: "image-1".to_string(),
+            status: "completed".to_string(),
+            revised_prompt: None,
+            result: "ok".to_string(),
+            saved_path: None,
+        }
     }
 
     #[test]
@@ -1031,6 +1260,353 @@ mod tests {
                 label: "apply_patch (2 files)".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn reasoning_content_delta_primary_events_are_explicitly_classified() {
+        let registry = ProgressRegistry::default();
+        let thread_id = thread_id();
+        registry.seed(thread_id);
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::ReasoningContentDelta(ReasoningContentDeltaEvent {
+                thread_id: thread_id.to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "reasoning-1".to_string(),
+                delta: "thinking".to_string(),
+                summary_index: 0,
+            }),
+        );
+
+        let first = registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
+        assert_eq!(first.phase, AgentProgressPhase::Reasoning);
+        assert_eq!(first.seq, 1);
+        assert_eq!(
+            first.recent_updates,
+            vec!["reasoning: thinking".to_string()]
+        );
+        assert_eq!(
+            first.active_work,
+            Some(AgentActiveWork {
+                kind: AgentActiveWorkKind::Reasoning,
+                label: "thinking".to_string(),
+            })
+        );
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::ReasoningContentDelta(ReasoningContentDeltaEvent {
+                thread_id: thread_id.to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "reasoning-1".to_string(),
+                delta: " more".to_string(),
+                summary_index: 0,
+            }),
+        );
+
+        let second = registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
+        assert_eq!(second.phase, AgentProgressPhase::Reasoning);
+        assert_eq!(second.seq, 1);
+        assert_eq!(
+            second.active_work,
+            Some(AgentActiveWork {
+                kind: AgentActiveWorkKind::Reasoning,
+                label: "thinking more".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn reasoning_raw_content_delta_is_ignored_for_material_progress() {
+        let registry = ProgressRegistry::default();
+        let thread_id = thread_id();
+        registry.seed(thread_id);
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::ReasoningRawContentDelta(ReasoningRawContentDeltaEvent {
+                thread_id: thread_id.to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "reasoning-1".to_string(),
+                delta: "hidden".to_string(),
+                content_index: 0,
+            }),
+        );
+
+        let snapshot = registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
+        assert_eq!(snapshot.phase, AgentProgressPhase::Pending);
+        assert_eq!(snapshot.seq, 0);
+        assert_eq!(snapshot.active_work, None);
+        assert_eq!(snapshot.recent_updates, Vec::<String>::new());
+    }
+
+    #[test]
+    fn item_started_and_completed_web_search_are_classified() {
+        let registry = ProgressRegistry::default();
+        let thread_id = thread_id();
+        let item = web_search_item();
+        registry.seed(thread_id);
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::ItemStarted(ItemStartedEvent {
+                thread_id,
+                turn_id: "turn-1".to_string(),
+                item: TurnItem::WebSearch(item.clone()),
+            }),
+        );
+
+        let started = registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
+        assert_eq!(started.phase, AgentProgressPhase::ToolCall);
+        assert_eq!(started.seq, 1);
+        assert_eq!(
+            started.active_work,
+            Some(AgentActiveWork {
+                kind: AgentActiveWorkKind::Tool,
+                label: "web_search".to_string(),
+            })
+        );
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id,
+                turn_id: "turn-1".to_string(),
+                item: TurnItem::WebSearch(item),
+            }),
+        );
+
+        let completed = registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
+        assert_eq!(completed.phase, AgentProgressPhase::Pending);
+        assert_eq!(completed.seq, 2);
+        assert_eq!(completed.active_work, None);
+    }
+
+    #[test]
+    fn item_started_and_completed_image_generation_are_classified() {
+        let registry = ProgressRegistry::default();
+        let thread_id = thread_id();
+        let item = image_generation_item();
+        registry.seed(thread_id);
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::ItemStarted(ItemStartedEvent {
+                thread_id,
+                turn_id: "turn-1".to_string(),
+                item: TurnItem::ImageGeneration(item.clone()),
+            }),
+        );
+
+        let started = registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
+        assert_eq!(started.phase, AgentProgressPhase::ToolCall);
+        assert_eq!(started.seq, 1);
+        assert_eq!(
+            started.active_work,
+            Some(AgentActiveWork {
+                kind: AgentActiveWorkKind::Tool,
+                label: "image_generation".to_string(),
+            })
+        );
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id,
+                turn_id: "turn-1".to_string(),
+                item: TurnItem::ImageGeneration(item),
+            }),
+        );
+
+        let completed = registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
+        assert_eq!(completed.phase, AgentProgressPhase::Pending);
+        assert_eq!(completed.seq, 2);
+        assert_eq!(completed.active_work, None);
+    }
+
+    #[test]
+    fn item_completed_agent_message_with_new_visible_text_counts_as_progress() {
+        let registry = ProgressRegistry::default();
+        let thread_id = thread_id();
+        registry.seed(thread_id);
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::AgentMessageContentDelta(
+                codex_protocol::protocol::AgentMessageContentDeltaEvent {
+                    thread_id: thread_id.to_string(),
+                    turn_id: "turn-1".to_string(),
+                    item_id: "message-1".to_string(),
+                    delta: "hello ".to_string(),
+                },
+            ),
+        );
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id,
+                turn_id: "turn-1".to_string(),
+                item: TurnItem::AgentMessage(AgentMessageItem {
+                    id: "message-1".to_string(),
+                    content: vec![
+                        AgentMessageContent::Text {
+                            text: "hello ".to_string(),
+                        },
+                        AgentMessageContent::Text {
+                            text: "world".to_string(),
+                        },
+                    ],
+                    phase: None,
+                    memory_citation: None,
+                }),
+            }),
+        );
+
+        let snapshot = registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
+        assert_eq!(snapshot.phase, AgentProgressPhase::MessageDrafting);
+        assert_eq!(snapshot.seq, 2);
+        assert_eq!(snapshot.final_message, None);
+        assert_eq!(
+            snapshot.latest_visible_message,
+            Some("hello world".to_string())
+        );
+        assert_eq!(
+            snapshot.active_work,
+            Some(AgentActiveWork {
+                kind: AgentActiveWorkKind::Message,
+                label: "hello world".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn distinct_completed_message_items_each_count_as_material_progress() {
+        let registry = ProgressRegistry::default();
+        let thread_id = thread_id();
+        registry.seed(thread_id);
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id,
+                turn_id: "turn-1".to_string(),
+                item: TurnItem::AgentMessage(AgentMessageItem {
+                    id: "message-1".to_string(),
+                    content: vec![AgentMessageContent::Text {
+                        text: "commentary".to_string(),
+                    }],
+                    phase: None,
+                    memory_citation: None,
+                }),
+            }),
+        );
+
+        let first = registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
+        assert_eq!(first.seq, 1);
+        assert_eq!(first.latest_visible_message, Some("commentary".to_string()));
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id,
+                turn_id: "turn-1".to_string(),
+                item: TurnItem::AgentMessage(AgentMessageItem {
+                    id: "message-2".to_string(),
+                    content: vec![AgentMessageContent::Text {
+                        text: "final answer".to_string(),
+                    }],
+                    phase: None,
+                    memory_citation: None,
+                }),
+            }),
+        );
+
+        let second = registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
+        assert_eq!(second.seq, 2);
+        assert_eq!(
+            second.latest_visible_message,
+            Some("final answer".to_string())
+        );
+    }
+
+    #[test]
+    fn item_completed_reasoning_uses_summary_text_only() {
+        let registry = ProgressRegistry::default();
+        let thread_id = thread_id();
+        registry.seed(thread_id);
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id,
+                turn_id: "turn-1".to_string(),
+                item: TurnItem::Reasoning(ReasoningItem {
+                    id: "reasoning-1".to_string(),
+                    summary_text: vec!["summary".to_string()],
+                    raw_content: vec!["hidden".to_string()],
+                }),
+            }),
+        );
+
+        let summary_snapshot =
+            registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
+        assert_eq!(summary_snapshot.phase, AgentProgressPhase::Reasoning);
+        assert_eq!(summary_snapshot.seq, 1);
+        assert_eq!(
+            summary_snapshot.active_work,
+            Some(AgentActiveWork {
+                kind: AgentActiveWorkKind::Reasoning,
+                label: "summary".to_string(),
+            })
+        );
+
+        let raw_only_thread_id =
+            ThreadId::from_string("019638d2-f60c-707b-a76d-5ba289fa0d6f").expect("valid thread id");
+        registry.seed(raw_only_thread_id);
+        registry.record_event(
+            raw_only_thread_id,
+            &EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: raw_only_thread_id,
+                turn_id: "turn-1".to_string(),
+                item: TurnItem::Reasoning(ReasoningItem {
+                    id: "reasoning-2".to_string(),
+                    summary_text: Vec::new(),
+                    raw_content: vec!["hidden".to_string()],
+                }),
+            }),
+        );
+        let raw_only_snapshot = registry.inspect(
+            raw_only_thread_id,
+            AgentStatus::Running,
+            Duration::from_secs(1),
+        );
+        assert_eq!(raw_only_snapshot.phase, AgentProgressPhase::Pending);
+        assert_eq!(raw_only_snapshot.seq, 0);
+        assert_eq!(raw_only_snapshot.active_work, None);
+    }
+
+    #[test]
+    fn plan_delta_remains_an_explicit_no_op() {
+        let registry = ProgressRegistry::default();
+        let thread_id = thread_id();
+        registry.seed(thread_id);
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::PlanDelta(PlanDeltaEvent {
+                thread_id: thread_id.to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: "plan-1".to_string(),
+                delta: "step".to_string(),
+            }),
+        );
+
+        let snapshot = registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
+        assert_eq!(snapshot.phase, AgentProgressPhase::Pending);
+        assert_eq!(snapshot.seq, 0);
+        assert_eq!(snapshot.active_work, None);
     }
 
     #[tokio::test]
