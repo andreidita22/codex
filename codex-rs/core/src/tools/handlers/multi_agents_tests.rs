@@ -28,6 +28,7 @@ use codex_model_provider::create_model_provider;
 use codex_model_provider_info::built_in_model_providers;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
+use codex_protocol::items::ImageGenerationItem;
 use codex_protocol::items::TurnItem;
 use codex_protocol::items::WebSearchItem;
 use codex_protocol::models::BaseInstructions;
@@ -48,6 +49,7 @@ use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::NetworkSandboxPolicy;
 use codex_protocol::protocol::Op;
+use codex_protocol::protocol::ReasoningContentDeltaEvent;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
@@ -117,6 +119,57 @@ async fn manager_backed_session_and_turn() -> (
     let session: Arc<crate::session::session::Session> = Arc::clone(&root.thread.codex.session);
     let turn = session.new_default_turn().await;
     (session, turn, manager)
+}
+
+async fn spawn_worker_backed_session(
+    task_name: &str,
+) -> (
+    Arc<crate::session::session::Session>,
+    Arc<TurnContext>,
+    ThreadManager,
+    Arc<CodexThread>,
+    Arc<TurnContext>,
+) {
+    let (mut session, mut turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.conversation_id = root.thread_id;
+    let mut config = (*turn.config).clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    turn.config = Arc::new(config);
+
+    let session = Arc::new(session);
+    let turn = Arc::new(turn);
+    let spawn_output = SpawnAgentHandlerV2
+        .handle(invocation(
+            session.clone(),
+            turn.clone(),
+            "spawn_agent",
+            function_payload(json!({
+                "message": "inspect this repo",
+                "task_name": task_name
+            })),
+        ))
+        .await
+        .expect("spawn_agent should succeed");
+    let _ = expect_text_output(spawn_output);
+
+    let agent_id = session
+        .services
+        .agent_control
+        .resolve_agent_reference(session.conversation_id, &turn.session_source, task_name)
+        .await
+        .expect("worker path should resolve");
+    let child_thread = manager
+        .get_thread(agent_id)
+        .await
+        .expect("child thread should exist");
+    let child_turn = child_thread.codex.session.new_default_turn().await;
+    (session, turn, manager, child_thread, child_turn)
 }
 
 async fn install_role_with_model_override(turn: &mut TurnContext) -> String {
@@ -1508,6 +1561,265 @@ async fn wait_for_agent_progress_returns_on_material_progress() {
     assert_eq!(result["phase"], json!("reasoning"));
     assert_eq!(result["ever_entered_turn"], json!(true));
     assert_eq!(result["ever_reported_progress"], json!(true));
+    assert_eq!(result["seq"], json!(1));
+    assert_eq!(success, Some(true));
+}
+
+#[tokio::test]
+async fn wait_for_agent_progress_returns_on_reasoning_content_delta() {
+    let (session, turn, _manager, child_thread, child_turn) =
+        spawn_worker_backed_session("worker").await;
+    child_thread
+        .codex
+        .session
+        .send_event(
+            child_turn.as_ref(),
+            EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: child_turn.sub_id.clone(),
+                started_at: None,
+                model_context_window: Some(256_000),
+                collaboration_mode_kind: Default::default(),
+            }),
+        )
+        .await;
+
+    let worker = Arc::clone(&child_thread);
+    let worker_turn = Arc::clone(&child_turn);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        worker
+            .codex
+            .session
+            .send_event(
+                worker_turn.as_ref(),
+                EventMsg::ReasoningContentDelta(ReasoningContentDeltaEvent {
+                    thread_id: worker.codex.session.conversation_id.to_string(),
+                    turn_id: worker_turn.sub_id.clone(),
+                    item_id: "reasoning-1".to_string(),
+                    delta: "scanning repo structure".to_string(),
+                    summary_index: 0,
+                }),
+            )
+            .await;
+    });
+
+    let output = WaitForAgentProgressHandler
+        .handle(invocation(
+            session,
+            turn,
+            "wait_for_agent_progress",
+            function_payload(json!({
+                "target": "worker",
+                "timeout_ms": 10_000,
+                "until_phases": ["waiting_approval", "waiting_user_input", "completed", "errored"]
+            })),
+        ))
+        .await
+        .expect("wait_for_agent_progress should succeed");
+    let (content, success) = expect_text_output(output);
+    let result: serde_json::Value =
+        serde_json::from_str(&content).expect("wait_for_agent_progress result should be json");
+
+    assert_eq!(result["timed_out"], json!(false));
+    assert_eq!(result["match_reason"], json!("seq_advanced"));
+    assert_eq!(result["phase"], json!("reasoning"));
+    assert_eq!(result["seq"], json!(1));
+    assert_eq!(success, Some(true));
+}
+
+#[tokio::test]
+async fn wait_for_agent_progress_returns_on_web_search_item_started() {
+    let (session, turn, _manager, child_thread, child_turn) =
+        spawn_worker_backed_session("worker").await;
+    child_thread
+        .codex
+        .session
+        .send_event(
+            child_turn.as_ref(),
+            EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: child_turn.sub_id.clone(),
+                started_at: None,
+                model_context_window: Some(256_000),
+                collaboration_mode_kind: Default::default(),
+            }),
+        )
+        .await;
+
+    let worker = Arc::clone(&child_thread);
+    let worker_turn = Arc::clone(&child_turn);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        worker
+            .codex
+            .session
+            .send_event(
+                worker_turn.as_ref(),
+                EventMsg::ItemStarted(ItemStartedEvent {
+                    thread_id: worker.codex.session.conversation_id,
+                    turn_id: worker_turn.sub_id.clone(),
+                    item: TurnItem::WebSearch(WebSearchItem {
+                        id: "search-1".to_string(),
+                        query: "find docs".to_string(),
+                        action: WebSearchAction::Search {
+                            query: Some("find docs".to_string()),
+                            queries: None,
+                        },
+                    }),
+                }),
+            )
+            .await;
+    });
+
+    let output = WaitForAgentProgressHandler
+        .handle(invocation(
+            session,
+            turn,
+            "wait_for_agent_progress",
+            function_payload(json!({
+                "target": "worker",
+                "timeout_ms": 10_000,
+                "until_phases": ["tool_call"]
+            })),
+        ))
+        .await
+        .expect("wait_for_agent_progress should succeed");
+    let (content, success) = expect_text_output(output);
+    let result: serde_json::Value =
+        serde_json::from_str(&content).expect("wait_for_agent_progress result should be json");
+
+    assert_eq!(result["timed_out"], json!(false));
+    assert_eq!(result["match_reason"], json!("seq_advanced"));
+    assert_eq!(result["phase"], json!("tool_call"));
+    assert_eq!(
+        result["active_work"],
+        json!({
+            "kind": "tool",
+            "label": "web_search"
+        })
+    );
+    assert_eq!(result["seq"], json!(1));
+    assert_eq!(success, Some(true));
+}
+
+#[tokio::test]
+async fn wait_for_agent_progress_returns_on_image_generation_item_started() {
+    let (session, turn, _manager, child_thread, child_turn) =
+        spawn_worker_backed_session("worker").await;
+    child_thread
+        .codex
+        .session
+        .send_event(
+            child_turn.as_ref(),
+            EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: child_turn.sub_id.clone(),
+                started_at: None,
+                model_context_window: Some(256_000),
+                collaboration_mode_kind: Default::default(),
+            }),
+        )
+        .await;
+
+    let worker = Arc::clone(&child_thread);
+    let worker_turn = Arc::clone(&child_turn);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        worker
+            .codex
+            .session
+            .send_event(
+                worker_turn.as_ref(),
+                EventMsg::ItemStarted(ItemStartedEvent {
+                    thread_id: worker.codex.session.conversation_id,
+                    turn_id: worker_turn.sub_id.clone(),
+                    item: TurnItem::ImageGeneration(ImageGenerationItem {
+                        id: "image-1".to_string(),
+                        status: "completed".to_string(),
+                        revised_prompt: None,
+                        result: "saved".to_string(),
+                        saved_path: None,
+                    }),
+                }),
+            )
+            .await;
+    });
+
+    let output = WaitForAgentProgressHandler
+        .handle(invocation(
+            session,
+            turn,
+            "wait_for_agent_progress",
+            function_payload(json!({
+                "target": "worker",
+                "timeout_ms": 10_000,
+                "until_phases": ["tool_call"]
+            })),
+        ))
+        .await
+        .expect("wait_for_agent_progress should succeed");
+    let (content, success) = expect_text_output(output);
+    let result: serde_json::Value =
+        serde_json::from_str(&content).expect("wait_for_agent_progress result should be json");
+
+    assert_eq!(result["timed_out"], json!(false));
+    assert_eq!(result["match_reason"], json!("seq_advanced"));
+    assert_eq!(result["phase"], json!("tool_call"));
+    assert_eq!(
+        result["active_work"],
+        json!({
+            "kind": "tool",
+            "label": "image_generation"
+        })
+    );
+    assert_eq!(result["seq"], json!(1));
+    assert_eq!(success, Some(true));
+}
+
+#[tokio::test]
+async fn wait_for_agent_progress_returns_on_observed_raw_error() {
+    let (session, turn, _manager, child_thread, _child_turn) =
+        spawn_worker_backed_session("worker").await;
+
+    let worker = Arc::clone(&child_thread);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        worker
+            .codex
+            .session
+            .send_event_raw(
+                codex_protocol::protocol::Event {
+                    id: "raw-error".to_string(),
+                    msg: EventMsg::Error(ErrorEvent {
+                        message: "boom".to_string(),
+                        codex_error_info: Some(codex_protocol::protocol::CodexErrorInfo::Other),
+                    }),
+                },
+                ProgressObservation::Observe,
+            )
+            .await;
+    });
+
+    let output = WaitForAgentProgressHandler
+        .handle(invocation(
+            session,
+            turn,
+            "wait_for_agent_progress",
+            function_payload(json!({
+                "target": "worker",
+                "timeout_ms": 10_000,
+                "until_phases": ["errored"]
+            })),
+        ))
+        .await
+        .expect("wait_for_agent_progress should succeed");
+    let (content, success) = expect_text_output(output);
+    let result: serde_json::Value =
+        serde_json::from_str(&content).expect("wait_for_agent_progress result should be json");
+
+    assert_eq!(result["timed_out"], json!(false));
+    assert_eq!(result["match_reason"], json!("seq_advanced"));
+    assert_eq!(result["phase"], json!("errored"));
+    assert_eq!(result["lifecycle_status"], json!({"errored": "boom"}));
+    assert_eq!(result["error_message"], json!("boom"));
     assert_eq!(result["seq"], json!(1));
     assert_eq!(success, Some(true));
 }
