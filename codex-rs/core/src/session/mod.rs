@@ -792,6 +792,12 @@ pub(crate) fn session_loop_termination_from_handle(
     .shared()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProgressObservation {
+    Observe,
+    CompatibilityOnly,
+}
+
 async fn thread_title_from_state_db(
     state_db: Option<&state_db::StateDbHandle>,
     codex_home: &AbsolutePathBuf,
@@ -962,7 +968,8 @@ impl Session {
                             id: sess.next_internal_sub_id(),
                             msg: EventMsg::SkillsUpdateAvailable,
                         };
-                        sess.send_event_raw(event).await;
+                        sess.send_event_raw(event, ProgressObservation::Observe)
+                            .await;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
@@ -1013,13 +1020,16 @@ impl Session {
         let message = format!(
             "Agent identity registration failed while `features.use_agent_identity` is enabled: {error}"
         );
-        self.send_event_raw(Event {
-            id: self.next_internal_sub_id(),
-            msg: EventMsg::Error(ErrorEvent {
-                message,
-                codex_error_info: Some(CodexErrorInfo::Other),
-            }),
-        })
+        self.send_event_raw(
+            Event {
+                id: self.next_internal_sub_id(),
+                msg: EventMsg::Error(ErrorEvent {
+                    message,
+                    codex_error_info: Some(CodexErrorInfo::Other),
+                }),
+            },
+            ProgressObservation::Observe,
+        )
         .await;
     }
 
@@ -1563,14 +1573,12 @@ impl Session {
     /// Persist the event to rollout and send it to clients.
     pub(crate) async fn send_event(&self, turn_context: &TurnContext, msg: EventMsg) {
         let legacy_source = msg.clone();
-        self.services
-            .agent_control
-            .record_progress_event(self.conversation_id, &legacy_source);
         let event = Event {
             id: turn_context.sub_id.clone(),
             msg,
         };
-        self.send_event_raw(event).await;
+        self.send_event_raw(event, ProgressObservation::Observe)
+            .await;
         self.maybe_notify_parent_of_terminal_turn(turn_context, &legacy_source)
             .await;
         self.maybe_mirror_event_text_to_realtime(&legacy_source)
@@ -1584,7 +1592,8 @@ impl Session {
                 id: turn_context.sub_id.clone(),
                 msg: legacy,
             };
-            self.send_event_raw(legacy_event).await;
+            self.send_event_raw(legacy_event, ProgressObservation::CompatibilityOnly)
+                .await;
         }
     }
 
@@ -1679,17 +1688,22 @@ impl Session {
         self.conversation.clear_active_handoff().await;
     }
 
-    pub(crate) async fn send_event_raw(&self, event: Event) {
+    pub(crate) async fn send_event_raw(&self, event: Event, observation: ProgressObservation) {
         // Persist the event into rollout (recorder filters as needed)
         let rollout_items = vec![RolloutItem::EventMsg(event.msg.clone())];
         self.persist_rollout_items(&rollout_items).await;
-        self.deliver_event_raw(event).await;
+        self.deliver_event_raw(event, observation).await;
     }
 
-    async fn deliver_event_raw(&self, event: Event) {
+    async fn deliver_event_raw(&self, event: Event, observation: ProgressObservation) {
         // Record the last known agent status.
         if let Some(status) = agent_status_from_event(&event.msg) {
             self.agent_status.send_replace(status);
+        }
+        if observation == ProgressObservation::Observe {
+            self.services
+                .agent_control
+                .record_progress_event(self.conversation_id, &event.msg);
         }
         if let Err(e) = self.tx_event.send(event).await {
             debug!("dropping event because channel is closed: {e}");
@@ -2498,12 +2512,15 @@ impl Session {
             );
             if let Some(rendered_skills) = rendered_skills {
                 if rendered_skills.emit_warning {
-                    self.send_event_raw(Event {
-                        id: String::new(),
-                        msg: EventMsg::Warning(WarningEvent {
-                            message: THREAD_START_SKILLS_TRIMMED_WARNING_MESSAGE.to_string(),
-                        }),
-                    })
+                    self.send_event_raw(
+                        Event {
+                            id: String::new(),
+                            msg: EventMsg::Warning(WarningEvent {
+                                message: THREAD_START_SKILLS_TRIMMED_WARNING_MESSAGE.to_string(),
+                            }),
+                        },
+                        ProgressObservation::Observe,
+                    )
                     .await;
                 }
                 runtime_sections.push(rendered_skills.text.clone());

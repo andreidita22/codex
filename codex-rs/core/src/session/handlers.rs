@@ -9,6 +9,7 @@ use tracing::Instrument;
 use tracing::debug_span;
 use tracing::info_span;
 
+use crate::session::ProgressObservation;
 use crate::session::SteerInputError;
 use crate::session::session::Session;
 use crate::session::session::SessionSettingsUpdate;
@@ -87,26 +88,32 @@ pub async fn clean_background_terminals(sess: &Arc<Session>) {
 }
 
 pub async fn realtime_conversation_list_voices(sess: &Session, sub_id: String) {
-    sess.send_event_raw(Event {
-        id: sub_id,
-        msg: EventMsg::RealtimeConversationListVoicesResponse(
-            RealtimeConversationListVoicesResponseEvent {
-                voices: RealtimeVoicesList::builtin(),
-            },
-        ),
-    })
+    sess.send_event_raw(
+        Event {
+            id: sub_id,
+            msg: EventMsg::RealtimeConversationListVoicesResponse(
+                RealtimeConversationListVoicesResponseEvent {
+                    voices: RealtimeVoicesList::builtin(),
+                },
+            ),
+        },
+        ProgressObservation::Observe,
+    )
     .await;
 }
 
 pub async fn override_turn_context(sess: &Session, sub_id: String, updates: SessionSettingsUpdate) {
     if let Err(err) = sess.update_settings(updates).await {
-        sess.send_event_raw(Event {
-            id: sub_id,
-            msg: EventMsg::Error(ErrorEvent {
-                message: err.to_string(),
-                codex_error_info: Some(CodexErrorInfo::BadRequest),
-            }),
-        })
+        sess.send_event_raw(
+            Event {
+                id: sub_id,
+                msg: EventMsg::Error(ErrorEvent {
+                    message: err.to_string(),
+                    codex_error_info: Some(CodexErrorInfo::BadRequest),
+                }),
+            },
+            ProgressObservation::Observe,
+        )
         .await;
     }
 }
@@ -223,10 +230,13 @@ pub(super) async fn user_input_or_turn_inner(
             Some(accepted_items)
         }
         Err(err) => {
-            sess.send_event_raw(Event {
-                id: sub_id,
-                msg: EventMsg::Error(err.to_error_event()),
-            })
+            sess.send_event_raw(
+                Event {
+                    id: sub_id,
+                    msg: EventMsg::Error(err.to_error_event()),
+                },
+                ProgressObservation::Observe,
+            )
             .await;
             None
         }
@@ -368,10 +378,13 @@ pub async fn exec_approval(
                 let message = format!("Failed to apply execpolicy amendment: {err}");
                 tracing::warn!("{message}");
                 let warning = EventMsg::Warning(WarningEvent { message });
-                sess.send_event_raw(Event {
-                    id: event_turn_id.clone(),
-                    msg: warning,
-                })
+                sess.send_event_raw(
+                    Event {
+                        id: event_turn_id.clone(),
+                        msg: warning,
+                    },
+                    ProgressObservation::Observe,
+                )
                 .await;
             }
         }
@@ -457,7 +470,9 @@ pub async fn get_history_entry_request(
             ),
         };
 
-        sess_clone.send_event_raw(event).await;
+        sess_clone
+            .send_event_raw(event, ProgressObservation::Observe)
+            .await;
     });
 }
 
@@ -487,7 +502,8 @@ pub async fn list_mcp_tools(sess: &Session, config: &Arc<Config>, sub_id: String
         id: sub_id,
         msg: EventMsg::McpListToolsResponse(snapshot),
     };
-    sess.send_event_raw(event).await;
+    sess.send_event_raw(event, ProgressObservation::Observe)
+        .await;
 }
 
 pub async fn list_skills(sess: &Session, sub_id: String, cwds: Vec<PathBuf>, force_reload: bool) {
@@ -580,7 +596,8 @@ pub async fn list_skills(sess: &Session, sub_id: String, cwds: Vec<PathBuf>, for
         id: sub_id,
         msg: EventMsg::ListSkillsResponse(ListSkillsResponseEvent { skills }),
     };
-    sess.send_event_raw(event).await;
+    sess.send_event_raw(event, ProgressObservation::Observe)
+        .await;
 }
 
 pub async fn undo(sess: &Arc<Session>, sub_id: String) {
@@ -644,26 +661,32 @@ pub async fn drop_memories(sess: &Arc<Session>, config: &Arc<Config>, sub_id: St
 
     if errors.is_empty() {
         let memory_root = crate::memories::memory_root(&config.codex_home);
-        sess.send_event_raw(Event {
-            id: sub_id,
-            msg: EventMsg::Warning(WarningEvent {
-                message: format!(
-                    "Dropped memories at {} and cleared memory rows from state db.",
-                    memory_root.display()
-                ),
-            }),
-        })
+        sess.send_event_raw(
+            Event {
+                id: sub_id,
+                msg: EventMsg::Warning(WarningEvent {
+                    message: format!(
+                        "Dropped memories at {} and cleared memory rows from state db.",
+                        memory_root.display()
+                    ),
+                }),
+            },
+            ProgressObservation::Observe,
+        )
         .await;
         return;
     }
 
-    sess.send_event_raw(Event {
-        id: sub_id,
-        msg: EventMsg::Error(ErrorEvent {
-            message: format!("Memory drop completed with errors: {}", errors.join("; ")),
-            codex_error_info: Some(CodexErrorInfo::Other),
-        }),
-    })
+    sess.send_event_raw(
+        Event {
+            id: sub_id,
+            msg: EventMsg::Error(ErrorEvent {
+                message: format!("Memory drop completed with errors: {}", errors.join("; ")),
+                codex_error_info: Some(CodexErrorInfo::Other),
+            }),
+        },
+        ProgressObservation::Observe,
+    )
     .await;
 }
 
@@ -675,37 +698,46 @@ pub async fn update_memories(sess: &Arc<Session>, config: &Arc<Config>, sub_id: 
 
     crate::memories::start_memories_startup_task(sess, Arc::clone(config), &session_source);
 
-    sess.send_event_raw(Event {
-        id: sub_id.clone(),
-        msg: EventMsg::Warning(WarningEvent {
-            message: "Memory update triggered.".to_string(),
-        }),
-    })
+    sess.send_event_raw(
+        Event {
+            id: sub_id.clone(),
+            msg: EventMsg::Warning(WarningEvent {
+                message: "Memory update triggered.".to_string(),
+            }),
+        },
+        ProgressObservation::Observe,
+    )
     .await;
 }
 
 pub async fn thread_rollback(sess: &Arc<Session>, sub_id: String, num_turns: u32) {
     if num_turns == 0 {
-        sess.send_event_raw(Event {
-            id: sub_id,
-            msg: EventMsg::Error(ErrorEvent {
-                message: "num_turns must be >= 1".to_string(),
-                codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
-            }),
-        })
+        sess.send_event_raw(
+            Event {
+                id: sub_id,
+                msg: EventMsg::Error(ErrorEvent {
+                    message: "num_turns must be >= 1".to_string(),
+                    codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
+                }),
+            },
+            ProgressObservation::Observe,
+        )
         .await;
         return;
     }
 
     let has_active_turn = { sess.active_turn.lock().await.is_some() };
     if has_active_turn {
-        sess.send_event_raw(Event {
-            id: sub_id,
-            msg: EventMsg::Error(ErrorEvent {
-                message: "Cannot rollback while a turn is in progress.".to_string(),
-                codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
-            }),
-        })
+        sess.send_event_raw(
+            Event {
+                id: sub_id,
+                msg: EventMsg::Error(ErrorEvent {
+                    message: "Cannot rollback while a turn is in progress.".to_string(),
+                    codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
+                }),
+            },
+            ProgressObservation::Observe,
+        )
         .await;
         return;
     }
@@ -717,13 +749,16 @@ pub async fn thread_rollback(sess: &Arc<Session>, sub_id: String, num_turns: u32
             guard.clone()
         };
         let Some(recorder) = recorder else {
-            sess.send_event_raw(Event {
-                id: turn_context.sub_id.clone(),
-                msg: EventMsg::Error(ErrorEvent {
-                    message: "thread rollback requires a persisted rollout path".to_string(),
-                    codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
-                }),
-            })
+            sess.send_event_raw(
+                Event {
+                    id: turn_context.sub_id.clone(),
+                    msg: EventMsg::Error(ErrorEvent {
+                        message: "thread rollback requires a persisted rollout path".to_string(),
+                        codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
+                    }),
+                },
+                ProgressObservation::Observe,
+            )
             .await;
             return;
         };
@@ -734,16 +769,19 @@ pub async fn thread_rollback(sess: &Arc<Session>, sub_id: String, num_turns: u32
         guard.clone()
     } && let Err(err) = recorder.flush().await
     {
-        sess.send_event_raw(Event {
-            id: turn_context.sub_id.clone(),
-            msg: EventMsg::Error(ErrorEvent {
-                message: format!(
-                    "failed to flush rollout `{}` for rollback replay: {err}",
-                    rollout_path.display()
-                ),
-                codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
-            }),
-        })
+        sess.send_event_raw(
+            Event {
+                id: turn_context.sub_id.clone(),
+                msg: EventMsg::Error(ErrorEvent {
+                    message: format!(
+                        "failed to flush rollout `{}` for rollback replay: {err}",
+                        rollout_path.display()
+                    ),
+                    codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
+                }),
+            },
+            ProgressObservation::Observe,
+        )
         .await;
         return;
     }
@@ -751,16 +789,19 @@ pub async fn thread_rollback(sess: &Arc<Session>, sub_id: String, num_turns: u32
     let initial_history = match RolloutRecorder::get_rollout_history(rollout_path.as_path()).await {
         Ok(history) => history,
         Err(err) => {
-            sess.send_event_raw(Event {
-                id: turn_context.sub_id.clone(),
-                msg: EventMsg::Error(ErrorEvent {
-                    message: format!(
-                        "failed to load rollout `{}` for rollback replay: {err}",
-                        rollout_path.display()
-                    ),
-                    codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
-                }),
-            })
+            sess.send_event_raw(
+                Event {
+                    id: turn_context.sub_id.clone(),
+                    msg: EventMsg::Error(ErrorEvent {
+                        message: format!(
+                            "failed to load rollout `{}` for rollback replay: {err}",
+                            rollout_path.display()
+                        ),
+                        codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
+                    }),
+                },
+                ProgressObservation::Observe,
+            )
             .await;
             return;
         }
@@ -791,10 +832,13 @@ pub async fn thread_rollback(sess: &Arc<Session>, sub_id: String, num_turns: u32
         .await;
     }
 
-    sess.deliver_event_raw(Event {
-        id: turn_context.sub_id.clone(),
-        msg: rollback_msg,
-    })
+    sess.deliver_event_raw(
+        Event {
+            id: turn_context.sub_id.clone(),
+            msg: rollback_msg,
+        },
+        ProgressObservation::Observe,
+    )
     .await;
 }
 
@@ -863,7 +907,8 @@ pub async fn set_thread_name(sess: &Arc<Session>, sub_id: String, name: String) 
                 codex_error_info: Some(CodexErrorInfo::BadRequest),
             }),
         };
-        sess.send_event_raw(event).await;
+        sess.send_event_raw(event, ProgressObservation::Observe)
+            .await;
         return;
     };
 
@@ -883,7 +928,8 @@ pub async fn set_thread_name(sess: &Arc<Session>, sub_id: String, name: String) 
                     codex_error_info: Some(CodexErrorInfo::Other),
                 }),
             };
-            sess.send_event_raw(event).await;
+            sess.send_event_raw(event, ProgressObservation::Observe)
+                .await;
             return;
         }
     };
@@ -908,7 +954,8 @@ pub async fn set_thread_name(sess: &Arc<Session>, sub_id: String, name: String) 
         warn!("Failed to update legacy thread name index: {err}");
     }
 
-    sess.deliver_event_raw(Event { id: sub_id, msg }).await;
+    sess.deliver_event_raw(Event { id: sub_id, msg }, ProgressObservation::Observe)
+        .await;
 }
 
 /// Persists thread-level memory mode metadata for the active session.
@@ -925,7 +972,8 @@ pub async fn set_thread_memory_mode(sess: &Arc<Session>, sub_id: String, mode: T
                 codex_error_info: Some(CodexErrorInfo::Other),
             }),
         };
-        sess.send_event_raw(event).await;
+        sess.send_event_raw(event, ProgressObservation::Observe)
+            .await;
     }
 }
 
@@ -967,14 +1015,16 @@ pub async fn shutdown(sess: &Arc<Session>, sub_id: String) -> bool {
                 codex_error_info: Some(CodexErrorInfo::Other),
             }),
         };
-        sess.send_event_raw(event).await;
+        sess.send_event_raw(event, ProgressObservation::Observe)
+            .await;
     }
 
     let event = Event {
         id: sub_id,
         msg: EventMsg::ShutdownComplete,
     };
-    sess.send_event_raw(event).await;
+    sess.send_event_raw(event, ProgressObservation::Observe)
+        .await;
     true
 }
 
@@ -1035,13 +1085,16 @@ pub(super) async fn submission_loop(
                     if let Err(err) =
                         handle_realtime_conversation_start(&sess, sub.id.clone(), params).await
                     {
-                        sess.send_event_raw(Event {
-                            id: sub.id.clone(),
-                            msg: EventMsg::Error(ErrorEvent {
-                                message: err.to_string(),
-                                codex_error_info: Some(CodexErrorInfo::Other),
-                            }),
-                        })
+                        sess.send_event_raw(
+                            Event {
+                                id: sub.id.clone(),
+                                msg: EventMsg::Error(ErrorEvent {
+                                    message: err.to_string(),
+                                    codex_error_info: Some(CodexErrorInfo::Other),
+                                }),
+                            },
+                            ProgressObservation::Observe,
+                        )
                         .await;
                     }
                     false

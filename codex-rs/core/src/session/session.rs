@@ -745,7 +745,8 @@ impl Session {
         })
         .chain(post_session_configured_events.into_iter());
         for event in events {
-            sess.send_event_raw(event).await;
+            sess.send_event_raw(event, ProgressObservation::Observe)
+                .await;
         }
 
         // Start the watcher after SessionConfigured so it cannot emit earlier events.

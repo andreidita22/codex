@@ -6,6 +6,7 @@ use crate::guardian::review_approval_request;
 use crate::guardian::routes_approval_to_guardian;
 use crate::hook_runtime::run_permission_request_hooks;
 use crate::network_policy_decision::denied_network_policy_message;
+use crate::session::ProgressObservation;
 use crate::session::session::Session;
 use crate::tools::sandboxing::PermissionRequestPayload;
 use crate::tools::sandboxing::ToolError;
@@ -482,10 +483,13 @@ impl NetworkApprovalService {
                                 format!("Failed to apply network policy amendment: {err}");
                             warn!("{message}");
                             session
-                                .send_event_raw(Event {
-                                    id: turn_context.sub_id.clone(),
-                                    msg: EventMsg::Warning(WarningEvent { message }),
-                                })
+                                .send_event_raw(
+                                    Event {
+                                        id: turn_context.sub_id.clone(),
+                                        msg: EventMsg::Warning(WarningEvent { message }),
+                                    },
+                                    ProgressObservation::Observe,
+                                )
                                 .await;
                         }
                     }
@@ -512,10 +516,13 @@ impl NetworkApprovalService {
                                 format!("Failed to apply network policy amendment: {err}");
                             warn!("{message}");
                             session
-                                .send_event_raw(Event {
-                                    id: turn_context.sub_id.clone(),
-                                    msg: EventMsg::Warning(WarningEvent { message }),
-                                })
+                                .send_event_raw(
+                                    Event {
+                                        id: turn_context.sub_id.clone(),
+                                        msg: EventMsg::Warning(WarningEvent { message }),
+                                    },
+                                    ProgressObservation::Observe,
+                                )
                                 .await;
                         }
                     }
