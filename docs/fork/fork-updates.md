@@ -42,9 +42,13 @@ is already correct.
   - authoritative fork branch
   - contains both upstream functionality already ingested and the fork-owned
     custom modules
-- `upstream-main`
+- `upstream-latest-release`
   - read-only local tracking branch for the latest upstream `rust-v*` release
-  - used for comparison and alignment, not as the base of the ingest branch
+  - this is the reference branch used for release ingest comparisons
+- `upstream-main`
+  - read-only local tracking branch for live upstream `main`
+  - used for fast inspection of incoming upstream work, not for release ingest
+  - do not use this branch as the comparison target for a versioned release
 - `codex/update-<version>-ingest`
   - temporary local-only branch created from current fork `main`
   - used to ingest the new upstream release into the fork baseline
@@ -65,25 +69,30 @@ That lets Git reuse repeated seam resolutions across future release ingests.
 
 ## Recommended release ingest workflow
 
-### 1. Update the upstream tracking branch
+### 1. Update the upstream tracking branches
 
-Fetch upstream tags and move `upstream-main` to the new release tag.
+Fetch upstream tags, move `upstream-latest-release` to the new release tag, and
+refresh `upstream-main` to live upstream `main`.
 
 ```sh
 git fetch upstream --tags --prune
-git branch -f upstream-main rust-v0.120.0
+git branch -f upstream-latest-release rust-v0.120.0
+git branch -f upstream-main upstream/main
 ```
 
 You can verify the result with:
 
 ```sh
+git rev-parse upstream-latest-release
+git log --oneline -1 upstream-latest-release
 git rev-parse upstream-main
 git log --oneline -1 upstream-main
 ```
 
 ### 2. Start the ingest branch from fork `main`
 
-Create the ingest branch from current fork `main`, not from `upstream-main`.
+Create the ingest branch from current fork `main`, not from
+`upstream-latest-release` or `upstream-main`.
 
 ```sh
 git switch main
@@ -109,20 +118,23 @@ not reconstructed later.
 
 ### 4. Compare the new upstream release against the fork
 
-Use `upstream-main` as the comparison target and identify shared seam files
-before touching code.
+Use `upstream-latest-release` as the comparison target and identify shared seam
+files before touching code.
 
 Typical commands:
 
 ```sh
-git diff --stat main..upstream-main
-git diff --name-only main..upstream-main
-git diff --name-only main...upstream-main
+git diff --stat main..upstream-latest-release
+git diff --name-only main..upstream-latest-release
+git diff --name-only main...upstream-latest-release
 ```
 
 The most important files are usually the shared seam files already tracked in
 [custom-fork-module-inventory.md](custom-fork-module-inventory.md) and prior
 entries in [release-alignment-log.md](release-alignment-log.md).
+
+Use `upstream-main` only as a separate inspection branch when you want to look
+ahead at live upstream work that is not yet part of the release ingest.
 
 At this stage, also run the watchlist review from
 [upstream-ingest-watchlist.md](upstream-ingest-watchlist.md):

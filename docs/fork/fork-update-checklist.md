@@ -7,20 +7,24 @@ see [fork-updates.md](fork-updates.md) and
 ## Canonical rule
 
 - Treat fork `main` as canonical.
-- Treat `upstream-main` as a read-only mirror of the latest upstream
-  `rust-v*` release.
+- Treat `upstream-latest-release` as the read-only mirror of the latest
+  upstream `rust-v*` release.
+- Treat `upstream-main` as a separate read-only mirror of live upstream `main`
+  for inspection only.
 - Start every release ingest branch from current fork `main`, never from
-  `upstream-main`.
+  `upstream-latest-release` or `upstream-main`.
 - Do not open a PR for the raw upstream-ingest branch.
 - Open PRs only for the later fork-alignment branch that contains our commits.
 
 ## Standard sequence
 
-### 1. Move the upstream mirror
+### 1. Move the upstream mirrors
 
 ```sh
 git fetch upstream --tags --prune
-git branch -f upstream-main rust-v0.120.0
+git branch -f upstream-latest-release rust-v0.120.0
+git branch -f upstream-main upstream/main
+git push origin upstream-latest-release:upstream-latest-release
 git push origin upstream-main:upstream-main
 ```
 
@@ -44,8 +48,8 @@ git switch -c codex/update-0.120-ingest
 ### 4. Compare fork vs upstream
 
 ```sh
-git diff --stat main..upstream-main
-git diff --name-only main...upstream-main
+git diff --stat main..upstream-latest-release
+git diff --name-only main...upstream-latest-release
 ```
 
 - Use [custom-fork-module-inventory.md](custom-fork-module-inventory.md) to
@@ -53,6 +57,8 @@ git diff --name-only main...upstream-main
 - Run the grep gates and enum review in
   [upstream-ingest-watchlist.md](upstream-ingest-watchlist.md).
 - Record likely bypass-path and ownership-regression risks in the release log.
+- Use `upstream-main` only when you want to inspect live upstream changes that
+  are not yet part of the tagged release.
 
 ### 5. Align into the ingest branch
 
