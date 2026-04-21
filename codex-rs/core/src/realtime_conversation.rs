@@ -1,6 +1,7 @@
 use crate::client::ModelClient;
 use crate::realtime_context::build_realtime_startup_context;
 use crate::realtime_prompt::prepare_realtime_backend_prompt;
+use crate::session::ProgressObservation;
 use crate::session::session::Session;
 use anyhow::Context;
 use async_channel::Receiver;
@@ -562,12 +563,17 @@ pub(crate) async fn handle_start(
         Err(err) => {
             error!("failed to prepare realtime conversation: {err}");
             let message = err.to_string();
-            sess.send_event_raw(Event {
-                id: sub_id,
-                msg: EventMsg::RealtimeConversationRealtime(RealtimeConversationRealtimeEvent {
-                    payload: RealtimeEvent::Error(message),
-                }),
-            })
+            sess.send_event_raw(
+                Event {
+                    id: sub_id,
+                    msg: EventMsg::RealtimeConversationRealtime(
+                        RealtimeConversationRealtimeEvent {
+                            payload: RealtimeEvent::Error(message),
+                        },
+                    ),
+                },
+                ProgressObservation::Observe,
+            )
             .await;
             return Ok(());
         }
@@ -576,12 +582,15 @@ pub(crate) async fn handle_start(
     if let Err(err) = handle_start_inner(sess, &sub_id, prepared_start).await {
         error!("failed to start realtime conversation: {err}");
         let message = err.to_string();
-        sess.send_event_raw(Event {
-            id: sub_id.clone(),
-            msg: EventMsg::RealtimeConversationRealtime(RealtimeConversationRealtimeEvent {
-                payload: RealtimeEvent::Error(message),
-            }),
-        })
+        sess.send_event_raw(
+            Event {
+                id: sub_id.clone(),
+                msg: EventMsg::RealtimeConversationRealtime(RealtimeConversationRealtimeEvent {
+                    payload: RealtimeEvent::Error(message),
+                }),
+            },
+            ProgressObservation::Observe,
+        )
         .await;
     }
     Ok(())
@@ -782,13 +791,16 @@ async fn handle_start_inner(
 
     info!("realtime conversation started");
 
-    sess.send_event_raw(Event {
-        id: sub_id.to_string(),
-        msg: EventMsg::RealtimeConversationStarted(RealtimeConversationStartedEvent {
-            session_id: requested_session_id,
-            version,
-        }),
-    })
+    sess.send_event_raw(
+        Event {
+            id: sub_id.to_string(),
+            msg: EventMsg::RealtimeConversationStarted(RealtimeConversationStartedEvent {
+                session_id: requested_session_id,
+                version,
+            }),
+        },
+        ProgressObservation::Observe,
+    )
     .await;
 
     let RealtimeStartOutput {
@@ -797,10 +809,13 @@ async fn handle_start_inner(
         sdp,
     } = start_output;
     if let Some(sdp) = sdp {
-        sess.send_event_raw(Event {
-            id: sub_id.to_string(),
-            msg: EventMsg::RealtimeConversationSdp(RealtimeConversationSdpEvent { sdp }),
-        })
+        sess.send_event_raw(
+            Event {
+                id: sub_id.to_string(),
+                msg: EventMsg::RealtimeConversationSdp(RealtimeConversationSdpEvent { sdp }),
+            },
+            ProgressObservation::Observe,
+        )
         .await;
     }
 
@@ -846,11 +861,14 @@ async fn handle_start_inner(
                 break;
             }
             sess_clone
-                .send_event_raw(ev(EventMsg::RealtimeConversationRealtime(
-                    RealtimeConversationRealtimeEvent {
-                        payload: event.clone(),
-                    },
-                )))
+                .send_event_raw(
+                    ev(EventMsg::RealtimeConversationRealtime(
+                        RealtimeConversationRealtimeEvent {
+                            payload: event.clone(),
+                        },
+                    )),
+                    ProgressObservation::Observe,
+                )
                 .await;
         }
         if fanout_realtime_active.swap(false, Ordering::Relaxed) {
@@ -1367,13 +1385,16 @@ async fn send_conversation_error(
     message: String,
     codex_error_info: CodexErrorInfo,
 ) {
-    sess.send_event_raw(Event {
-        id: sub_id,
-        msg: EventMsg::Error(ErrorEvent {
-            message,
-            codex_error_info: Some(codex_error_info),
-        }),
-    })
+    sess.send_event_raw(
+        Event {
+            id: sub_id,
+            msg: EventMsg::Error(ErrorEvent {
+                message,
+                codex_error_info: Some(codex_error_info),
+            }),
+        },
+        ProgressObservation::Observe,
+    )
     .await;
 }
 
@@ -1397,10 +1418,13 @@ async fn send_realtime_conversation_closed(
         RealtimeConversationEnd::Error => Some("error".to_string()),
     };
 
-    sess.send_event_raw(Event {
-        id: sub_id,
-        msg: EventMsg::RealtimeConversationClosed(RealtimeConversationClosedEvent { reason }),
-    })
+    sess.send_event_raw(
+        Event {
+            id: sub_id,
+            msg: EventMsg::RealtimeConversationClosed(RealtimeConversationClosedEvent { reason }),
+        },
+        ProgressObservation::Observe,
+    )
     .await;
 }
 

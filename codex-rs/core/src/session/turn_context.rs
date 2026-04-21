@@ -498,13 +498,16 @@ impl Session {
         ) = match update_result {
             Ok(update) => update,
             Err(err) => {
-                self.send_event_raw(Event {
-                    id: sub_id.clone(),
-                    msg: EventMsg::Error(ErrorEvent {
-                        message: err.to_string(),
-                        codex_error_info: Some(CodexErrorInfo::BadRequest),
-                    }),
-                })
+                self.send_event_raw(
+                    Event {
+                        id: sub_id.clone(),
+                        msg: EventMsg::Error(ErrorEvent {
+                            message: err.to_string(),
+                            codex_error_info: Some(CodexErrorInfo::BadRequest),
+                        }),
+                    },
+                    ProgressObservation::Observe,
+                )
                 .await;
                 return Err(err);
             }

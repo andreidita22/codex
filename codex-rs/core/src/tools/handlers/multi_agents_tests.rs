@@ -4,6 +4,7 @@ use crate::ThreadManager;
 use crate::config::AgentRoleConfig;
 use crate::config::DEFAULT_AGENT_MAX_DEPTH;
 use crate::function_tool::FunctionCallError;
+use crate::session::ProgressObservation;
 use crate::session::tests::make_session_and_context;
 use crate::session_prefix::format_subagent_notification_message;
 use crate::state::TaskKind;
@@ -27,19 +28,24 @@ use codex_model_provider::create_model_provider;
 use codex_model_provider_info::built_in_model_providers;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
+use codex_protocol::items::TurnItem;
+use codex_protocol::items::WebSearchItem;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::models::WebSearchAction;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AgentReasoningEvent;
 use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::FileSystemSandboxPolicy;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::InterAgentCommunication;
+use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::NetworkSandboxPolicy;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::RolloutItem;
@@ -49,6 +55,8 @@ use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnCompleteEvent;
+use codex_protocol::protocol::TurnStartedEvent;
+use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
 use core_test_support::TempDirExt;
 use pretty_assertions::assert_eq;
@@ -93,6 +101,22 @@ fn thread_manager() -> ThreadManager {
         CodexAuth::from_api_key("dummy"),
         built_in_model_providers(/* openai_base_url */ /*openai_base_url*/ None)["openai"].clone(),
     )
+}
+
+async fn manager_backed_session_and_turn() -> (
+    Arc<crate::session::session::Session>,
+    Arc<TurnContext>,
+    ThreadManager,
+) {
+    let (_session, turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    let session: Arc<crate::session::session::Session> = Arc::clone(&root.thread.codex.session);
+    let turn = session.new_default_turn().await;
+    (session, turn, manager)
 }
 
 async fn install_role_with_model_override(turn: &mut TurnContext) -> String {
@@ -1486,6 +1510,200 @@ async fn wait_for_agent_progress_returns_on_material_progress() {
     assert_eq!(result["ever_reported_progress"], json!(true));
     assert_eq!(result["seq"], json!(1));
     assert_eq!(success, Some(true));
+}
+
+#[tokio::test]
+async fn session_send_event_observes_primary_item_started_once_with_legacy_echoes() {
+    let (session, turn, _manager) = manager_backed_session_and_turn().await;
+    let mut progress_seq_rx = session
+        .services
+        .agent_control
+        .subscribe_progress_seq(session.conversation_id)
+        .await
+        .expect("progress seq subscription should succeed");
+
+    session
+        .send_event(
+            turn.as_ref(),
+            EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: turn.sub_id.clone(),
+                started_at: None,
+                model_context_window: Some(256_000),
+                collaboration_mode_kind: Default::default(),
+            }),
+        )
+        .await;
+
+    session
+        .send_event(
+            turn.as_ref(),
+            EventMsg::ItemStarted(ItemStartedEvent {
+                thread_id: session.conversation_id,
+                turn_id: turn.sub_id.clone(),
+                item: TurnItem::WebSearch(WebSearchItem {
+                    id: "search-1".to_string(),
+                    query: "find docs".to_string(),
+                    action: WebSearchAction::Search {
+                        query: Some("find docs".to_string()),
+                        queries: None,
+                    },
+                }),
+            }),
+        )
+        .await;
+
+    timeout(Duration::from_secs(1), progress_seq_rx.changed())
+        .await
+        .expect("primary event should advance the progress seq")
+        .expect("progress receiver should remain open");
+    assert_eq!(*progress_seq_rx.borrow(), 1);
+    assert!(
+        timeout(Duration::from_millis(50), progress_seq_rx.changed())
+            .await
+            .is_err()
+    );
+
+    let snapshot = session
+        .services
+        .agent_control
+        .inspect_agent_progress(session.conversation_id, Duration::from_millis(100))
+        .await;
+    assert_eq!(
+        snapshot.phase,
+        codex_agent_observability::AgentProgressPhase::ToolCall
+    );
+    assert_eq!(snapshot.seq, 1);
+    assert_eq!(
+        snapshot.active_work,
+        Some(codex_agent_observability::AgentActiveWork {
+            kind: codex_agent_observability::AgentActiveWorkKind::Tool,
+            label: "web_search".to_string(),
+        })
+    );
+}
+
+#[tokio::test]
+async fn observed_raw_error_updates_terminal_progress_state() {
+    let (session, _turn, _manager) = manager_backed_session_and_turn().await;
+    let mut progress_seq_rx = session
+        .services
+        .agent_control
+        .subscribe_progress_seq(session.conversation_id)
+        .await
+        .expect("progress seq subscription should succeed");
+
+    session
+        .send_event_raw(
+            codex_protocol::protocol::Event {
+                id: "raw-error".to_string(),
+                msg: EventMsg::Error(ErrorEvent {
+                    message: "boom".to_string(),
+                    codex_error_info: Some(codex_protocol::protocol::CodexErrorInfo::Other),
+                }),
+            },
+            ProgressObservation::Observe,
+        )
+        .await;
+
+    timeout(Duration::from_secs(1), progress_seq_rx.changed())
+        .await
+        .expect("raw error should advance progress seq")
+        .expect("progress receiver should remain open");
+    assert_eq!(*progress_seq_rx.borrow(), 1);
+
+    let snapshot = session
+        .services
+        .agent_control
+        .inspect_agent_progress(session.conversation_id, Duration::from_millis(100))
+        .await;
+    assert_eq!(
+        snapshot.phase,
+        codex_agent_observability::AgentProgressPhase::Errored
+    );
+    assert_eq!(
+        snapshot.lifecycle_status,
+        AgentStatus::Errored("boom".to_string())
+    );
+    assert_eq!(snapshot.error_message.as_deref(), Some("boom"));
+}
+
+#[tokio::test]
+async fn observed_raw_shutdown_complete_updates_terminal_progress_state() {
+    let (session, _turn, _manager) = manager_backed_session_and_turn().await;
+    let mut progress_seq_rx = session
+        .services
+        .agent_control
+        .subscribe_progress_seq(session.conversation_id)
+        .await
+        .expect("progress seq subscription should succeed");
+
+    session
+        .send_event_raw(
+            codex_protocol::protocol::Event {
+                id: "raw-shutdown".to_string(),
+                msg: EventMsg::ShutdownComplete,
+            },
+            ProgressObservation::Observe,
+        )
+        .await;
+
+    timeout(Duration::from_secs(1), progress_seq_rx.changed())
+        .await
+        .expect("shutdown complete should advance progress seq")
+        .expect("progress receiver should remain open");
+    assert_eq!(*progress_seq_rx.borrow(), 1);
+
+    let snapshot = session
+        .services
+        .agent_control
+        .inspect_agent_progress(session.conversation_id, Duration::from_millis(100))
+        .await;
+    assert_eq!(
+        snapshot.phase,
+        codex_agent_observability::AgentProgressPhase::Shutdown
+    );
+    assert_eq!(snapshot.lifecycle_status, AgentStatus::Shutdown);
+}
+
+#[tokio::test]
+async fn observed_raw_warning_preserves_progress_seq() {
+    let (session, _turn, _manager) = manager_backed_session_and_turn().await;
+    let mut progress_seq_rx = session
+        .services
+        .agent_control
+        .subscribe_progress_seq(session.conversation_id)
+        .await
+        .expect("progress seq subscription should succeed");
+
+    session
+        .send_event_raw(
+            codex_protocol::protocol::Event {
+                id: "raw-warning".to_string(),
+                msg: EventMsg::Warning(WarningEvent {
+                    message: "heads up".to_string(),
+                }),
+            },
+            ProgressObservation::Observe,
+        )
+        .await;
+
+    assert!(
+        timeout(Duration::from_millis(50), progress_seq_rx.changed())
+            .await
+            .is_err()
+    );
+    assert_eq!(*progress_seq_rx.borrow(), 0);
+
+    let snapshot = session
+        .services
+        .agent_control
+        .inspect_agent_progress(session.conversation_id, Duration::from_millis(100))
+        .await;
+    assert_eq!(snapshot.seq, 0);
+    assert_eq!(
+        snapshot.recent_updates,
+        vec!["warning: heads up".to_string()]
+    );
 }
 
 #[tokio::test]
