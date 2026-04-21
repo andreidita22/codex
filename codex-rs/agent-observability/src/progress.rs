@@ -766,30 +766,29 @@ fn record_agent_message_completed(
         return;
     }
 
-    let already_tracking_message = matches!(
+    let preview = truncate_preview(&text);
+    let continuing_same_message = matches!(
         state.snapshot.active_work.as_ref(),
         Some(AgentActiveWork {
             kind: AgentActiveWorkKind::Message,
             ..
         })
-    );
+    ) && state.snapshot.latest_visible_message.as_deref()
+        == Some(preview.as_str());
 
     state.snapshot.phase = AgentProgressPhase::MessageDrafting;
     state.snapshot.blocked_on = None;
-    state.snapshot.latest_visible_message = Some(truncate_preview(&text));
+    state.snapshot.latest_visible_message = Some(preview.clone());
     set_active_work(
         &mut state.snapshot,
         AgentActiveWorkKind::Message,
-        truncate_preview(&text),
+        preview.clone(),
     );
-    push_update(
-        &mut state.snapshot,
-        format!("drafting response: {}", truncate_preview(&text)),
-    );
+    push_update(&mut state.snapshot, format!("drafting response: {preview}"));
     note_progress_event(
         state,
         now,
-        if already_tracking_message {
+        if continuing_same_message {
             ProgressEventKind::Heartbeat
         } else {
             ProgressEventKind::Milestone
@@ -807,6 +806,7 @@ fn record_reasoning_completed(
         return;
     }
 
+    let preview = truncate_preview(&text);
     let already_tracking_reasoning = matches!(
         state.snapshot.active_work.as_ref(),
         Some(AgentActiveWork {
@@ -820,12 +820,9 @@ fn record_reasoning_completed(
     set_active_work(
         &mut state.snapshot,
         AgentActiveWorkKind::Reasoning,
-        truncate_preview(&text),
+        preview.clone(),
     );
-    push_update(
-        &mut state.snapshot,
-        format!("reasoning: {}", truncate_preview(&text)),
-    );
+    push_update(&mut state.snapshot, format!("reasoning: {preview}"));
     note_progress_event(
         state,
         now,
@@ -1429,7 +1426,7 @@ mod tests {
     }
 
     #[test]
-    fn item_completed_agent_message_normalizes_chunks_without_extra_milestone() {
+    fn item_completed_agent_message_with_new_visible_text_counts_as_progress() {
         let registry = ProgressRegistry::default();
         let thread_id = thread_id();
         registry.seed(thread_id);
@@ -1469,7 +1466,7 @@ mod tests {
 
         let snapshot = registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
         assert_eq!(snapshot.phase, AgentProgressPhase::MessageDrafting);
-        assert_eq!(snapshot.seq, 1);
+        assert_eq!(snapshot.seq, 2);
         assert_eq!(snapshot.final_message, None);
         assert_eq!(
             snapshot.latest_visible_message,
@@ -1481,6 +1478,56 @@ mod tests {
                 kind: AgentActiveWorkKind::Message,
                 label: "hello world".to_string(),
             })
+        );
+    }
+
+    #[test]
+    fn distinct_completed_message_items_each_count_as_material_progress() {
+        let registry = ProgressRegistry::default();
+        let thread_id = thread_id();
+        registry.seed(thread_id);
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id,
+                turn_id: "turn-1".to_string(),
+                item: TurnItem::AgentMessage(AgentMessageItem {
+                    id: "message-1".to_string(),
+                    content: vec![AgentMessageContent::Text {
+                        text: "commentary".to_string(),
+                    }],
+                    phase: None,
+                    memory_citation: None,
+                }),
+            }),
+        );
+
+        let first = registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
+        assert_eq!(first.seq, 1);
+        assert_eq!(first.latest_visible_message, Some("commentary".to_string()));
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id,
+                turn_id: "turn-1".to_string(),
+                item: TurnItem::AgentMessage(AgentMessageItem {
+                    id: "message-2".to_string(),
+                    content: vec![AgentMessageContent::Text {
+                        text: "final answer".to_string(),
+                    }],
+                    phase: None,
+                    memory_citation: None,
+                }),
+            }),
+        );
+
+        let second = registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
+        assert_eq!(second.seq, 2);
+        assert_eq!(
+            second.latest_visible_message,
+            Some("final answer".to_string())
         );
     }
 
