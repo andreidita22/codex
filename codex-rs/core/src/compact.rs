@@ -620,12 +620,12 @@ pub(crate) fn assemble_local_compacted_replacement_history(
         is_raw_conversation_message,
     )
     .items;
-    let ghost_snapshots: Vec<ResponseItem> = history_items
-        .iter()
-        .filter(|item| matches!(item, ResponseItem::GhostSnapshot { .. }))
-        .cloned()
-        .collect();
-    new_history.extend(ghost_snapshots);
+    new_history.extend(
+        history_items
+            .iter()
+            .filter(|item| matches!(item, ResponseItem::GhostSnapshot { .. }))
+            .cloned(),
+    );
     new_history
 }
 
