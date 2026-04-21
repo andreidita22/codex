@@ -1,10 +1,14 @@
 use super::*;
+use crate::config::GovernancePathVariant;
 use crate::content_items_to_text;
+use crate::context_maintenance_runtime::CompactInvocationTiming;
 use crate::context_maintenance_runtime::compaction_engine;
+use crate::context_maintenance_runtime::live_compact_route_behavior_for_tests;
 use codex_context_maintenance_policy::HistoryDispositionPolicy;
 use codex_context_maintenance_policy::RemoteCompactedHistoryKeepPolicy;
 use codex_context_maintenance_policy::RetentionDirective;
 use codex_context_maintenance_policy::SummaryDispositionPolicy;
+use codex_git_utils::GhostCommit;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 
@@ -391,6 +395,200 @@ fn build_token_limited_compacted_history_appends_summary_message() {
         other => panic!("expected summary message, found {other:?}"),
     };
     assert_eq!(summary, summary_text);
+}
+
+fn developer_message(text: &str) -> ResponseItem {
+    ResponseItem::Message {
+        id: None,
+        role: "developer".to_string(),
+        content: vec![ContentItem::InputText {
+            text: text.to_string(),
+        }],
+        end_turn: None,
+        phase: None,
+    }
+}
+
+fn user_message(text: &str) -> ResponseItem {
+    ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: text.to_string(),
+        }],
+        end_turn: None,
+        phase: None,
+    }
+}
+
+fn assistant_message(text: &str) -> ResponseItem {
+    ResponseItem::Message {
+        id: None,
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText {
+            text: text.to_string(),
+        }],
+        end_turn: None,
+        phase: None,
+    }
+}
+
+fn summary_message(text: &str) -> String {
+    format!("{SUMMARY_PREFIX}\n{text}")
+}
+
+#[test]
+fn local_intra_turn_compact_drops_prior_bridge_by_construction() {
+    let runtime_plan = live_compact_route_behavior_for_tests(
+        CompactionEngine::LocalPure,
+        GovernancePathVariant::StrictV1Shadow,
+        CompactInvocationTiming::IntraTurn,
+    );
+    let raw_history = vec![
+        user_message("older user"),
+        assistant_message("older assistant"),
+        developer_message("<continuation_bridge>old-bridge</continuation_bridge>"),
+        ResponseItem::Compaction {
+            encrypted_content: "encrypted".to_string(),
+        },
+        ResponseItem::GhostSnapshot {
+            ghost_commit: GhostCommit::new(
+                "ghost-1".to_string(),
+                /*parent*/ None,
+                Vec::new(),
+                Vec::new(),
+            ),
+        },
+    ];
+    let user_messages = collect_user_messages(&raw_history);
+    let new_bridge = developer_message("<continuation_bridge>new-bridge</continuation_bridge>");
+    let summary_text = summary_message("new summary");
+
+    let replacement_history = assemble_local_compacted_replacement_history(
+        &raw_history,
+        &user_messages,
+        &summary_text,
+        Some(vec![developer_message("fresh initial context")]),
+        vec![new_bridge],
+        runtime_plan.context_injection_placement(),
+        runtime_plan.retention_directive(),
+    );
+
+    let replacement_texts: Vec<_> = replacement_history
+        .iter()
+        .filter_map(|item| match item {
+            ResponseItem::Message { content, .. } => content_items_to_text(content),
+            _ => None,
+        })
+        .collect();
+    let summary_index = replacement_texts
+        .iter()
+        .position(|text| text == &summary_text)
+        .expect("summary should be present");
+    let new_bridge_index = replacement_texts
+        .iter()
+        .position(|text| text.contains("new-bridge"))
+        .expect("new bridge should be present");
+    let initial_context_index = replacement_texts
+        .iter()
+        .position(|text| text == "fresh initial context")
+        .expect("initial context should be present");
+    let latest_user_index = replacement_texts
+        .iter()
+        .position(|text| text == "older user")
+        .expect("user message should be preserved");
+
+    assert!(
+        !replacement_texts
+            .iter()
+            .any(|text| text.contains("old-bridge")),
+        "prior continuation bridge should be dropped"
+    );
+    assert!(
+        !replacement_history
+            .iter()
+            .any(|item| matches!(item, ResponseItem::Compaction { .. })),
+        "local compact should strip legacy compaction markers"
+    );
+    assert!(new_bridge_index < summary_index);
+    assert!(initial_context_index < latest_user_index);
+    assert!(matches!(
+        replacement_history.last(),
+        Some(ResponseItem::GhostSnapshot { .. })
+    ));
+}
+
+#[test]
+fn local_turn_boundary_compact_drops_prior_memory_and_bridge_by_construction() {
+    let runtime_plan = live_compact_route_behavior_for_tests(
+        CompactionEngine::LocalPure,
+        GovernancePathVariant::StrictV1Shadow,
+        CompactInvocationTiming::TurnBoundary,
+    );
+    let raw_history = vec![
+        user_message("older user"),
+        assistant_message("older assistant"),
+        developer_message("<thread_memory>old-memory</thread_memory>"),
+        developer_message("<continuation_bridge>old-bridge</continuation_bridge>"),
+        ResponseItem::Compaction {
+            encrypted_content: "encrypted".to_string(),
+        },
+    ];
+    let user_messages = collect_user_messages(&raw_history);
+    let new_memory = developer_message("<thread_memory>new-memory</thread_memory>");
+    let summary_text = summary_message("turn boundary summary");
+
+    let replacement_history = assemble_local_compacted_replacement_history(
+        &raw_history,
+        &user_messages,
+        &summary_text,
+        None,
+        vec![new_memory],
+        runtime_plan.context_injection_placement(),
+        runtime_plan.retention_directive(),
+    );
+
+    let replacement_texts: Vec<_> = replacement_history
+        .iter()
+        .filter_map(|item| match item {
+            ResponseItem::Message { content, .. } => content_items_to_text(content),
+            _ => None,
+        })
+        .collect();
+    let summary_index = replacement_texts
+        .iter()
+        .position(|text| text == &summary_text)
+        .expect("summary should be present");
+    let new_memory_index = replacement_texts
+        .iter()
+        .position(|text| text.contains("new-memory"))
+        .expect("new thread memory should be present");
+
+    assert!(
+        !replacement_texts
+            .iter()
+            .any(|text| text.contains("old-memory")),
+        "prior thread memory should be dropped"
+    );
+    assert!(
+        !replacement_texts
+            .iter()
+            .any(|text| text.contains("old-bridge")),
+        "prior continuation bridge should be dropped"
+    );
+    assert!(
+        !replacement_texts
+            .iter()
+            .any(|text| text == "fresh initial context"),
+        "turn-boundary compact should not inject initial context"
+    );
+    assert!(
+        !replacement_history
+            .iter()
+            .any(|item| matches!(item, ResponseItem::Compaction { .. })),
+        "local compact should strip legacy compaction markers"
+    );
+    assert!(new_memory_index < summary_index);
 }
 
 #[tokio::test]

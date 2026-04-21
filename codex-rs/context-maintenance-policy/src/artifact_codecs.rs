@@ -183,26 +183,9 @@ pub fn build_prune_manifest_item(
     })
 }
 
-/// Applies history disposition policies that do not require compaction-summary
-/// classification.
-///
-/// Callers that use [`SummaryDispositionPolicy::KeepLatestCompactionSummary`]
-/// must instead use [`apply_history_disposition_with_summary_classifier`] so
-/// the policy crate can identify summary messages correctly.
-pub fn apply_history_disposition(request: HistoryDispositionRequest) -> HistoryDispositionResult {
-    debug_assert!(
-        !matches!(
-            request.policy.summary_disposition,
-            SummaryDispositionPolicy::KeepLatestCompactionSummary
-        ),
-        "KeepLatestCompactionSummary requires apply_history_disposition_with_summary_classifier"
-    );
-    apply_history_disposition_with_summary_classifier(request, |_| false)
-}
-
 /// Applies history disposition policies, including summary disposition when the
 /// caller provides a compaction-summary classifier.
-pub fn apply_history_disposition_with_summary_classifier<F>(
+pub fn apply_history_disposition<F>(
     request: HistoryDispositionRequest,
     is_compaction_summary_message: F,
 ) -> HistoryDispositionResult
@@ -261,6 +244,20 @@ where
     }
 }
 
+#[cfg(test)]
+fn apply_history_disposition_without_summary_retention(
+    request: HistoryDispositionRequest,
+) -> HistoryDispositionResult {
+    debug_assert!(
+        !matches!(
+            request.policy.summary_disposition,
+            SummaryDispositionPolicy::KeepLatestCompactionSummary
+        ),
+        "KeepLatestCompactionSummary requires apply_history_disposition with a classifier"
+    );
+    apply_history_disposition(request, |_| false)
+}
+
 fn keep_latest_compaction_summary<F>(
     items: Vec<ResponseItem>,
     is_compaction_summary_message: F,
@@ -302,7 +299,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::apply_history_disposition;
-    use super::apply_history_disposition_with_summary_classifier;
+    use super::apply_history_disposition_without_summary_retention;
     use super::build_prune_manifest_item;
     use super::extract_tagged_payload;
     use super::has_tagged_block;
@@ -479,23 +476,24 @@ mod tests {
 
     #[test]
     fn apply_history_disposition_prunes_drops_and_strips_markers() {
-        let result = apply_history_disposition(HistoryDispositionRequest {
-            items: vec![
-                developer_message("<thread_memory>old</thread_memory>"),
-                developer_message("<thread_memory>new</thread_memory>"),
-                developer_message("<prune_manifest>old</prune_manifest>"),
-                ResponseItem::Compaction {
-                    encrypted_content: "encrypted".to_string(),
+        let result =
+            apply_history_disposition_without_summary_retention(HistoryDispositionRequest {
+                items: vec![
+                    developer_message("<thread_memory>old</thread_memory>"),
+                    developer_message("<thread_memory>new</thread_memory>"),
+                    developer_message("<prune_manifest>old</prune_manifest>"),
+                    ResponseItem::Compaction {
+                        encrypted_content: "encrypted".to_string(),
+                    },
+                ],
+                policy: HistoryDispositionPolicy {
+                    prune_superseded_artifacts: true,
+                    summary_disposition: SummaryDispositionPolicy::KeepAll,
+                    remote_keep_policy: RemoteCompactedHistoryKeepPolicy::KeepAll,
+                    drop_prior_artifact_kinds: vec![ArtifactKind::PruneManifest],
+                    legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
                 },
-            ],
-            policy: HistoryDispositionPolicy {
-                prune_superseded_artifacts: true,
-                summary_disposition: SummaryDispositionPolicy::KeepAll,
-                remote_keep_policy: RemoteCompactedHistoryKeepPolicy::KeepAll,
-                drop_prior_artifact_kinds: vec![ArtifactKind::PruneManifest],
-                legacy_compaction_marker_policy: LegacyCompactionMarkerPolicy::Strip,
-            },
-        });
+            });
 
         assert_eq!(
             result,
@@ -512,17 +510,18 @@ mod tests {
             encrypted_content: "encrypted".to_string(),
         };
 
-        let result = apply_history_disposition(HistoryDispositionRequest {
-            items: vec![marker.clone()],
-            policy: HistoryDispositionPolicy {
-                prune_superseded_artifacts: false,
-                summary_disposition: SummaryDispositionPolicy::KeepAll,
-                remote_keep_policy: RemoteCompactedHistoryKeepPolicy::KeepAll,
-                drop_prior_artifact_kinds: vec![],
-                legacy_compaction_marker_policy:
-                    LegacyCompactionMarkerPolicy::PreserveForUpstreamCompatibility,
-            },
-        });
+        let result =
+            apply_history_disposition_without_summary_retention(HistoryDispositionRequest {
+                items: vec![marker.clone()],
+                policy: HistoryDispositionPolicy {
+                    prune_superseded_artifacts: false,
+                    summary_disposition: SummaryDispositionPolicy::KeepAll,
+                    remote_keep_policy: RemoteCompactedHistoryKeepPolicy::KeepAll,
+                    drop_prior_artifact_kinds: vec![],
+                    legacy_compaction_marker_policy:
+                        LegacyCompactionMarkerPolicy::PreserveForUpstreamCompatibility,
+                },
+            });
 
         assert_eq!(
             result,
@@ -535,7 +534,7 @@ mod tests {
 
     #[test]
     fn apply_history_disposition_keeps_only_latest_compaction_summary_when_requested() {
-        let result = apply_history_disposition_with_summary_classifier(
+        let result = apply_history_disposition(
             HistoryDispositionRequest {
                 items: vec![
                     summary_message("older summary"),

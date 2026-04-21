@@ -7,7 +7,6 @@ mod route_matrix;
 mod thread_memory;
 
 pub use artifact_codecs::apply_history_disposition;
-pub use artifact_codecs::apply_history_disposition_with_summary_classifier;
 pub use artifact_codecs::build_prune_manifest_item;
 pub use continuation_bridge::BridgeVariant;
 pub use continuation_bridge::ContinuationBridgeModelInput;
