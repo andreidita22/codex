@@ -4,6 +4,9 @@ This is the family-level implementation spec for the E-witness / sub-agent obser
 
 The worked-example reference pattern is the context-maintenance extraction/hardening family.
 
+Post-`0.122` follow-up work is tracked separately in
+[agent-observability-122-followup-implementation-spec.md](/home/rose/work/codex/fork/docs/fork/agent-observability-122-followup-implementation-spec.md).
+
 ## Family Invariant
 
 Observability law should be owned by one semantic module.

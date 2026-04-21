@@ -19,7 +19,7 @@ governance semantics.
 
 - [compaction-policy-post-pr6-followup-spec.md](/home/rose/work/codex/fork/docs/fork/compaction-policy-post-pr6-followup-spec.md)
 - [compaction-policy-thread-memory-current-semantics.md](/home/rose/work/codex/fork/docs/fork/compaction-policy-thread-memory-current-semantics.md)
-- [gptpro 4th audit.md](/home/rose/work/codex/fork/docs/fork/gptpro%204th%20audit.md)
+- [gptpro-audit-04-custom-modules-and-watchplan.md](/home/rose/work/codex/fork/docs/fork/gptpro-audit-04-custom-modules-and-watchplan.md)
 
 ## Executive Read
 

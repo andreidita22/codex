@@ -17,7 +17,7 @@ This spec is the implementation companion to:
 - [docs/compaction-policy-post-pr6-followup-spec.md](compaction-policy-post-pr6-followup-spec.md)
 - [docs/compaction-policy-crate-extraction-plan.md](compaction-policy-crate-extraction-plan.md)
 - [docs/compaction-policy-route-matrix.md](compaction-policy-route-matrix.md)
-- [docs/compaction policy gptpro audit.md](compaction%20policy%20gptpro%20audit.md)
+- [docs/gptpro-audit-01-compaction-policy-initial.md](gptpro-audit-01-compaction-policy-initial.md)
 
 ## Interpretation
 

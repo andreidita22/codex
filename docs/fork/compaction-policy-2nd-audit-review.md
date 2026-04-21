@@ -4,7 +4,7 @@
 
 This document records the review of:
 
-- [docs/gptpro 2nd audit.md](gptpro%202nd%20audit.md)
+- [docs/gptpro-audit-02-compaction-policy-followup.md](gptpro-audit-02-compaction-policy-followup.md)
 
 It exists so future work does not need to reconstruct which findings were
 accepted, which were deferred, and why.

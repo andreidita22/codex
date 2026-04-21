@@ -4,6 +4,10 @@ This plan takes the accepted E-witness findings from [agent-observability-3rd-au
 
 This is the next extraction family after context-maintenance.
 
+For the narrow post-`0.122` adapter/regression follow-up after this family
+landed, see
+[agent-observability-122-followup-implementation-spec.md](/home/rose/work/codex/fork/docs/fork/agent-observability-122-followup-implementation-spec.md).
+
 ## Scope
 
 In scope:

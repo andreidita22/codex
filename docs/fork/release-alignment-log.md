@@ -214,6 +214,14 @@ Highest-risk themes before ingest:
   sweep before the ingest can be called complete, but the concrete
   `PatchApplyUpdated`, `ToolCallInputDelta`, `MemoryConsolidation`, and
   `InputImage.detail` deltas are already aligned
+- upstream `tui/src/chatwidget/slash_dispatch.rs` in `0.122` now has a queued
+  slash-command edge case for commands without inline args: if queued input
+  includes trailing text while a task is already running, the queued path can
+  submit the raw command text to the model instead of dispatching the slash
+  command. This is not fork-specific, but it is relevant to our restored
+  `/refresh` and `/prune` flows because they use the same dispatcher. Treat it
+  as an upstream behavior watchpoint on later updates unless it starts blocking
+  fork workflows directly.
 
 ### Post-prep follow-up decisions already landed on the ingest branch
 

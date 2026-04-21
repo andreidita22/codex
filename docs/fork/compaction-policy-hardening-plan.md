@@ -20,7 +20,7 @@ This is a follow-up to:
 - [docs/compaction-policy-2nd-audit-review.md](compaction-policy-2nd-audit-review.md)
 - [docs/compaction-policy-post-pr6-followup-spec.md](compaction-policy-post-pr6-followup-spec.md)
 - [docs/compaction-policy-route-matrix.md](compaction-policy-route-matrix.md)
-- [docs/compaction policy gptpro audit.md](compaction%20policy%20gptpro%20audit.md)
+- [docs/gptpro-audit-01-compaction-policy-initial.md](gptpro-audit-01-compaction-policy-initial.md)
 
 ## Executive Read
 

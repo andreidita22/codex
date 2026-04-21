@@ -483,6 +483,27 @@ Key question:
 
 > Did core reintroduce hardcoded progress tool names or schema doctrine?
 
+### 10. TUI slash dispatch and queued-command semantics
+
+Watch:
+
+- `tui/src/chatwidget/slash_dispatch.rs`
+- `tui/src/slash_command.rs`
+- `tui/src/chatwidget/tests/slash_commands.rs`
+
+Why it matters:
+
+- upstream can change queued slash-command handling independently of live input
+- commands that do not support inline args must still preserve the same
+  fallback semantics when queued during an active task
+- this affects generic upstream slash commands and fork-restored slash flows
+  such as `/refresh` and `/prune`
+
+Key question:
+
+> Do queued slash commands still behave the same as live slash commands,
+> especially for commands without inline args or commands restored by the fork?
+
 ## New bypass-path review
 
 For each upstream release, explicitly ask:
@@ -501,6 +522,8 @@ Agent observability:
 - Is there a new agent lifecycle path that skips seed or remove?
 - Is there a new session/source type that bypasses `AgentToolSurfacePolicy`?
 - Is there a new progress-visible event ignored by the reducer?
+- Did upstream change queued slash-command handling in a way that leaks command
+  text to the model instead of dispatching the intended UI or tool action?
 
 ## Ownership regression checks
 
