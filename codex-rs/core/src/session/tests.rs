@@ -5482,6 +5482,13 @@ async fn build_initial_context_includes_governance_layering_in_strict_mode() {
             .any(|text| text.contains("\"path_variant\": \"strict_v1_shadow\"")),
         "expected strict mode variant in prompt layering payload, got {developer_texts:?}"
     );
+    let user_texts = user_input_texts(&initial_context);
+    assert!(
+        !user_texts
+            .iter()
+            .any(|text| text.contains("<governance_prompt_layers")),
+        "governance layering should stay developer-side, got user texts {user_texts:?}"
+    );
 }
 
 #[tokio::test]
@@ -5552,6 +5559,13 @@ async fn build_settings_update_items_includes_governance_layering_in_strict_mode
             .iter()
             .any(|text| text.contains("\"phase\": \"settings_update\"")),
         "expected settings update phase in prompt layering payload, got {developer_texts:?}"
+    );
+    let user_texts = user_input_texts(&update_items);
+    assert!(
+        !user_texts
+            .iter()
+            .any(|text| text.contains("<governance_prompt_layers")),
+        "governance layering should stay developer-side, got user texts {user_texts:?}"
     );
     let payload = governance_prompt_layers_payload(&update_items)
         .expect("expected governance prompt-layer payload");
