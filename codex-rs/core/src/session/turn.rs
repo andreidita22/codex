@@ -37,6 +37,7 @@ use crate::mentions::collect_tool_mentions_from_messages;
 use crate::parse_turn_item;
 use crate::plugins::build_plugin_injections;
 use crate::resolve_skill_dependencies_for_turn;
+use crate::semantic_broker_runtime::append_semantic_broker_prompt_overlay;
 use crate::session::PreviousTurnSettings;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
@@ -1050,6 +1051,11 @@ async fn run_sampling_request(
                 .await
                 .for_prompt(&turn_context.model_info.input_modalities)
         };
+        let prompt_input = append_semantic_broker_prompt_overlay(
+            prompt_input,
+            router.as_ref(),
+            turn_context.as_ref(),
+        );
         let prompt = build_prompt(
             prompt_input,
             router.as_ref(),

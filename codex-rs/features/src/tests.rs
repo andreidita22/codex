@@ -139,6 +139,12 @@ fn request_permissions_tool_is_under_development() {
 }
 
 #[test]
+fn semantic_broker_is_under_development() {
+    assert_eq!(Feature::SemanticBroker.stage(), Stage::UnderDevelopment);
+    assert_eq!(Feature::SemanticBroker.default_enabled(), false);
+}
+
+#[test]
 fn tool_suggest_is_stable_and_enabled_by_default() {
     assert_eq!(Feature::ToolSuggest.stage(), Stage::Stable);
     assert_eq!(Feature::ToolSuggest.default_enabled(), true);

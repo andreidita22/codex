@@ -1975,6 +1975,7 @@ dependencies = [
  "codex-rollout",
  "codex-sandboxing",
  "codex-secrets",
+ "codex-semantic-broker",
  "codex-shell-command",
  "codex-shell-escalation",
  "codex-state",
