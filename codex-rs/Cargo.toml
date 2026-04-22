@@ -2,6 +2,7 @@
 members = [
     "analytics",
     "agent-observability",
+    "semantic-broker",
     "backend-client",
     "ansi-escape",
     "async-utils",
@@ -111,6 +112,7 @@ license = "Apache-2.0"
 # Internal
 app_test_support = { path = "app-server/tests/common" }
 codex-agent-observability = { path = "agent-observability" }
+codex-semantic-broker = { path = "semantic-broker" }
 codex-analytics = { path = "analytics" }
 codex-ansi-escape = { path = "ansi-escape" }
 codex-api = { path = "codex-api" }
