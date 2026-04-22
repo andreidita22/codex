@@ -174,6 +174,8 @@ pub enum Feature {
     /// Enable collaboration modes (Plan, Default).
     /// Kept for config backward compatibility; behavior is always collaboration-modes-enabled.
     CollaborationModes,
+    /// Enable prompt-only semantic broker overlays at the turn prompt seam.
+    SemanticBroker,
     /// Route MCP tool approval prompts through the MCP elicitation request path.
     ToolCallMcpElicitation,
     /// Enable personality selection in the TUI.
@@ -903,6 +905,12 @@ pub const FEATURES: &[FeatureSpec] = &[
         key: "collaboration_modes",
         stage: Stage::Removed,
         default_enabled: true,
+    },
+    FeatureSpec {
+        id: Feature::SemanticBroker,
+        key: "semantic_broker",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
     },
     FeatureSpec {
         id: Feature::ToolCallMcpElicitation,
