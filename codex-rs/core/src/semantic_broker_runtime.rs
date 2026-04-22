@@ -1,6 +1,8 @@
+use crate::event_mapping::parse_turn_item;
 use crate::session::turn_context::TurnContext;
 use crate::tools::ToolRouter;
 use codex_features::Feature;
+use codex_protocol::items::TurnItem;
 use codex_protocol::models::ResponseItem;
 use codex_semantic_broker::BrokerInput;
 use codex_semantic_broker::DeterministicAdjudicator;
@@ -50,12 +52,31 @@ pub(crate) fn append_semantic_broker_prompt_overlay(
 }
 
 fn current_turn_text(prompt_input: &[ResponseItem]) -> Option<String> {
-    prompt_input.iter().rev().find_map(|item| match item {
-        ResponseItem::Message { role, content, .. } if role == "user" => {
-            codex_protocol::models::content_items_to_text(content)
+    for item in prompt_input.iter().rev() {
+        let ResponseItem::Message { role, .. } = item else {
+            continue;
+        };
+        if role != "user" {
+            continue;
         }
-        _ => None,
-    })
+
+        return match parse_turn_item(item) {
+            Some(TurnItem::UserMessage(user_message)) => {
+                let text = user_message.message();
+                (!text.is_empty()).then_some(text)
+            }
+            Some(TurnItem::HookPrompt(_))
+            | Some(TurnItem::AgentMessage(_))
+            | Some(TurnItem::Plan(_))
+            | Some(TurnItem::Reasoning(_))
+            | Some(TurnItem::WebSearch(_))
+            | Some(TurnItem::ImageGeneration(_))
+            | Some(TurnItem::ContextCompaction(_))
+            | None => None,
+        };
+    }
+
+    None
 }
 
 fn visible_tool_names_for_prompt(router: &ToolRouter, turn_context: &TurnContext) -> Vec<String> {
