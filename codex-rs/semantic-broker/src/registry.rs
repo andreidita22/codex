@@ -29,6 +29,7 @@ pub enum RegistryConflictKind {
     DuplicateOperatorId,
     AliasTargetConflict,
     InvalidSourceOverride,
+    UnknownOperatorId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -111,6 +112,14 @@ pub enum RegistrySnapshotError {
         existing_source: RegistrySourceFamily,
         incoming_source: RegistrySourceFamily,
     },
+    #[error(
+        "schema `{schema_id}` from {source_family:?} references unknown operator `{operator_id}`"
+    )]
+    UnknownOperatorId {
+        schema_id: String,
+        operator_id: String,
+        source_family: RegistrySourceFamily,
+    },
     #[error("semantic broker v0 only supports builtin registry sources; found {0:?}")]
     UnsupportedSourceFamily(RegistrySourceFamily),
 }
@@ -179,6 +188,16 @@ pub fn build_v0_registry_snapshot(
             } else {
                 aliases.insert(key, (alias, source.family));
             }
+        }
+    }
+
+    for (schema, source_family) in schemas.values() {
+        if !operators.contains_key(&schema.operator_id) {
+            return Err(RegistrySnapshotError::UnknownOperatorId {
+                schema_id: schema.schema_id.0.clone(),
+                operator_id: schema.operator_id.0.clone(),
+                source_family: *source_family,
+            });
         }
     }
 
@@ -446,6 +465,30 @@ mod tests {
                 key: "review".to_string(),
                 existing_source: RegistrySourceFamily::Builtin,
                 incoming_source: RegistrySourceFamily::Builtin,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_schema_with_unknown_operator_reference() {
+        let mut source = builtin_source();
+        source.schemas.push(RegisteredSchema {
+            schema_id: SchemaId("workflow.invalid.unknown_operator".to_string()),
+            operator_id: OperatorId("missing_operator".to_string()),
+            source_family: RegistrySourceFamily::Builtin,
+            summary: "Invalid schema".to_string(),
+            trigger_phrases: vec!["invalid".to_string()],
+        });
+
+        let err = build_v0_registry_snapshot(RegistryVersion("v0".to_string()), vec![source])
+            .expect_err("unknown operators should be rejected");
+
+        assert_eq!(
+            err,
+            RegistrySnapshotError::UnknownOperatorId {
+                schema_id: "workflow.invalid.unknown_operator".to_string(),
+                operator_id: "missing_operator".to_string(),
+                source_family: RegistrySourceFamily::Builtin,
             }
         );
     }

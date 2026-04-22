@@ -31,6 +31,7 @@ pub struct SchemaCandidate {
 pub enum ExcludedCandidateReason {
     NoCurrentTurnText,
     NoTriggerMatch,
+    InvalidOperatorReference,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,12 +117,18 @@ pub fn build_candidate_set(input: &BrokerInput, registry: &SchemaRegistrySnapsho
             continue;
         }
 
-        let canonical_operator = registry
+        let Some(canonical_operator) = registry
             .operators
             .iter()
             .find(|operator| operator.operator_id == schema.operator_id)
             .map(|operator| operator.canonical_operator)
-            .unwrap_or(CanonicalOperator::Plan);
+        else {
+            excluded.push(ExcludedSchemaCandidate {
+                schema_id: schema.schema_id.clone(),
+                reason: ExcludedCandidateReason::InvalidOperatorReference,
+            });
+            continue;
+        };
 
         candidates.push(SchemaCandidate {
             schema_id: schema.schema_id.clone(),
@@ -169,5 +176,38 @@ mod tests {
         let first = build_candidate_set(&input, &registry);
         let second = build_candidate_set(&input, &registry);
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn excludes_schema_with_invalid_operator_reference() {
+        let registry = SchemaRegistrySnapshot {
+            version: RegistryVersion("v0".to_string()),
+            operators: Vec::new(),
+            schemas: vec![crate::registry::RegisteredSchema {
+                schema_id: SchemaId("workflow.invalid".to_string()),
+                operator_id: OperatorId("missing_operator".to_string()),
+                source_family: crate::registry::RegistrySourceFamily::Builtin,
+                summary: "Invalid schema".to_string(),
+                trigger_phrases: vec!["review this".to_string()],
+            }],
+            aliases: Vec::new(),
+        };
+        let input = BrokerInput {
+            current_turn_text: Some("review this".to_string()),
+            visible_tool_names: Vec::new(),
+            session_source: None,
+            active_track: None,
+        };
+
+        let candidates = build_candidate_set(&input, &registry);
+
+        assert_eq!(candidates.candidates, Vec::new());
+        assert_eq!(
+            candidates.excluded,
+            vec![ExcludedSchemaCandidate {
+                schema_id: SchemaId("workflow.invalid".to_string()),
+                reason: ExcludedCandidateReason::InvalidOperatorReference,
+            }]
+        );
     }
 }

@@ -17,6 +17,7 @@ pub enum ConfidenceDecision {
     Resolved,
     Ambiguous,
     Unresolved,
+    PacketTruncated,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
