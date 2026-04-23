@@ -155,6 +155,7 @@ async fn semantic_broker_feature_off_leaves_prompt_input_unchanged() {
 
     let prompt_input = append_semantic_broker_prompt_overlay(
         history_before.clone(),
+        None,
         router.as_ref(),
         &turn_context,
     );
@@ -187,6 +188,7 @@ async fn semantic_broker_feature_on_appends_one_prompt_only_overlay() {
 
     let prompt_input = append_semantic_broker_prompt_overlay(
         history_before.clone(),
+        None,
         router.as_ref(),
         &turn_context,
     );
@@ -224,7 +226,7 @@ async fn semantic_broker_feature_on_appends_one_prompt_only_overlay() {
 }
 
 #[tokio::test]
-async fn semantic_broker_ignores_older_text_when_latest_user_message_is_contextual() {
+async fn semantic_broker_uses_explicit_current_turn_text_when_latest_user_message_is_contextual() {
     let (session, mut turn_context) = make_session_and_context().await;
     turn_context
         .features
@@ -250,19 +252,23 @@ async fn semantic_broker_ignores_older_text_when_latest_user_message_is_contextu
     prompt_input.push(user_message("review this change"));
     prompt_input.push(contextual_user_shell_message("git status"));
 
-    let prompt_input =
-        append_semantic_broker_prompt_overlay(prompt_input, router.as_ref(), &turn_context);
+    let prompt_input = append_semantic_broker_prompt_overlay(
+        prompt_input,
+        Some("review this change".to_string()),
+        router.as_ref(),
+        &turn_context,
+    );
     let packet = parse_broker_packet(prompt_input.last().expect("semantic broker overlay"));
 
     assert_eq!(
         packet,
         RenderedSemanticBrokerPacket {
             resolution: RenderedSemanticBrokerResolution {
-                decision: ConfidenceDecision::Unresolved,
-                selected_schema_id: None,
+                decision: ConfidenceDecision::Resolved,
+                selected_schema_id: Some("workflow.review.code".to_string()),
             },
             witness: RenderedSemanticBrokerWitness {
-                matched_terms: Vec::new(),
+                matched_terms: vec!["review this".to_string()],
             },
         }
     );
@@ -296,7 +302,7 @@ async fn semantic_broker_does_not_fall_back_past_latest_image_only_user_message(
     prompt_input.push(image_only_user_message());
 
     let prompt_input =
-        append_semantic_broker_prompt_overlay(prompt_input, router.as_ref(), &turn_context);
+        append_semantic_broker_prompt_overlay(prompt_input, None, router.as_ref(), &turn_context);
     let packet = parse_broker_packet(prompt_input.last().expect("semantic broker overlay"));
 
     assert_eq!(
