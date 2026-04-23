@@ -22,13 +22,22 @@ struct RenderedPacket<'a> {
 }
 
 fn render_tagged_packet_payload(payload_json: &str) -> String {
-    let escaped_payload_json = payload_json
-        .replace('&', "\\u0026")
-        .replace('<', "\\u003c")
-        .replace('>', "\\u003e");
-    format!(
-        "<{ACTIVE_CONTEXT_PACKET_TAG} schema=\"{ACTIVE_CONTEXT_PACKET_SCHEMA}\">{escaped_payload_json}</{ACTIVE_CONTEXT_PACKET_TAG}>"
-    )
+    let prefix = format!("<{ACTIVE_CONTEXT_PACKET_TAG} schema=\"{ACTIVE_CONTEXT_PACKET_SCHEMA}\">");
+    let suffix = format!("</{ACTIVE_CONTEXT_PACKET_TAG}>");
+    let mut rendered = String::with_capacity(prefix.len() + payload_json.len() + suffix.len());
+    rendered.push_str(&prefix);
+
+    for ch in payload_json.chars() {
+        match ch {
+            '&' => rendered.push_str("\\u0026"),
+            '<' => rendered.push_str("\\u003c"),
+            '>' => rendered.push_str("\\u003e"),
+            _ => rendered.push(ch),
+        }
+    }
+
+    rendered.push_str(&suffix);
+    rendered
 }
 
 fn render_truncated_packet(packet: &ActiveContextPacket) -> String {
@@ -248,7 +257,12 @@ mod tests {
 
         let rendered = render_active_context_packet(&packet, &PacketBudget::default());
         assert!(is_active_context_packet_text(&rendered));
-        assert_eq!(rendered.matches("</active_context_packet>").count(), 1);
+        assert_eq!(
+            rendered
+                .matches(&format!("</{ACTIVE_CONTEXT_PACKET_TAG}>"))
+                .count(),
+            1
+        );
 
         let rendered_packet: RenderedPacketContract = parse_rendered_packet(&rendered);
         assert_eq!(
