@@ -340,7 +340,23 @@ impl ProgressRegistry {
                     },
                 );
             }
-            EventMsg::ReasoningRawContentDelta(_) => {}
+            EventMsg::ReasoningRawContentDelta(_)
+            | EventMsg::AgentReasoningRawContent(_)
+            | EventMsg::AgentReasoningRawContentDelta(_)
+            | EventMsg::AgentReasoningSectionBreak(_)
+            | EventMsg::ViewImageToolCall(_)
+            | EventMsg::HookStarted(_)
+            | EventMsg::HookCompleted(_)
+            | EventMsg::CollabAgentSpawnBegin(_)
+            | EventMsg::CollabAgentSpawnEnd(_)
+            | EventMsg::CollabAgentInteractionBegin(_)
+            | EventMsg::CollabAgentInteractionEnd(_)
+            | EventMsg::CollabWaitingBegin(_)
+            | EventMsg::CollabWaitingEnd(_)
+            | EventMsg::CollabCloseBegin(_)
+            | EventMsg::CollabCloseEnd(_)
+            | EventMsg::CollabResumeBegin(_)
+            | EventMsg::CollabResumeEnd(_) => {}
             EventMsg::ItemStarted(event) => {
                 record_item_started(state, now, &event.item);
             }
@@ -986,6 +1002,7 @@ mod tests {
     use codex_protocol::protocol::TurnAbortedEvent;
     use codex_protocol::protocol::TurnCompleteEvent;
     use codex_protocol::protocol::TurnStartedEvent;
+    use codex_protocol::protocol::ViewImageToolCallEvent;
     use codex_protocol::protocol::WarningEvent;
     use codex_protocol::request_permissions::RequestPermissionProfile;
     use codex_protocol::request_permissions::RequestPermissionsEvent;
@@ -1123,6 +1140,7 @@ mod tests {
                 turn_id: "turn-1".to_string(),
                 reason: Some("needs workspace write".to_string()),
                 permissions: RequestPermissionProfile::default(),
+                cwd: None,
             }),
         );
 
@@ -1600,6 +1618,27 @@ mod tests {
                 turn_id: "turn-1".to_string(),
                 item_id: "plan-1".to_string(),
                 delta: "step".to_string(),
+            }),
+        );
+
+        let snapshot = registry.inspect(thread_id, AgentStatus::Running, Duration::from_secs(1));
+        assert_eq!(snapshot.phase, AgentProgressPhase::Pending);
+        assert_eq!(snapshot.seq, 0);
+        assert_eq!(snapshot.active_work, None);
+    }
+
+    #[test]
+    fn view_image_tool_call_remains_an_explicit_no_op() {
+        let registry = ProgressRegistry::default();
+        let thread_id = thread_id();
+        registry.seed(thread_id);
+
+        registry.record_event(
+            thread_id,
+            &EventMsg::ViewImageToolCall(ViewImageToolCallEvent {
+                call_id: "call-1".to_string(),
+                path: AbsolutePathBuf::from_absolute_path(std::env::temp_dir())
+                    .expect("temp dir should be absolute"),
             }),
         );
 
