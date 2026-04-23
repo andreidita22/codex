@@ -7,6 +7,8 @@ use crate::semantic_broker_runtime::append_semantic_broker_prompt_overlay;
 use codex_features::Feature;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
+use codex_semantic_broker::ACTIVE_CONTEXT_PACKET_SCHEMA;
+use codex_semantic_broker::ACTIVE_CONTEXT_PACKET_TAG;
 use codex_semantic_broker::ConfidenceDecision;
 use codex_semantic_broker::is_active_context_packet_text;
 use pretty_assertions::assert_eq;
@@ -83,11 +85,11 @@ fn parse_broker_packet(item: &ResponseItem) -> RenderedSemanticBrokerPacket {
     let [ContentItem::InputText { text }] = content.as_slice() else {
         panic!("expected single input text item");
     };
-    let prefix = "<active_context_packet schema=\"codex.semantic_broker.active_packet.v0\">";
-    let suffix = "</active_context_packet>";
+    let prefix = format!("<{ACTIVE_CONTEXT_PACKET_TAG} schema=\"{ACTIVE_CONTEXT_PACKET_SCHEMA}\">");
+    let suffix = format!("</{ACTIVE_CONTEXT_PACKET_TAG}>");
     let payload = text
-        .strip_prefix(prefix)
-        .and_then(|payload| payload.strip_suffix(suffix))
+        .strip_prefix(&prefix)
+        .and_then(|payload| payload.strip_suffix(&suffix))
         .expect("expected tagged packet");
 
     serde_json::from_str(payload).expect("packet payload should deserialize")
