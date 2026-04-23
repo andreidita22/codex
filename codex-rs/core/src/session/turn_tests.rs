@@ -1,8 +1,8 @@
 use super::tests::make_session_and_context;
 use super::turn::build_prompt;
 use super::turn::built_tools;
-use crate::contextual_user_message::USER_SHELL_COMMAND_CLOSE_TAG;
-use crate::contextual_user_message::USER_SHELL_COMMAND_OPEN_TAG;
+use crate::context::ContextualUserFragment;
+use crate::context::UserShellCommand;
 use crate::semantic_broker_runtime::append_semantic_broker_prompt_overlay;
 use codex_features::Feature;
 use codex_protocol::models::ContentItem;
@@ -40,7 +40,9 @@ fn user_message(text: &str) -> ResponseItem {
 
 fn contextual_user_shell_message(command: &str) -> ResponseItem {
     user_message(&format!(
-        "{USER_SHELL_COMMAND_OPEN_TAG}{command}{USER_SHELL_COMMAND_CLOSE_TAG}"
+        "{}{command}{}",
+        <UserShellCommand as ContextualUserFragment>::START_MARKER,
+        <UserShellCommand as ContextualUserFragment>::END_MARKER
     ))
 }
 

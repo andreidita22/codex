@@ -7,6 +7,7 @@ use crate::config_loader::ConfigLayerStackOrdering;
 use crate::config_loader::ConfigRequirements;
 use crate::config_loader::ConfigRequirementsToml;
 use crate::config_loader::ConstrainedWithSource;
+use crate::config_loader::FeatureRequirementsToml;
 use crate::config_loader::LoaderOverrides;
 use crate::config_loader::McpServerIdentity;
 use crate::config_loader::McpServerRequirement;
@@ -21,6 +22,7 @@ use crate::unified_exec::MIN_EMPTY_YIELD_TIME_MS;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
 use crate::windows_sandbox::resolve_windows_sandbox_mode;
 use crate::windows_sandbox::resolve_windows_sandbox_private_desktop;
+use codex_config::ThreadConfigLoader;
 use codex_config::config_toml::CompactionEngine as CompactionEngineToml;
 use codex_config::config_toml::ConfigToml;
 use codex_config::config_toml::ContextMaintenanceReasoningEffort as ContextMaintenanceReasoningEffortToml;
@@ -53,7 +55,7 @@ use codex_config::types::UriBasedFileOpener;
 use codex_config::types::WindowsSandboxModeToml;
 use codex_exec_server::ExecutorFileSystem;
 use codex_exec_server::LOCAL_FS;
-use codex_features::Feature;
+pub use codex_features::Feature;
 use codex_features::FeatureConfigSource;
 use codex_features::FeatureOverrides;
 use codex_features::FeatureToml;
@@ -62,11 +64,13 @@ use codex_features::FeaturesToml;
 use codex_features::MultiAgentV2ConfigToml;
 use codex_git_utils::resolve_root_git_project_for_trust;
 use codex_login::AuthManagerConfig;
+use codex_login::BackgroundAgentTaskAuthMode;
 use codex_mcp::McpConfig;
 use codex_model_provider_info::LEGACY_OLLAMA_CHAT_PROVIDER_ID;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::OLLAMA_CHAT_PROVIDER_REMOVED_ERROR;
 use codex_model_provider_info::built_in_model_providers;
+use codex_model_provider_info::merge_configured_model_providers;
 use codex_models_manager::ModelsManagerConfig;
 use codex_protocol::config_types::AltScreenMode;
 use codex_protocol::config_types::ForcedLoginMethod;
@@ -95,6 +99,7 @@ use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::config::permissions::compile_permission_profile;
 use crate::config::permissions::get_readable_roots_required_for_codex_runtime;
@@ -110,7 +115,6 @@ mod network_proxy_spec;
 mod permissions;
 #[cfg(test)]
 mod schema;
-pub(crate) mod service;
 pub use codex_config::Constrained;
 pub use codex_config::ConstraintError;
 pub use codex_config::ConstraintResult;
@@ -206,8 +210,6 @@ impl ContextMaintenanceReasoningEffort {
 
 pub const CURRENT_THREAD_MODEL_SELECTOR: &str = "current_thread";
 pub(crate) use permissions::resolve_permission_profile;
-pub use service::ConfigService;
-pub use service::ConfigServiceError;
 
 pub use codex_git_utils::GhostSnapshotConfig;
 
@@ -646,6 +648,10 @@ pub struct Config {
     /// instructions inserted into developer messages when realtime becomes
     /// active.
     pub experimental_realtime_start_instructions: Option<String>,
+
+    /// Experimental / do not use. When set, app-server uses a remote thread
+    /// store at this endpoint instead of the local filesystem/SQLite store.
+    pub experimental_thread_store_endpoint: Option<String>,
     /// When set, restricts ChatGPT login to a specific workspace identifier.
     pub forced_chatgpt_workspace_id: Option<String>,
 
@@ -749,16 +755,43 @@ impl AuthManagerConfig for Config {
     fn forced_chatgpt_workspace_id(&self) -> Option<String> {
         self.forced_chatgpt_workspace_id.clone()
     }
+
+    fn chatgpt_base_url(&self) -> Option<String> {
+        Some(self.chatgpt_base_url.clone())
+    }
+
+    fn background_agent_task_auth_mode(&self) -> BackgroundAgentTaskAuthMode {
+        BackgroundAgentTaskAuthMode::from_feature_enabled(
+            self.features.enabled(Feature::UseAgentIdentity),
+        )
+    }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone)]
 pub struct ConfigBuilder {
     codex_home: Option<PathBuf>,
     cli_overrides: Option<Vec<(String, TomlValue)>>,
     harness_overrides: Option<ConfigOverrides>,
     loader_overrides: Option<LoaderOverrides>,
     cloud_requirements: CloudRequirementsLoader,
+    thread_config_loader: Option<Arc<dyn ThreadConfigLoader>>,
     fallback_cwd: Option<PathBuf>,
+    host_name: Option<String>,
+}
+
+impl Default for ConfigBuilder {
+    fn default() -> Self {
+        Self {
+            codex_home: None,
+            cli_overrides: None,
+            harness_overrides: None,
+            loader_overrides: None,
+            cloud_requirements: CloudRequirementsLoader::default(),
+            thread_config_loader: None,
+            fallback_cwd: None,
+            host_name: codex_config::host_name(),
+        }
+    }
 }
 
 impl ConfigBuilder {
@@ -787,8 +820,21 @@ impl ConfigBuilder {
         self
     }
 
+    pub fn thread_config_loader(
+        mut self,
+        thread_config_loader: Arc<dyn ThreadConfigLoader>,
+    ) -> Self {
+        self.thread_config_loader = Some(thread_config_loader);
+        self
+    }
+
     pub fn fallback_cwd(mut self, fallback_cwd: Option<PathBuf>) -> Self {
         self.fallback_cwd = fallback_cwd;
+        self
+    }
+
+    pub fn host_name(mut self, host_name: Option<String>) -> Self {
+        self.host_name = host_name;
         self
     }
 
@@ -799,7 +845,9 @@ impl ConfigBuilder {
             harness_overrides,
             loader_overrides,
             cloud_requirements,
+            thread_config_loader,
             fallback_cwd,
+            host_name,
         } = self;
         let codex_home = match codex_home {
             Some(codex_home) => AbsolutePathBuf::from_absolute_path(codex_home)?,
@@ -821,6 +869,10 @@ impl ConfigBuilder {
             &cli_overrides,
             loader_overrides,
             cloud_requirements,
+            thread_config_loader
+                .as_deref()
+                .unwrap_or(&codex_config::NoopThreadConfigLoader),
+            host_name.as_deref(),
         )
         .await?;
         let merged_toml = config_layer_stack.effective_config();
@@ -999,6 +1051,8 @@ pub async fn load_config_as_toml_with_cli_and_loader_overrides(
         &cli_overrides,
         loader_overrides,
         CloudRequirementsLoader::default(),
+        &codex_config::NoopThreadConfigLoader,
+        /*host_name*/ None,
     )
     .await?;
 
@@ -1011,7 +1065,7 @@ pub async fn load_config_as_toml_with_cli_and_loader_overrides(
     Ok(cfg)
 }
 
-pub(crate) fn deserialize_config_toml_with_base(
+pub fn deserialize_config_toml_with_base(
     root_value: TomlValue,
     config_base_dir: &Path,
 ) -> std::io::Result<ConfigToml> {
@@ -1021,6 +1075,15 @@ pub(crate) fn deserialize_config_toml_with_base(
     root_value
         .try_into()
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+}
+
+/// Validate user-visible feature settings against managed feature requirements.
+pub fn validate_feature_requirements_for_config_toml(
+    cfg: &ConfigToml,
+    feature_requirements: Option<&Sourced<FeatureRequirementsToml>>,
+) -> std::io::Result<()> {
+    managed_features::validate_explicit_feature_settings_in_config_toml(cfg, feature_requirements)?;
+    managed_features::validate_feature_requirements_in_config_toml(cfg, feature_requirements)
 }
 
 fn load_catalog_json(path: &AbsolutePathBuf) -> std::io::Result<ModelsResponse> {
@@ -1170,6 +1233,8 @@ pub async fn load_global_mcp_servers(
         &cli_overrides,
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
+        &codex_config::NoopThreadConfigLoader,
+        /*host_name*/ None,
     )
     .await?;
     let merged_toml = config_layer_stack.effective_config();
@@ -1909,11 +1974,9 @@ impl Config {
             .clone()
             .filter(|value| !value.is_empty());
 
-        let mut model_providers = built_in_model_providers(openai_base_url);
-        // Merge user-defined providers into the built-in list.
-        for (key, provider) in cfg.model_providers.into_iter() {
-            model_providers.entry(key).or_insert(provider);
-        }
+        let model_providers =
+            merge_configured_model_providers(built_in_model_providers(openai_base_url), cfg.model_providers)
+                .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))?;
 
         let model_provider_id = model_provider
             .or(config_profile.model_provider)
@@ -2466,6 +2529,7 @@ impl Config {
             experimental_realtime_ws_backend_prompt: cfg.experimental_realtime_ws_backend_prompt,
             experimental_realtime_ws_startup_context: cfg.experimental_realtime_ws_startup_context,
             experimental_realtime_start_instructions: cfg.experimental_realtime_start_instructions,
+            experimental_thread_store_endpoint: cfg.experimental_thread_store_endpoint,
             forced_chatgpt_workspace_id,
             forced_login_method,
             include_apply_patch_tool: include_apply_patch_tool_flag,
