@@ -92,7 +92,7 @@ Copy this shape for future releases.
 ### Refs
 
 - fork main at ingest start: `8a57fa8e7d`
-- upstream target: `rust-v0.123.0` / `d1005e4215`
+- upstream target: `rust-v0.123.0` / `0785b66228` (tag object `d1005e4215`)
 - live upstream inspection ref at prep time: `upstream-main` / `5e71da1424`
 - comparison range for upstream release delta: `rust-v0.122.0..rust-v0.123.0`
 - comparison range for fork ingest surface: `main..upstream-latest-release`
@@ -147,7 +147,7 @@ silently change while still compiling.
 ### Notes (ingest snapshot)
 
 - Local mirror refs were updated before ingest:
-  - `upstream-latest-release` -> `rust-v0.123.0` / `d1005e4215`
+- `upstream-latest-release` -> `rust-v0.123.0` / `0785b66228`
   - `upstream-main` -> `upstream/main` / `5e71da1424`
 - Pushing the read-only mirror branch back to `origin` remains blocked by repo
   policy for `upstream-latest-release`.
