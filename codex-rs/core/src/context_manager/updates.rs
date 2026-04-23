@@ -17,6 +17,7 @@ use codex_protocol::config_types::Personality;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelInfo;
+use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::TurnContextItem;
 
 fn build_environment_update_item(
@@ -210,6 +211,85 @@ pub(crate) struct SettingsUpdateBuildOptions<'a> {
     pub(crate) full_role_sections: &'a [String],
     pub(crate) full_task_sections: &'a [String],
     pub(crate) full_runtime_sections: &'a [String],
+}
+
+pub(crate) struct InitialContextSections {
+    constitutional_sections: Vec<String>,
+    developer_sections: Vec<String>,
+    role_sections: Vec<String>,
+    task_sections: Vec<String>,
+    runtime_sections: Vec<String>,
+    contextual_user_sections: Vec<String>,
+}
+
+impl InitialContextSections {
+    pub(crate) fn new() -> Self {
+        Self {
+            constitutional_sections: Vec::with_capacity(1),
+            developer_sections: Vec::with_capacity(8),
+            role_sections: Vec::with_capacity(3),
+            task_sections: Vec::with_capacity(3),
+            runtime_sections: Vec::with_capacity(8),
+            contextual_user_sections: Vec::with_capacity(2),
+        }
+    }
+
+    pub(crate) fn push_constitutional_and_developer(&mut self, section: String) {
+        self.constitutional_sections.push(section.clone());
+        self.developer_sections.push(section);
+    }
+
+    pub(crate) fn push_role_and_developer(&mut self, section: String) {
+        self.role_sections.push(section.clone());
+        self.developer_sections.push(section);
+    }
+
+    pub(crate) fn push_task_and_developer(&mut self, section: String) {
+        self.task_sections.push(section.clone());
+        self.developer_sections.push(section);
+    }
+
+    pub(crate) fn push_runtime_and_developer(&mut self, section: String) {
+        self.runtime_sections.push(section.clone());
+        self.developer_sections.push(section);
+    }
+
+    pub(crate) fn push_contextual_user(&mut self, section: String) {
+        self.contextual_user_sections.push(section);
+    }
+
+    pub(crate) fn maybe_insert_initial_context_prompt_layering_section(
+        &mut self,
+        path_variant: GovernancePathVariant,
+        model: &str,
+        session_source: &SessionSource,
+        base_instructions: &str,
+    ) {
+        if let Some(prompt_layering_section) =
+            crate::governance::prompt_layers::build_prompt_layering_section(
+                crate::governance::prompt_layers::PromptLayeringInput {
+                    path_variant,
+                    phase: crate::governance::prompt_layers::PromptLayeringPhase::InitialContext,
+                    model,
+                    session_source,
+                    base_instructions,
+                    constitutional_sections: &self.constitutional_sections,
+                    role_sections: &self.role_sections,
+                    task_sections: &self.task_sections,
+                    runtime_sections: &self.runtime_sections,
+                },
+            )
+        {
+            insert_governance_prompt_layering_section(
+                &mut self.developer_sections,
+                prompt_layering_section,
+            );
+        }
+    }
+
+    pub(crate) fn into_message_sections(self) -> (Vec<String>, Vec<String>) {
+        (self.developer_sections, self.contextual_user_sections)
+    }
 }
 
 pub(crate) fn insert_governance_prompt_layering_section(

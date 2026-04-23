@@ -2575,12 +2575,7 @@ impl Session {
         &self,
         turn_context: &TurnContext,
     ) -> Vec<ResponseItem> {
-        let mut constitutional_sections = Vec::<String>::with_capacity(1);
-        let mut developer_sections = Vec::<String>::with_capacity(8);
-        let mut role_sections = Vec::<String>::with_capacity(3);
-        let mut task_sections = Vec::<String>::with_capacity(3);
-        let mut runtime_sections = Vec::<String>::with_capacity(8);
-        let mut contextual_user_sections = Vec::<String>::with_capacity(2);
+        let mut sections = crate::context_manager::updates::InitialContextSections::new();
         let shell = self.user_shell();
         let (
             reference_context_item,
@@ -2604,8 +2599,7 @@ impl Session {
                 turn_context,
             )
         {
-            constitutional_sections.push(model_switch_message.clone());
-            developer_sections.push(model_switch_message);
+            sections.push_constitutional_and_developer(model_switch_message);
         }
         if turn_context.config.include_permissions_instructions {
             let permissions_text = PermissionsInstructions::from_policy(
@@ -2622,8 +2616,7 @@ impl Session {
                     .enabled(Feature::RequestPermissionsTool),
             )
             .render();
-            runtime_sections.push(permissions_text.clone());
-            developer_sections.push(permissions_text);
+            sections.push_runtime_and_developer(permissions_text);
         }
         let separate_guardian_developer_message =
             crate::guardian::is_guardian_reviewer_source(&session_source);
@@ -2633,9 +2626,7 @@ impl Session {
             && let Some(developer_instructions) = turn_context.developer_instructions.as_deref()
             && !developer_instructions.is_empty()
         {
-            let developer_instructions = developer_instructions.to_string();
-            role_sections.push(developer_instructions.clone());
-            developer_sections.push(developer_instructions);
+            sections.push_role_and_developer(developer_instructions.to_string());
         }
         // Add developer instructions for memories.
         if turn_context.features.enabled(Feature::MemoryTool)
@@ -2643,24 +2634,20 @@ impl Session {
             && let Some(memory_prompt) =
                 build_memory_tool_developer_instructions(&turn_context.config.codex_home).await
         {
-            runtime_sections.push(memory_prompt.clone());
-            developer_sections.push(memory_prompt);
+            sections.push_runtime_and_developer(memory_prompt);
         }
         // Add developer instructions from collaboration_mode if they exist and are non-empty
         if let Some(collab_instructions) =
             CollaborationModeInstructions::from_collaboration_mode(&collaboration_mode)
         {
-            let collab_instructions = collab_instructions.render();
-            role_sections.push(collab_instructions.clone());
-            developer_sections.push(collab_instructions);
+            sections.push_role_and_developer(collab_instructions.render());
         }
         if let Some(realtime_update) = crate::context_manager::updates::build_initial_realtime_item(
             reference_context_item.as_ref(),
             previous_turn_settings.as_ref(),
             turn_context,
         ) {
-            runtime_sections.push(realtime_update.clone());
-            developer_sections.push(realtime_update);
+            sections.push_runtime_and_developer(realtime_update);
         }
         if self.features.enabled(Feature::Personality)
             && let Some(personality) = turn_context.personality
@@ -2677,8 +2664,7 @@ impl Session {
             {
                 let personality_message =
                     PersonalitySpecInstructions::new(personality_message).render();
-                role_sections.push(personality_message.clone());
-                developer_sections.push(personality_message);
+                sections.push_role_and_developer(personality_message);
             }
         }
         if turn_context.config.include_apps_instructions && turn_context.apps_enabled() {
@@ -2692,9 +2678,7 @@ impl Session {
             if let Some(apps_instructions) =
                 AppsInstructions::from_connectors(&accessible_and_enabled_connectors)
             {
-                let apps_instructions = apps_instructions.render();
-                runtime_sections.push(apps_instructions.clone());
-                developer_sections.push(apps_instructions);
+                sections.push_runtime_and_developer(apps_instructions.render());
             }
         }
         if turn_context.config.include_skill_instructions {
@@ -2724,9 +2708,7 @@ impl Session {
                     )
                     .await;
                 }
-                let skills_instructions = skills_instructions.render();
-                runtime_sections.push(skills_instructions.clone());
-                developer_sections.push(skills_instructions);
+                sections.push_runtime_and_developer(skills_instructions.render());
             }
         }
         let loaded_plugins = self
@@ -2737,21 +2719,18 @@ impl Session {
         if let Some(plugin_instructions) =
             AvailablePluginsInstructions::from_plugins(loaded_plugins.capability_summaries())
         {
-            let plugin_instructions = plugin_instructions.render();
-            runtime_sections.push(plugin_instructions.clone());
-            developer_sections.push(plugin_instructions);
+            sections.push_runtime_and_developer(plugin_instructions.render());
         }
         if turn_context.features.enabled(Feature::CodexGitCommit)
             && let Some(commit_message_instruction) = commit_message_trailer_instruction(
                 turn_context.config.commit_attribution.as_deref(),
             )
         {
-            task_sections.push(commit_message_instruction.clone());
-            developer_sections.push(commit_message_instruction);
+            sections.push_task_and_developer(commit_message_instruction);
         }
         if let Some(user_instructions) = turn_context.user_instructions.as_deref() {
-            task_sections.push(user_instructions.to_string());
-            contextual_user_sections.push(
+            sections.push_task_and_developer(user_instructions.to_string());
+            sections.push_contextual_user(
                 UserInstructions {
                     text: user_instructions.to_string(),
                     directory: turn_context.cwd.to_string_lossy().into_owned(),
@@ -2765,33 +2744,20 @@ impl Session {
                 .agent_control
                 .format_environment_context_subagents(self.conversation_id)
                 .await;
-            contextual_user_sections.push(
+            sections.push_contextual_user(
                 crate::context::EnvironmentContext::from_turn_context(turn_context, shell.as_ref())
                     .with_subagents(subagents)
                     .render(),
             );
         }
+        sections.maybe_insert_initial_context_prompt_layering_section(
+            turn_context.governance_path_variant(),
+            &turn_context.model_info.slug,
+            &session_source,
+            &base_instructions,
+        );
 
-        if let Some(prompt_layering_section) =
-            crate::governance::prompt_layers::build_prompt_layering_section(
-                crate::governance::prompt_layers::PromptLayeringInput {
-                    path_variant: turn_context.governance_path_variant(),
-                    phase: crate::governance::prompt_layers::PromptLayeringPhase::InitialContext,
-                    model: &turn_context.model_info.slug,
-                    session_source: &session_source,
-                    base_instructions: &base_instructions,
-                    constitutional_sections: &constitutional_sections,
-                    role_sections: &role_sections,
-                    task_sections: &task_sections,
-                    runtime_sections: &runtime_sections,
-                },
-            )
-        {
-            crate::context_manager::updates::insert_governance_prompt_layering_section(
-                &mut developer_sections,
-                prompt_layering_section,
-            );
-        }
+        let (developer_sections, contextual_user_sections) = sections.into_message_sections();
 
         let mut items = Vec::with_capacity(3);
         if let Some(developer_message) =
