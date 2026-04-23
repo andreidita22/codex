@@ -16,6 +16,7 @@ use tracing::warn;
 
 pub(crate) fn append_semantic_broker_prompt_overlay(
     mut prompt_input: Vec<ResponseItem>,
+    current_turn_text: Option<String>,
     router: &ToolRouter,
     turn_context: &TurnContext,
 ) -> Vec<ResponseItem> {
@@ -32,7 +33,8 @@ pub(crate) fn append_semantic_broker_prompt_overlay(
     };
 
     let broker_input = BrokerInput {
-        current_turn_text: current_turn_text(&prompt_input),
+        current_turn_text: current_turn_text
+            .or_else(|| current_turn_text_from_prompt_input(&prompt_input)),
         visible_tool_names: visible_tool_names_for_prompt(router, turn_context),
         session_source: Some(turn_context.session_source.clone()),
         active_track: None,
@@ -51,7 +53,7 @@ pub(crate) fn append_semantic_broker_prompt_overlay(
     prompt_input
 }
 
-fn current_turn_text(prompt_input: &[ResponseItem]) -> Option<String> {
+fn current_turn_text_from_prompt_input(prompt_input: &[ResponseItem]) -> Option<String> {
     for item in prompt_input.iter().rev() {
         let ResponseItem::Message { role, .. } = item else {
             continue;

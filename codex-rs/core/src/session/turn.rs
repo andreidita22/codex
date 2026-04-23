@@ -19,6 +19,7 @@ use crate::context::ContextualUserFragment;
 use crate::context_maintenance_runtime::CompactInvocationTiming;
 use crate::feedback_tags;
 use crate::hook_runtime::PendingInputHookDisposition;
+use crate::hook_runtime::PendingInputRecord;
 use crate::hook_runtime::emit_hook_completed_events;
 use crate::hook_runtime::inspect_pending_input;
 use crate::hook_runtime::record_additional_contexts;
@@ -407,6 +408,10 @@ pub(crate) async fn run_turn(
     // 1. At the start of a turn, so the fresh user prompt in `input` gets sampled first.
     // 2. After auto-compact, when model/tool continuation needs to resume before any steer.
     let mut can_drain_pending_input = input.is_empty();
+    let mut broker_current_turn_text = {
+        let text = UserMessageItem::new(&input).message();
+        (!text.trim().is_empty()).then_some(text)
+    };
 
     loop {
         if run_pending_session_start_hooks(&sess, &turn_context).await {
@@ -451,6 +456,10 @@ pub(crate) async fn run_turn(
 
         let has_accepted_pending_input = !accepted_pending_input.is_empty();
         for pending_input in accepted_pending_input {
+            if let PendingInputRecord::UserMessage { content, .. } = &pending_input {
+                let text = UserMessageItem::new(content.as_slice()).message();
+                broker_current_turn_text = (!text.trim().is_empty()).then_some(text);
+            }
             record_pending_input(&sess, &turn_context, pending_input).await;
         }
         record_additional_contexts(&sess, &turn_context, blocked_pending_input_contexts).await;
@@ -485,6 +494,7 @@ pub(crate) async fn run_turn(
             &mut client_session,
             turn_metadata_header.as_deref(),
             sampling_request_input,
+            broker_current_turn_text.clone(),
             &explicitly_enabled_connectors,
             skills_outcome,
             &mut server_model_warning_emitted_for_turn,
@@ -1049,6 +1059,7 @@ async fn run_sampling_request(
     client_session: &mut ModelClientSession,
     turn_metadata_header: Option<&str>,
     input: Vec<ResponseItem>,
+    current_turn_text: Option<String>,
     explicitly_enabled_connectors: &HashSet<String>,
     skills_outcome: Option<&SkillLoadOutcome>,
     server_model_warning_emitted_for_turn: &mut bool,
@@ -1094,6 +1105,7 @@ async fn run_sampling_request(
         };
         let prompt_input = append_semantic_broker_prompt_overlay(
             prompt_input,
+            current_turn_text.clone(),
             router.as_ref(),
             turn_context.as_ref(),
         );
