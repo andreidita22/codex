@@ -87,6 +87,78 @@ Copy this shape for future releases.
 - post-ingest cleanup
 ```
 
+## 0.122.0 -> 0.123.0 (prep + ingest snapshot)
+
+### Refs
+
+- fork main at ingest start: `8a57fa8e7d`
+- upstream target: `rust-v0.123.0` / `0785b66228` (tag object `d1005e4215`)
+- live upstream inspection ref at prep time: `upstream-main` / `5e71da1424`
+- comparison range for upstream release delta: `rust-v0.122.0..rust-v0.123.0`
+- comparison range for fork ingest surface: `main..upstream-latest-release`
+
+### Scale
+
+- upstream release delta (`rust-v0.122.0..rust-v0.123.0`): `577` files changed, `44377` insertions, `19471` deletions
+- current fork-main vs upstream target (`main..upstream-latest-release`): `724` files changed, `45349` insertions, `59097` deletions
+- direct overlap (`main...upstream-latest-release`): `577` files
+- direct seam overlap candidates in upstream delta: `15` files
+  - `codex-rs/config/src/config_toml.rs`
+  - `codex-rs/core/src/agent/control.rs`
+  - `codex-rs/core/src/config/mod.rs`
+  - `codex-rs/core/src/context_manager/updates.rs`
+  - `codex-rs/core/src/session/agent_task_lifecycle.rs`
+  - `codex-rs/core/src/session/handlers.rs`
+  - `codex-rs/core/src/session/mcp.rs`
+  - `codex-rs/core/src/session/mod.rs`
+  - `codex-rs/core/src/session/session.rs`
+  - `codex-rs/core/src/session/turn.rs`
+  - `codex-rs/core/src/session/tests.rs`
+  - `codex-rs/core/src/session/tests/guardian_tests.rs`
+  - `codex-rs/protocol/src/models.rs`
+  - `codex-rs/protocol/src/protocol.rs`
+  - `codex-rs/tools/src/tool_registry_plan.rs`
+
+### High-level read (pre-alignment)
+
+`0.123` did not rewrite the fork-owned semantic crates directly (`context-maintenance-policy`,
+`agent-observability`), but it did refactor multiple adapter seams those crates depend on:
+
+- context/developer instruction rendering moved toward typed context fragments (`core::context::*`)
+- protocol/tool surface grew around namespaced dynamic tools and realtime event variants
+- config/runtime permission surfaces were reshaped (`FileSystemPermissions` canonical form, feature/config loader flow)
+
+The dominant fork risk is adapter drift in `core/src/session/*` and
+`core/src/context_manager/updates.rs`: if we accept upstream blindly there,
+strict-v1 prompt layering and context-maintenance handoff assumptions can
+silently change while still compiling.
+
+### Seam table (initial ingest snapshot)
+
+| File | Fork-owned bundles affected | Initial risk | Decision | Rationale | Validation |
+| --- | --- | --- | --- | --- | --- |
+| `codex-rs/core/src/session/{mod.rs,turn.rs,handlers.rs}` | strict-v1 prompt layering, context-maintenance runtime adapters, E-witness tool/runtime wiring | very high | `merge_both` | Upstream moved instruction/tool plumbing toward typed context fragments and namespaced dynamic tools; we keep fork-owned behavior and reattach through the new session seams. | `cargo test -p codex-core compact_tests --lib`; `cargo test -p codex-core config::schema::tests::config_schema_matches_fixture --lib` |
+| `codex-rs/core/src/context_manager/updates.rs` | strict-v1 prompt layering updates | high | `merge_both` | Upstream replaced `DeveloperInstructions`-style updates with context fragment renderers; fork needs to preserve layered governance semantics on top of new render path. | `cargo test -p codex-core compact_tests --lib` |
+| `codex-rs/tools/src/tool_registry_plan.rs` + `core/src/session/turn.rs` | E-witness tool contract exposure and planning interactions | high | `merge_both` | Dynamic tools now use namespaced loadable specs; fork keeps explicit tool-surface policy and waits/progress contract while adopting upstream namespaced filtering behavior. | `cargo test -p codex-core unified_exec::tests::unified_exec_persists_across_requests --lib`; `cargo test -p codex-core unified_exec::tests::multi_unified_exec_sessions --lib` |
+| `codex-rs/protocol/src/{protocol.rs,models.rs}` | carrier types consumed by maintenance and observability adapters | high | `accept_upstream` | Protocol changes are mostly additive/refactor-level for our seams (`RealtimeNoopRequested`, namespaced dynamic tool response field, permissions shape migration). Keep upstream protocol as authority and adapt fork seams at call sites. | `cargo test -p codex-core compact_tests --lib`; `cargo test -p codex-core config::schema::tests::config_schema_matches_fixture --lib` |
+| `codex-rs/core/src/config/mod.rs` + `codex-rs/config/src/config_toml.rs` | strict-v1 config gates, schema/versioned config expectations | medium-high | `merge_both` | Upstream added config/loader requirements and new feature surface (`semantic_broker` appeared in schema). Fork keeps governance-path config behavior while absorbing loader and schema updates. | `just write-config-schema`; `cargo test -p codex-core config::schema::tests::config_schema_matches_fixture --lib` |
+| `codex-rs/core/src/agent/control.rs` | E-witness lifecycle adapter boundary | medium | `accept_upstream` | No direct semantic-owner drift in `agent-observability`; upstream lifecycle/auth changes can stay core-owned as long as reducer contracts remain intact. | `cargo test -p codex-core compact_tests --lib` |
+
+### Notes (ingest snapshot)
+
+- Local mirror refs were updated before ingest:
+- `upstream-latest-release` -> `rust-v0.123.0` / `0785b66228`
+  - `upstream-main` -> `upstream/main` / `5e71da1424`
+- Pushing the read-only mirror branch back to `origin` remains blocked by repo
+  policy for `upstream-latest-release`.
+- Current ingest branch: `codex/update-0.123-ingest`.
+- During validation, one expected schema fixture drift (`semantic_broker` in
+  `core/config.schema.json`) was resolved by running `just write-config-schema`.
+- A full `cargo test -p codex-core` pass hit two `unified_exec` test flakes in
+  one run; both pass when re-run targeted:
+  - `unified_exec::tests::unified_exec_persists_across_requests`
+  - `unified_exec::tests::multi_unified_exec_sessions`
+
 ## 0.121.0 -> 0.122.0 (prep)
 
 ### Refs

@@ -30,8 +30,6 @@ pub enum SlashCommand {
     Fork,
     Init,
     Compact,
-    Refresh,
-    Prune,
     Plan,
     Collab,
     Agent,
@@ -78,8 +76,6 @@ impl SlashCommand {
             SlashCommand::New => "start a new chat during a conversation",
             SlashCommand::Init => "create an AGENTS.md file with instructions for Codex",
             SlashCommand::Compact => "summarize conversation to prevent hitting the context limit",
-            SlashCommand::Refresh => "refresh compact context artifacts between turns",
-            SlashCommand::Prune => "prune compact context artifacts without regeneration",
             SlashCommand::Review => "review my current changes and find issues",
             SlashCommand::Rename => "rename the current thread",
             SlashCommand::Resume => "resume a saved chat",
@@ -118,8 +114,8 @@ impl SlashCommand {
                 "let sandbox read a directory: /sandbox-add-read-dir <absolute_path>"
             }
             SlashCommand::Experimental => "toggle experimental features",
-            SlashCommand::Memories => "configure memory and compaction defaults",
-            SlashCommand::Mcp => "list configured MCP tools",
+            SlashCommand::Memories => "configure memory use and generation",
+            SlashCommand::Mcp => "list configured MCP tools; use /mcp verbose for details",
             SlashCommand::Apps => "manage apps",
             SlashCommand::Plugins => "browse plugins",
             SlashCommand::Logout => "log out of Codex",
@@ -142,6 +138,7 @@ impl SlashCommand {
                 | SlashCommand::Rename
                 | SlashCommand::Plan
                 | SlashCommand::Fast
+                | SlashCommand::Mcp
                 | SlashCommand::Side
                 | SlashCommand::Resume
                 | SlashCommand::SandboxReadRoot
@@ -164,8 +161,6 @@ impl SlashCommand {
             | SlashCommand::Fork
             | SlashCommand::Init
             | SlashCommand::Compact
-            | SlashCommand::Refresh
-            | SlashCommand::Prune
             // | SlashCommand::Undo
             | SlashCommand::Model
             | SlashCommand::Fast
