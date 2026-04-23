@@ -302,17 +302,15 @@ pub(crate) async fn run_turn(
     if run_pending_session_start_hooks(&sess, &turn_context).await {
         return None;
     }
+    let initial_user_message_text = UserMessageItem::new(&input).message();
     let additional_contexts = if input.is_empty() {
         Vec::new()
     } else {
         let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input.clone());
         let response_item: ResponseItem = initial_input_for_turn.clone().into();
-        let user_prompt_submit_outcome = run_user_prompt_submit_hooks(
-            &sess,
-            &turn_context,
-            UserMessageItem::new(&input).message(),
-        )
-        .await;
+        let user_prompt_submit_outcome =
+            run_user_prompt_submit_hooks(&sess, &turn_context, initial_user_message_text.clone())
+                .await;
         if user_prompt_submit_outcome.should_stop {
             record_additional_contexts(
                 &sess,
@@ -408,10 +406,8 @@ pub(crate) async fn run_turn(
     // 1. At the start of a turn, so the fresh user prompt in `input` gets sampled first.
     // 2. After auto-compact, when model/tool continuation needs to resume before any steer.
     let mut can_drain_pending_input = input.is_empty();
-    let mut broker_current_turn_text = {
-        let text = UserMessageItem::new(&input).message();
-        (!text.trim().is_empty()).then_some(text)
-    };
+    let mut broker_current_turn_text =
+        (!initial_user_message_text.trim().is_empty()).then_some(initial_user_message_text);
 
     loop {
         if run_pending_session_start_hooks(&sess, &turn_context).await {
