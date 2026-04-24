@@ -195,19 +195,26 @@ Key question:
 
 Watch:
 
-- `core/src/codex.rs`
-  - compact, refresh, and prune dispatch
+- `core/src/session/turn.rs`
+  - turn execution
   - `run_pre_sampling_compact`
   - `maybe_run_previous_model_inline_compact`
   - `run_auto_compact`
-  - `build_initial_context`
   - `build_prompt`
+  - `TurnContext` construction and fields
+- `core/src/session/handlers.rs`
+  - compact, refresh, prune, rollback, and review dispatch
+- `core/src/session/mod.rs`
+  - `build_initial_context`
   - `replace_history`
   - `replace_compacted_history`
   - `clone_history`
   - `reference_context_item`
   - `build_settings_update_items`
-  - `TurnContext` construction and fields
+- `core/src/session/session.rs`
+  - session construction, restore, and resume paths
+- `core/src/session/turn_context.rs`
+  - turn-context derivation and update application
 
 Why it matters:
 
@@ -384,12 +391,21 @@ Key question:
 
 Watch:
 
-- `core/src/codex.rs`
-  - `deliver_event_raw`
+- `core/src/session/mod.rs`
+  - `send_event`
   - `send_event_raw`
+  - `deliver_event_raw`
+  - `ProgressObservation`
   - agent status update call
   - progress recording hook
+  - generated legacy event handling
+- `core/src/session/handlers.rs`
+  - direct raw event delivery
   - parent or child terminal notification paths
+- `core/src/session/turn.rs`
+  - model-streaming event emission
+- `core/src/tools/events.rs`
+  - tool-runtime event emission helpers
 
 Why it matters:
 
@@ -555,7 +571,7 @@ code.
 ```bash
 rg -n "enum ResponseItem|enum ContentItem|content_items_to_text|remove_corresponding|FunctionCallOutputPayload" protocol/src
 
-rg -n "compact_conversation_history|run_auto_compact|run_pre_sampling_compact|process_compacted_history|replace_compacted_history|build_initial_context|build_prompt" core/src
+rg -n "compact_conversation_history|run_auto_compact|run_pre_sampling_compact|process_compacted_history|replace_compacted_history|build_initial_context|build_prompt" core/src/session core/src/compact.rs core/src/compact_remote.rs
 
 rg -n "for_prompt|record_items|raw_items|normalize_history|remove_orphan|call_output" core/src/context_manager
 
@@ -569,7 +585,7 @@ rg -n "RefreshContext|PruneContext|ThreadMemoryMode|Op::Compact|Op::Refresh|Op::
 ```bash
 rg -n "enum EventMsg|enum AgentStatus|enum SessionSource|enum SubAgentSource|ThreadId|TurnAbortReason" protocol/src
 
-rg -n "deliver_event_raw|send_event_raw|agent_status_from_event|maybe_notify_parent|forward_child_completion" core/src
+rg -n "deliver_event_raw|send_event_raw|send_event\\(|ProgressObservation|agent_status_from_event|maybe_notify_parent|forward_child_completion" core/src/session core/src/tools core/src/agent
 
 rg -n "seed_agent_progress|record_progress_event|subscribe_progress_seq|inspect_agent_progress|get_status|spawn_agent|resume_agent" core/src/agent core/src/thread_manager.rs
 

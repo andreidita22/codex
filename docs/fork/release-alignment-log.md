@@ -35,6 +35,8 @@ For each upstream release ingest:
 7. If a later PR branch adds fork-only follow-up commits, record those as a
    separate post-ingest alignment note instead of mixing them into the raw
    upstream-ingest seam table.
+8. Before opening or retargeting an alignment PR to `main`, record that the
+   alignment-only PR guard passed.
 
 ## Decision taxonomy
 
@@ -69,6 +71,7 @@ Copy this shape for future releases.
 - fork main:
 - upstream target:
 - comparison range:
+- review topology:
 
 ### Scale
 
@@ -85,6 +88,9 @@ Copy this shape for future releases.
 - upstream themes that matter
 - deferred questions
 - post-ingest cleanup
+- alignment-only PR guard:
+  - `git merge-base --is-ancestor codex/update-<ver>-ingest main`
+  - `git log --oneline main..codex/update-<ver>-align`
 ```
 
 ## 0.122.0 -> 0.123.0 (prep + ingest snapshot)

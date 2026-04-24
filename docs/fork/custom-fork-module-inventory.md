@@ -44,7 +44,7 @@ release-merge artifact.
 | strict-v1 p1 packets/compiler | merged on `origin/main` | `4c24a10b79`, `933e19a1e1` | `governance/packets.rs`, `governance/compiler.rs`, `config/mod.rs` |
 | strict-v1 p2 transitions/diagnostics | merged on `origin/main` | `b1841b1abe`, `0b54dfec38` | `governance/transitions.rs`, `governance/diagnostics.rs` |
 | strict-v1 p3 thread memory | merged on `origin/main` | `a611d96b36`, `62adb98ead` | `governance/thread_memory.rs`, `compact.rs`, `compact_remote.rs`, templates |
-| strict-v1 p4 prompt layering | merged on `origin/main` | `6f53f9c9de`, `c287ba8676` | `governance/prompt_layers.rs`, `codex.rs`, `context_manager/updates.rs` |
+| strict-v1 p4 prompt layering | merged on `origin/main` | `6f53f9c9de`, `c287ba8676` | `governance/prompt_layers.rs`, `session/mod.rs`, `context_manager/updates.rs` |
 | strict-v1 p5 fail-closed compaction window | merged on `origin/main` | `e42a21fdbf`, `39232dce39` | `compact.rs`, `compact_remote.rs`, `compact_tests.rs` |
 | Thread-spawn sub-agent tool containment | merged on `origin/main` | `4c1ce68a44` | `tools/spec.rs`, `tools/spec_tests.rs` |
 
@@ -77,7 +77,8 @@ release-merge artifact.
 - [codex-rs/context-maintenance-policy/src/continuation_bridge/rich_review.rs](../../codex-rs/context-maintenance-policy/src/continuation_bridge/rich_review.rs)
 - [codex-rs/core/src/compact.rs](../../codex-rs/core/src/compact.rs)
 - [codex-rs/core/src/compact_remote.rs](../../codex-rs/core/src/compact_remote.rs)
-- [codex-rs/core/src/codex.rs](../../codex-rs/core/src/codex.rs)
+- [codex-rs/core/src/session/mod.rs](../../codex-rs/core/src/session/mod.rs)
+- [codex-rs/core/src/session/turn_context.rs](../../codex-rs/core/src/session/turn_context.rs)
 - [codex-rs/core/src/config/mod.rs](../../codex-rs/core/src/config/mod.rs)
 - [codex-rs/core/src/agent/control.rs](../../codex-rs/core/src/agent/control.rs)
 
@@ -171,7 +172,7 @@ release-merge artifact.
 - [codex-rs/core/src/agent/progress.rs](../../codex-rs/core/src/agent/progress.rs)
 - [codex-rs/core/src/agent/control.rs](../../codex-rs/core/src/agent/control.rs)
 - [codex-rs/core/src/thread_manager.rs](../../codex-rs/core/src/thread_manager.rs)
-- [codex-rs/core/src/codex.rs](../../codex-rs/core/src/codex.rs)
+- [codex-rs/core/src/session/mod.rs](../../codex-rs/core/src/session/mod.rs)
 - [codex-rs/core/src/tools/handlers/agent_progress.rs](../../codex-rs/core/src/tools/handlers/agent_progress.rs)
 - [codex-rs/core/src/tools/spec.rs](../../codex-rs/core/src/tools/spec.rs)
 - [codex-rs/tools/src/agent_progress_tool.rs](../../codex-rs/tools/src/agent_progress_tool.rs)
@@ -274,7 +275,8 @@ release-merge artifact.
 - [codex-rs/context-maintenance-policy/src/thread_memory.rs](../../codex-rs/context-maintenance-policy/src/thread_memory.rs)
 - [codex-rs/core/src/compact.rs](../../codex-rs/core/src/compact.rs)
 - [codex-rs/core/src/compact_remote.rs](../../codex-rs/core/src/compact_remote.rs)
-- [codex-rs/core/src/codex.rs](../../codex-rs/core/src/codex.rs)
+- [codex-rs/core/src/session/mod.rs](../../codex-rs/core/src/session/mod.rs)
+- [codex-rs/core/src/session/turn.rs](../../codex-rs/core/src/session/turn.rs)
 - [codex-rs/context-maintenance-policy/templates/thread_memory/prompt.md](../../codex-rs/context-maintenance-policy/templates/thread_memory/prompt.md)
 - [codex-rs/context-maintenance-policy/templates/thread_memory/schema.json](../../codex-rs/context-maintenance-policy/templates/thread_memory/schema.json)
 
@@ -307,7 +309,7 @@ release-merge artifact.
 ### Runtime hot files
 
 - [codex-rs/core/src/governance/prompt_layers.rs](../../codex-rs/core/src/governance/prompt_layers.rs)
-- [codex-rs/core/src/codex.rs](../../codex-rs/core/src/codex.rs)
+- [codex-rs/core/src/session/mod.rs](../../codex-rs/core/src/session/mod.rs)
 - [codex-rs/core/src/context_manager/updates.rs](../../codex-rs/core/src/context_manager/updates.rs)
 - [codex-rs/core/templates/governance/prompt_layering.md](../../codex-rs/core/templates/governance/prompt_layering.md)
 
@@ -391,7 +393,9 @@ These are the files most likely to conflict again on future upstream ingests:
 
 - [codex-rs/core/src/compact.rs](../../codex-rs/core/src/compact.rs)
 - [codex-rs/core/src/compact_remote.rs](../../codex-rs/core/src/compact_remote.rs)
-- [codex-rs/core/src/codex.rs](../../codex-rs/core/src/codex.rs)
+- [codex-rs/core/src/session/mod.rs](../../codex-rs/core/src/session/mod.rs)
+- [codex-rs/core/src/session/turn.rs](../../codex-rs/core/src/session/turn.rs)
+- [codex-rs/core/src/session/handlers.rs](../../codex-rs/core/src/session/handlers.rs)
 - [codex-rs/core/src/config/mod.rs](../../codex-rs/core/src/config/mod.rs)
 - [codex-rs/core/config.schema.json](../../codex-rs/core/config.schema.json)
 - [codex-rs/core/src/tools/spec.rs](../../codex-rs/core/src/tools/spec.rs)

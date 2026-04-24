@@ -43,8 +43,11 @@ is already correct.
   - contains both upstream functionality already ingested and the fork-owned
     custom modules
 - `upstream-latest-release`
-  - read-only local tracking branch for the latest upstream `rust-v*` release
+  - read-only local tracking branch for the target upstream `rust-v*` release
+    currently being ingested
   - this is the reference branch used for release ingest comparisons
+  - this may intentionally point to an older release than the newest upstream
+    tag when the fork is ingesting releases one at a time
 - `upstream-main`
   - read-only local tracking branch for live upstream `main`
   - used for fast inspection of incoming upstream work, not for release ingest
@@ -54,7 +57,8 @@ is already correct.
   - used to ingest the new upstream release into the fork baseline
   - not opened as a PR
 - `codex/update-<version>-align`
-  - temporary review branch created from the newly updated fork `main`
+  - temporary review branch created from either the validated ingest branch or
+    the newly updated fork `main`
   - contains only fork-owned adaptation commits made after the upstream ingest
   - this is the branch that should be opened as a PR
 
@@ -71,12 +75,12 @@ That lets Git reuse repeated seam resolutions across future release ingests.
 
 ### 1. Update the upstream tracking branches
 
-Fetch upstream tags, move `upstream-latest-release` to the new release tag, and
-refresh `upstream-main` to live upstream `main`.
+Fetch upstream tags, move `upstream-latest-release` to the target release tag,
+and refresh `upstream-main` to live upstream `main`.
 
 ```sh
 git fetch upstream --tags --prune
-git branch -f upstream-latest-release rust-v0.120.0
+git branch -f upstream-latest-release rust-v<version>
 git branch -f upstream-main upstream/main
 ```
 
@@ -97,7 +101,7 @@ Create the ingest branch from current fork `main`, not from
 ```sh
 git switch main
 git pull --ff-only origin main
-git switch -c codex/update-0.120-ingest
+git switch -c codex/update-<version>-ingest
 ```
 
 This branch is for local upstream ingestion only. It is not the review branch.
@@ -124,6 +128,8 @@ files before touching code.
 Typical commands:
 
 ```sh
+git diff --stat <old-release-tag>..upstream-latest-release
+git diff --name-only <old-release-tag>..upstream-latest-release
 git diff --stat main..upstream-latest-release
 git diff --name-only main..upstream-latest-release
 git diff --name-only main...upstream-latest-release
@@ -206,7 +212,32 @@ The watchlist document also defines the required validation order:
 2. then high-signal adapter/runtime tests
 3. then any broader integration checks justified by the touched upstream seams
 
-### 7. Land the ingest step locally, without a PR
+### 7. Choose the alignment-review topology
+
+To keep review bots focused on fork-owned commits, never open or retarget an
+alignment PR to `main` until `main` already contains the ingest branch ancestry.
+
+If review should happen before the raw ingest lands, use this topology:
+
+```sh
+git switch codex/update-<version>-ingest
+git switch -c codex/update-<version>-align
+# add only fork-owned alignment commits
+```
+
+Open the PR as:
+
+```text
+codex/update-<version>-align -> codex/update-<version>-ingest
+```
+
+That base already contains the upstream release ancestry, so bots review only
+the alignment commits.
+
+If the raw ingest is ready to land before review, skip the pre-landing PR and
+create the alignment branch from updated `main` after the ingest is merged.
+
+### 8. Land the ingest step locally, without a review PR
 
 Once the upstream ingest branch is validated, land it onto fork `main`
 directly. This keeps the upstream release delta out of PR review and prevents
@@ -216,7 +247,7 @@ Typical pattern:
 
 ```sh
 git switch main
-git merge --ff-only codex/update-0.120-ingest
+git merge --ff-only codex/update-<version>-ingest
 git push origin main
 ```
 
@@ -224,24 +255,37 @@ If a fast-forward is not possible because you intentionally used a temporary
 integration branch with local-only commits, merge or swap intentionally only
 after validation.
 
-### 8. Create the PR branch for fork-owned alignment commits
+### 9. Open or retarget the alignment PR to main
 
-Now branch from the newly updated fork `main` and place only fork-specific
-adaptation commits there.
+Before opening or retargeting the alignment PR to `main`, verify that `main`
+contains the ingest branch ancestry and that the PR commit set is alignment
+only:
+
+```sh
+git merge-base --is-ancestor codex/update-<version>-ingest main
+git log --oneline main..codex/update-<version>-align
+```
+
+The first command must pass. The second command must list only fork-owned
+alignment commits. If upstream release commits appear, the PR base is wrong or
+`main` does not yet contain the ingest ancestry.
+
+If you did not create `codex/update-<version>-align` earlier, create it from
+the updated `main` now:
 
 ```sh
 git switch main
 git pull --ff-only origin main
-git switch -c codex/update-0.120-align
+git switch -c codex/update-<version>-align
 ```
 
-This branch should contain only:
+The alignment branch should contain only:
 
 - fork-owned follow-up adjustments
 - reviewable policy/alignment choices
 - any fixes discovered only after the upstream ingest baseline was landed
 
-Open the PR from `codex/update-0.120-align` into fork `main`.
+Open the PR from `codex/update-<version>-align` into fork `main`.
 
 This keeps bot review focused on the fork delta instead of the upstream release
 churn.
