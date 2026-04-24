@@ -93,6 +93,66 @@ Copy this shape for future releases.
   - `git log --oneline main..codex/update-<ver>-align`
 ```
 
+## 0.123.0 -> 0.124.0 (prep)
+
+### Refs
+
+- fork main at ingest start: `dfe2001199`
+- upstream target: `rust-v0.124.0` / `e9fb49366c` (tag object `e93a08390b`)
+- live upstream inspection ref at prep time: `upstream-main` / `0db6811b7c`
+- comparison range for upstream release delta: `rust-v0.123.0..rust-v0.124.0`
+- comparison range for fork ingest surface: `main..upstream-latest-release`
+- review topology: Path B; land validated raw ingest into `main` first, then create
+  any `codex/update-0.124-align` review branch from updated `main`
+
+### Scale
+
+- upstream release delta (`rust-v0.123.0..rust-v0.124.0`): `599` files changed,
+  `43224` insertions, `10946` deletions
+- current fork-main vs upstream target (`main..upstream-latest-release`): `743`
+  files changed, `44110` insertions, `50878` deletions
+- direct overlap (`main...upstream-latest-release`): `599` files
+- direct seam overlap candidates in upstream delta: `38` files
+
+### High-level read (pre-alignment)
+
+`0.124` changes a large amount of shared runtime surface without directly
+rewriting the fork-owned policy crates. The highest-risk themes before ingest
+are:
+
+- protocol operation and event growth around turn environment selection,
+  guardian warnings, and model verification
+- session runtime changes across turn setup, context construction, handler
+  dispatch, MCP/tool paths, and thread/task lifecycle boundaries
+- config crate churn that may affect config schema and fork-owned runtime gates
+- TUI slash-dispatch/chatwidget churn that can affect refresh/prune and fork
+  command routing
+
+### Seam table (initial prep)
+
+| File | Fork-owned bundles affected | Initial risk | Decision | Rationale | Validation |
+| --- | --- | --- | --- | --- | --- |
+| `codex-rs/protocol/src/{protocol.rs,models.rs,config_types.rs,request_permissions.rs}` | protocol carrier types consumed by maintenance, observability, and tool-surface adapters | very high | `defer` | Upstream adds environment-selection fields plus guardian/model-verification event surface. These can compile while bypassing fork-owned classifiers or call-site assumptions. | pre-ingest only |
+| `codex-rs/core/src/session/{mod.rs,turn.rs,handlers.rs,session.rs,turn_context.rs,mcp.rs}` | strict-v1 prompt layering, context-maintenance runtime adapters, observability runtime adapters, E-witness tool/runtime wiring | very high | `defer` | Most fork behavior is attached through session seams after the 0.122 split; upstream runtime movement here needs merge-both review, not blind upstream acceptance. | pre-ingest only |
+| `codex-rs/core/src/context_manager/updates.rs` | strict-v1 prompt layering and context-fragment update rendering | high | `defer` | Upstream changed nearby context update/rendering paths in 0.123, and this file remains a bypass risk for governance prompt layers. | pre-ingest only |
+| `codex-rs/core/src/{compact.rs,compact_remote.rs}` | continuation bridge, thread memory, compact artifact reinsertion, summary classification | high | `defer` | Compact code controls artifact generation/reinsertion and local-vs-remote behavior; upstream improvements need to be absorbed without weakening fork-owned final-history invariants. | pre-ingest only |
+| `codex-rs/core/src/tools/{orchestrator.rs,registry.rs,handlers/*}` | E-witness tool contract exposure, thread-spawn containment, unified exec behavior | high | `defer` | Tool registry/orchestration changes can alter which tools are exposed or how progress is surfaced to observability. | pre-ingest only |
+| `codex-rs/config/src/{config_toml.rs,config_requirements.rs,hook_config.rs,lib.rs,types.rs}` | config gates for fork-owned features and schema expectations | medium-high | `defer` | Config churn must preserve fork-owned gates and schema output while absorbing upstream feature/config loader changes. | pre-ingest only |
+| `codex-rs/app-server-protocol/src/protocol/{common.rs,v2.rs}` and `codex-rs/app-server/src/codex_message_processor.rs` | app-server refresh/prune and thread operation surfaces | medium-high | `defer` | App-server protocol changes are active API surface; refresh/prune and related fork ops must still route to the correct core operations. | pre-ingest only |
+| `codex-rs/tui/src/{chatwidget.rs,chatwidget/slash_dispatch.rs}` | slash command routing for fork maintenance commands | medium | `defer` | UI command churn can silently drop or rename fork-owned refresh/prune routing. | pre-ingest only |
+
+### Notes
+
+- Local mirror refs were updated before ingest:
+  - `upstream-latest-release` -> `rust-v0.124.0` / `e9fb49366c`
+  - `upstream-main` -> `upstream/main` / `0db6811b7c`
+- `rust-v0.125.0` already exists upstream. This ingest intentionally targets
+  `rust-v0.124.0` first.
+- Current ingest branch: `codex/update-0.124-ingest`.
+- Alignment-only PR guard before any later PR to `main`:
+  - `git merge-base --is-ancestor codex/update-0.124-ingest main`
+  - `git log --oneline main..codex/update-0.124-align`
+
 ## 0.122.0 -> 0.123.0 (prep + ingest snapshot)
 
 ### Refs
