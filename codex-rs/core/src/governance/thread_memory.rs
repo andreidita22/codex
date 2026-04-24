@@ -14,6 +14,7 @@ use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::models::content_items_to_text;
+use codex_rollout_trace::InferenceTraceContext;
 use futures::StreamExt;
 
 pub(crate) async fn generate_thread_memory_item(
@@ -63,6 +64,7 @@ pub(crate) async fn generate_thread_memory_item(
         },
         personality: turn_context.personality,
         output_schema: Some(thread_memory_output_schema()),
+        output_schema_strict: true,
     };
     let turn_metadata_header = turn_context.turn_metadata_state.current_header_value();
     let mut client_session = sess.services.model_client.new_session();
@@ -75,6 +77,7 @@ pub(crate) async fn generate_thread_memory_item(
             turn_context.reasoning_summary,
             turn_context.config.service_tier,
             turn_metadata_header.as_deref(),
+            &InferenceTraceContext::disabled(),
         )
         .await?;
 
@@ -100,7 +103,8 @@ pub(crate) async fn generate_thread_memory_item(
             | ResponseEvent::ReasoningContentDelta { .. }
             | ResponseEvent::ReasoningSummaryPartAdded { .. }
             | ResponseEvent::RateLimits(_)
-            | ResponseEvent::ModelsEtag(_) => {}
+            | ResponseEvent::ModelsEtag(_)
+            | ResponseEvent::ModelVerifications(_) => {}
         }
     }
 
