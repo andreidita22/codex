@@ -93,7 +93,7 @@ Copy this shape for future releases.
   - `git log --oneline main..codex/update-<ver>-align`
 ```
 
-## 0.124.0 -> 0.125.0 (prep)
+## 0.124.0 -> 0.125.0 (prep + ingest snapshot)
 
 ### Refs
 
@@ -134,14 +134,14 @@ and exec/runtime hardening. The highest-risk fork seams are:
 
 | File | Fork-owned bundles affected | Initial risk | Decision | Rationale | Validation |
 | --- | --- | --- | --- | --- | --- |
-| `codex-rs/Cargo.toml` and `codex-rs/Cargo.lock` | workspace membership and fork crate versions | high | `merge_both` | Preserve fork-owned workspace crates while accepting the 0.125 workspace version and upstream dependency graph. | pending |
-| `codex-rs/app-server-protocol/src/protocol/{common.rs,v2.rs}` and generated schemas | app-server refresh/prune methods and v2 operation surface | high | `merge_both` | Accept upstream Unix socket, sticky environment, permission-profile, and marketplace API growth while keeping fork refresh/prune methods in Rust and generated TS/JSON schemas. | pending |
-| `codex-rs/core/src/session/{handlers.rs,mod.rs,session.rs,turn_context.rs}` | governance prompt layering, continuation bridge, context maintenance, observability adapters | very high | `merge_both` | Preserve fork-owned session semantics while accepting upstream permission-profile, environment, and thread routing refactors. | pending |
-| `codex-rs/core/src/{lib.rs,compact_remote.rs,thread_manager.rs,tasks/mod.rs}` | exported fork modules, remote compaction, task lifecycle, thread memory | high | `merge_both` | Keep fork-owned modules exported and keep continuation/thread-memory behavior while absorbing upstream rollout trace and remote thread store changes. | pending |
-| `codex-rs/config/src/{config_toml.rs,lib.rs}` and `codex-rs/core/config.schema.json` | fork config gates, compaction engine config, auto-review compatibility | medium-high | `merge_both` | Accept upstream config/profile changes without dropping fork-owned config fields or schema entries. | pending |
-| `codex-rs/core/src/tools/**` and `codex-rs/core/src/agent/control.rs` | E-witness tool exposure, subagent containment, observability event paths | high | `merge_both` | Accept upstream MCP/shell/unified-exec/plugin movement while preserving fork-owned tool observations and containment. | pending |
-| `codex-rs/protocol/src/{models.rs,protocol.rs,request_permissions.rs}` | protocol carriers consumed by fork adapters | high | `accept_upstream` | Upstream protocol additions are expected to be additive; fork adapters should be updated explicitly if exhaustiveness or carrier shape changes. | pending |
-| `codex-rs/tui/src/chatwidget.rs` | user-visible command/status rendering for fork maintenance flows | medium | `accept_upstream` | No known fork-only TUI conflict yet; keep as a watch point for post-ingest validation. | pending |
+| `codex-rs/Cargo.toml` and `codex-rs/Cargo.lock` | workspace membership and fork crate versions | high | `merge_both` | Preserved fork-owned workspace crates while accepting the 0.125 workspace version and upstream dependency graph. | `cargo check -p codex-core -p codex-app-server-client`; `cargo test -p codex-config -p codex-tools`; `just bazel-lock-update`; `just bazel-lock-check` |
+| `codex-rs/app-server-protocol/src/protocol/{common.rs,v2.rs}` and generated schemas | app-server refresh/prune methods and v2 operation surface | high | `merge_both` | Accepted upstream Unix socket, sticky environment, permission-profile, and marketplace API growth while keeping fork refresh/prune methods in Rust and generated TS/JSON schemas. | `just write-app-server-schema`; `cargo test -p codex-app-server-protocol --test schema_fixtures`; exact refresh/prune app-server tests |
+| `codex-rs/core/src/session/{handlers.rs,mod.rs,session.rs,turn_context.rs}` | governance prompt layering, continuation bridge, context maintenance, observability adapters | very high | `merge_both` | Preserved fork-owned `ProgressObservation` event routing while accepting upstream live-thread persistence, permission-profile, environment-selection, MCP auth, and rollout-trace event recording. | `cargo check -p codex-core -p codex-app-server-client`; `cargo test -p codex-core compact --lib`; `cargo test -p codex-core context_maintenance --lib` |
+| `codex-rs/core/src/{lib.rs,compact_remote.rs,thread_manager.rs,tasks/mod.rs}` | exported fork modules, remote compaction, task lifecycle, thread memory | high | `merge_both` | Kept fork-owned modules exported and kept continuation/thread-memory behavior while absorbing upstream rollout trace and remote thread store changes. | `cargo check -p codex-core -p codex-app-server-client`; core compaction/context-maintenance tests |
+| `codex-rs/config/src/{config_toml.rs,lib.rs}` and `codex-rs/core/config.schema.json` | fork config gates, compaction engine config, auto-review compatibility | medium-high | `merge_both` | Accepted upstream config/profile changes without dropping fork-owned config fields or schema entries. | `just write-config-schema`; `cargo test -p codex-config -p codex-tools` |
+| `codex-rs/core/src/tools/**` and `codex-rs/core/src/agent/control.rs` | E-witness tool exposure, subagent containment, observability event paths | high | `merge_both` | Accepted upstream MCP/shell/unified-exec/plugin movement while preserving fork-owned tool observations and containment. | `cargo test -p codex-tools`; `cargo test -p codex-core tools::spec::tests --lib` |
+| `codex-rs/protocol/src/{models.rs,protocol.rs,request_permissions.rs}` | protocol carriers consumed by fork adapters | high | `accept_upstream` | Upstream protocol additions were additive for this ingest; fork adapters compiled without exhaustiveness changes. | `cargo check -p codex-core -p codex-app-server-client`; schema fixture tests |
+| `codex-rs/tui/src/chatwidget.rs` | user-visible command/status rendering for fork maintenance flows | medium | `accept_upstream` | No fork-only TUI conflict was needed during raw ingest; this remains a post-ingest alignment watch point. | `just fmt` |
 
 ### Notes
 
@@ -151,7 +151,25 @@ and exec/runtime hardening. The highest-risk fork seams are:
 - Current ingest branch: `codex/update-0.125-ingest`.
 - `rust-v0.126.0-alpha.1` exists upstream but is intentionally out of scope for
   this stable-release ingest.
-- Validation so far: pending.
+- Merge conflicts resolved in `codex-rs/Cargo.toml`,
+  `codex-rs/app-server-protocol/schema/typescript/ClientRequest.ts`,
+  `codex-rs/core/src/lib.rs`, `codex-rs/core/src/session/handlers.rs`,
+  `codex-rs/core/src/session/mod.rs`, `codex-rs/core/src/session/session.rs`,
+  and `codex-rs/core/src/session/turn_context.rs`.
+- Validation:
+  - `cargo check -p codex-core -p codex-app-server-client`
+  - `just write-app-server-schema`
+  - `just write-config-schema`
+  - `just fmt`
+  - `cargo test -p codex-app-server-protocol --test schema_fixtures`
+  - `cargo test -p codex-config -p codex-tools`
+  - `cargo test -p codex-core compact --lib`
+  - `cargo test -p codex-core context_maintenance --lib`
+  - `cargo test -p codex-core tools::spec::tests --lib`
+  - `cargo test -p codex-app-server suite::v2::compaction::thread_refresh_start_triggers_compaction_and_returns_empty_response --test all -- --exact`
+  - `cargo test -p codex-app-server suite::v2::compaction::thread_prune_start_triggers_compaction_and_returns_empty_response --test all -- --exact`
+  - `just bazel-lock-update`
+  - `just bazel-lock-check`
 - Alignment-only PR guard before any later PR to `main`:
   - `git merge-base --is-ancestor codex/update-0.125-ingest main`
   - `git log --oneline main..codex/update-0.125-align`
