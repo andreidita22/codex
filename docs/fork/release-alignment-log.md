@@ -93,6 +93,69 @@ Copy this shape for future releases.
   - `git log --oneline main..codex/update-<ver>-align`
 ```
 
+## 0.124.0 -> 0.125.0 (prep)
+
+### Refs
+
+- fork main at ingest start: `26d9ee0501`
+- upstream target: `rust-v0.125.0` / `637f7dd6d7` (tag object `7d8152a5d7`)
+- live upstream inspection ref at prep time: `upstream-main` / `1c3287125f`
+- comparison range for upstream release delta: `rust-v0.124.0..rust-v0.125.0`
+- comparison range for fork ingest surface: `origin/main..upstream-latest-release`
+- review topology: Path B; land validated raw ingest into `main` first, then create
+  `codex/update-0.125-align` from updated `main`
+
+### Scale
+
+- upstream release delta (`rust-v0.124.0..rust-v0.125.0`): `398` files changed,
+  `19229` insertions, `6448` deletions
+- current fork-main vs upstream target (`origin/main..upstream-latest-release`):
+  `561` files changed, `20216` insertions, `46625` deletions
+- direct overlap (`origin/main...upstream-latest-release`): `398` files
+- direct seam overlap candidates in upstream delta: `27` files
+
+### High-level read (pre-alignment)
+
+`0.125` focuses on app-server transport/thread APIs, permission-profile
+round-tripping, model-provider ownership, rollout tracing, plugin management,
+and exec/runtime hardening. The highest-risk fork seams are:
+
+- session construction and turn routing, where upstream permission-profile and
+  environment-selection changes overlap with fork-owned governance prompt
+  layering, continuation bridge, context maintenance, and observability wiring
+- app-server protocol/schema churn, where fork-owned refresh/prune methods must
+  remain in the generated v2 surface
+- config/schema changes, where fork-owned maintenance and compaction config
+  must remain serializable and documented
+- tool/runtime routing, where upstream MCP, shell, unified-exec, and plugin
+  changes must not bypass fork-owned observability or containment paths
+
+### Seam table
+
+| File | Fork-owned bundles affected | Initial risk | Decision | Rationale | Validation |
+| --- | --- | --- | --- | --- | --- |
+| `codex-rs/Cargo.toml` and `codex-rs/Cargo.lock` | workspace membership and fork crate versions | high | `merge_both` | Preserve fork-owned workspace crates while accepting the 0.125 workspace version and upstream dependency graph. | pending |
+| `codex-rs/app-server-protocol/src/protocol/{common.rs,v2.rs}` and generated schemas | app-server refresh/prune methods and v2 operation surface | high | `merge_both` | Accept upstream Unix socket, sticky environment, permission-profile, and marketplace API growth while keeping fork refresh/prune methods in Rust and generated TS/JSON schemas. | pending |
+| `codex-rs/core/src/session/{handlers.rs,mod.rs,session.rs,turn_context.rs}` | governance prompt layering, continuation bridge, context maintenance, observability adapters | very high | `merge_both` | Preserve fork-owned session semantics while accepting upstream permission-profile, environment, and thread routing refactors. | pending |
+| `codex-rs/core/src/{lib.rs,compact_remote.rs,thread_manager.rs,tasks/mod.rs}` | exported fork modules, remote compaction, task lifecycle, thread memory | high | `merge_both` | Keep fork-owned modules exported and keep continuation/thread-memory behavior while absorbing upstream rollout trace and remote thread store changes. | pending |
+| `codex-rs/config/src/{config_toml.rs,lib.rs}` and `codex-rs/core/config.schema.json` | fork config gates, compaction engine config, auto-review compatibility | medium-high | `merge_both` | Accept upstream config/profile changes without dropping fork-owned config fields or schema entries. | pending |
+| `codex-rs/core/src/tools/**` and `codex-rs/core/src/agent/control.rs` | E-witness tool exposure, subagent containment, observability event paths | high | `merge_both` | Accept upstream MCP/shell/unified-exec/plugin movement while preserving fork-owned tool observations and containment. | pending |
+| `codex-rs/protocol/src/{models.rs,protocol.rs,request_permissions.rs}` | protocol carriers consumed by fork adapters | high | `accept_upstream` | Upstream protocol additions are expected to be additive; fork adapters should be updated explicitly if exhaustiveness or carrier shape changes. | pending |
+| `codex-rs/tui/src/chatwidget.rs` | user-visible command/status rendering for fork maintenance flows | medium | `accept_upstream` | No known fork-only TUI conflict yet; keep as a watch point for post-ingest validation. | pending |
+
+### Notes
+
+- Local mirror refs were updated before ingest:
+  - `upstream-latest-release` -> `rust-v0.125.0` / `637f7dd6d7`
+  - `upstream-main` -> `upstream/main` / `1c3287125f`
+- Current ingest branch: `codex/update-0.125-ingest`.
+- `rust-v0.126.0-alpha.1` exists upstream but is intentionally out of scope for
+  this stable-release ingest.
+- Validation so far: pending.
+- Alignment-only PR guard before any later PR to `main`:
+  - `git merge-base --is-ancestor codex/update-0.125-ingest main`
+  - `git log --oneline main..codex/update-0.125-align`
+
 ## 0.123.0 -> 0.124.0 (prep + ingest snapshot)
 
 ### Refs
