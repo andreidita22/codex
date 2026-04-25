@@ -1266,6 +1266,13 @@ fn default_continuation_bridge_output() -> Value {
     })
 }
 
+fn default_thread_memory_output(marker: &str) -> Value {
+    serde_json::json!({
+        "schema": "odeu_thread_memory_v1",
+        "marker": marker,
+    })
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ContinuationBridgeRequestMatcher;
 
@@ -1293,6 +1300,31 @@ impl Match for ContinuationBridgeRequestMatcher {
                     "continuation_bridge_baton_v1" | "continuation_bridge_v2"
                 )
             })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ThreadMemoryRequestMatcher;
+
+impl Match for ThreadMemoryRequestMatcher {
+    fn matches(&self, request: &wiremock::Request) -> bool {
+        if request.url.path() != "/v1/responses" {
+            return false;
+        }
+        let body = decode_body_bytes(
+            &request.body,
+            request
+                .headers
+                .get("content-encoding")
+                .and_then(|value| value.to_str().ok()),
+        );
+        let Ok(body_json): Result<Value, _> = serde_json::from_slice(&body) else {
+            return false;
+        };
+        body_json
+            .pointer("/text/format/schema/properties/schema/enum/0")
+            .and_then(Value::as_str)
+            == Some("odeu_thread_memory_v1")
     }
 }
 
@@ -1326,6 +1358,34 @@ pub async fn mount_continuation_bridge_responder(
     let (mock, response_mock) = base_mock();
     mock.and(ContinuationBridgeRequestMatcher)
         .respond_with(sse_response(bridge_response))
+        .up_to_n_times(128)
+        .mount(server)
+        .await;
+
+    response_mock
+}
+
+pub async fn mount_default_thread_memory_responder_with_marker(
+    server: &MockServer,
+    marker: &str,
+) -> ResponseMock {
+    let memory_body = serde_json::to_string(&default_thread_memory_output(marker))
+        .expect("serialize thread memory output");
+    mount_thread_memory_responder(server, &memory_body).await
+}
+
+pub async fn mount_thread_memory_responder(
+    server: &MockServer,
+    thread_memory_body: &str,
+) -> ResponseMock {
+    let thread_memory_response = sse(vec![
+        ev_assistant_message("thread-memory-message", thread_memory_body),
+        ev_completed("thread-memory-response"),
+    ]);
+
+    let (mock, response_mock) = base_mock();
+    mock.and(ThreadMemoryRequestMatcher)
+        .respond_with(sse_response(thread_memory_response))
         .up_to_n_times(128)
         .mount(server)
         .await;

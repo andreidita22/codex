@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use codex_core::compact::SUMMARY_PREFIX;
+use codex_core::config::GovernancePathVariant;
 use codex_login::CodexAuth;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::ContentItem;
@@ -92,6 +93,14 @@ fn is_continuation_bridge_request(request: &responses::ResponsesRequest) -> bool
                 "continuation_bridge_baton_v1" | "continuation_bridge_v2"
             )
         })
+}
+
+fn is_thread_memory_request(request: &responses::ResponsesRequest) -> bool {
+    request
+        .body_json()
+        .pointer("/text/format/schema/properties/schema/enum/0")
+        .and_then(serde_json::Value::as_str)
+        == Some("odeu_thread_memory_v1")
 }
 
 fn compacted_summary_only_output(summary: &str) -> Vec<ResponseItem> {
@@ -405,6 +414,7 @@ async fn remote_compact_does_not_issue_bridge_request_when_override_is_configure
 
     test.codex
         .submit(Op::UserInput {
+            environments: None,
             items: vec![UserInput::Text {
                 text: "start remote compact flow".into(),
                 text_elements: Vec::new(),
@@ -432,6 +442,207 @@ async fn remote_compact_does_not_issue_bridge_request_when_override_is_configure
     assert_eq!(
         compact_request.body_json()["model"].as_str(),
         Some(test.session_configured.model.as_str())
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_compact_with_strict_governance_reinserts_thread_memory() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = wiremock::MockServer::start().await;
+    let bridge_mock = responses::mount_default_continuation_bridge_responder(&server).await;
+    let thread_memory_mock = responses::mount_default_thread_memory_responder_with_marker(
+        &server,
+        "STRICT_REMOTE_MEMORY",
+    )
+    .await;
+
+    let mut builder = test_codex().with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    builder = builder.with_config(|config| {
+        config.governance_path_variant = Some(GovernancePathVariant::StrictV1Shadow);
+    });
+    let test = builder.build(&server).await?;
+
+    let responses_mock = responses::mount_sse_sequence(
+        &server,
+        vec![
+            responses::sse(vec![
+                responses::ev_assistant_message("m1", "STRICT_BASELINE_REPLY"),
+                responses::ev_completed("resp-1"),
+            ]),
+            responses::sse(vec![
+                responses::ev_assistant_message("m2", "AFTER_STRICT_COMPACT_REPLY"),
+                responses::ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let compact_mock = responses::mount_compact_json_once(
+        &server,
+        serde_json::json!({
+            "output": compacted_summary_only_output("STRICT_REMOTE_COMPACTED_SUMMARY")
+        }),
+    )
+    .await;
+
+    test.codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "start strict remote compact flow".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await?;
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    test.codex.submit(Op::Compact).await?;
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    test.codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "after strict compact".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await?;
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let bridge_requests = bridge_mock
+        .requests()
+        .into_iter()
+        .filter(is_continuation_bridge_request)
+        .collect::<Vec<_>>();
+    assert!(
+        bridge_requests.is_empty(),
+        "turn-boundary remote compact should not issue a continuation bridge request"
+    );
+    let thread_memory_requests = thread_memory_mock
+        .requests()
+        .into_iter()
+        .filter(is_thread_memory_request)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        thread_memory_requests.len(),
+        1,
+        "strict turn-boundary remote compact should generate one thread-memory request"
+    );
+    let thread_memory_request = &thread_memory_requests[0];
+    let thread_memory_body = thread_memory_request.body_json().to_string();
+    assert!(
+        thread_memory_body.contains("start strict remote compact flow"),
+        "thread-memory request should include source user history"
+    );
+    assert!(
+        thread_memory_body.contains("STRICT_BASELINE_REPLY"),
+        "thread-memory request should include source assistant history"
+    );
+    assert_eq!(compact_mock.requests().len(), 1);
+
+    let requests = responses_mock.requests();
+    assert_eq!(
+        requests.len(),
+        2,
+        "expected baseline and follow-up requests"
+    );
+    let follow_up_body = requests[1].body_json().to_string();
+    assert!(
+        follow_up_body.contains("<thread_memory"),
+        "follow-up request should include generated thread memory"
+    );
+    assert!(
+        follow_up_body.contains("STRICT_REMOTE_MEMORY"),
+        "follow-up request should include generated thread-memory payload"
+    );
+    assert!(
+        follow_up_body.contains("STRICT_REMOTE_COMPACTED_SUMMARY"),
+        "follow-up request should include remote compacted summary"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn strict_remote_compact_thread_memory_failure_skips_compact_endpoint() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = wiremock::MockServer::start().await;
+    let thread_memory_mock = responses::mount_thread_memory_responder(&server, "not-json").await;
+
+    let mut builder = test_codex().with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    builder = builder.with_config(|config| {
+        config.governance_path_variant = Some(GovernancePathVariant::StrictV1Shadow);
+    });
+    let test = builder.build(&server).await?;
+
+    responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_assistant_message("m1", "STRICT_BASELINE_REPLY"),
+            responses::ev_completed("resp-1"),
+        ]),
+    )
+    .await;
+    let compact_mock = responses::mount_compact_json_once(
+        &server,
+        serde_json::json!({
+            "output": compacted_summary_only_output("SHOULD_NOT_COMPACT")
+        }),
+    )
+    .await;
+
+    test.codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "start strict remote compact failure flow".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await?;
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    test.codex.submit(Op::Compact).await?;
+
+    let error_message = wait_for_event_match(&test.codex, |event| match event {
+        EventMsg::Error(err) => Some(err.message.clone()),
+        _ => None,
+    })
+    .await;
+    assert!(
+        error_message.contains("Error running remote compact task"),
+        "expected remote compact task error prefix, got {error_message}"
+    );
+    assert!(
+        error_message.contains("failed generating required thread memory before remote compaction"),
+        "expected required thread-memory failure details, got {error_message}"
+    );
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let thread_memory_requests = thread_memory_mock
+        .requests()
+        .into_iter()
+        .filter(is_thread_memory_request)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        thread_memory_requests.len(),
+        1,
+        "strict remote compact should attempt thread-memory generation"
+    );
+    assert!(
+        compact_mock.requests().is_empty(),
+        "remote compact endpoint should not be called after required thread-memory failure"
     );
 
     Ok(())

@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use codex_config::types::Personality;
+use codex_core::config::GovernancePathVariant;
 use codex_features::Feature;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
@@ -25,6 +26,8 @@ use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
+use pretty_assertions::assert_eq;
+use serde_json::Value;
 use serde_json::json;
 
 const PRETURN_CONTEXT_DIFF_CWD: &str = "PRETURN_CONTEXT_DIFF_CWD";
@@ -53,6 +56,88 @@ fn user_instructions_wrapper_count(request: &ResponsesRequest) -> usize {
         .count()
 }
 
+fn governance_prompt_layer_sections(request: &ResponsesRequest) -> Vec<String> {
+    request
+        .message_input_texts("developer")
+        .into_iter()
+        .filter(|text| text.starts_with("<governance_prompt_layers"))
+        .collect()
+}
+
+fn only_governance_prompt_layer_payload(request: &ResponsesRequest) -> Value {
+    let payloads = governance_prompt_layer_payloads(request);
+    assert_eq!(
+        payloads.len(),
+        1,
+        "expected exactly one developer-side governance prompt-layer section"
+    );
+    payloads.into_iter().next().expect("one payload")
+}
+
+fn governance_prompt_layer_payloads(request: &ResponsesRequest) -> Vec<Value> {
+    governance_prompt_layer_sections(request)
+        .iter()
+        .map(|section| governance_prompt_layer_payload(section))
+        .collect()
+}
+
+fn governance_prompt_layer_payload_for_phase(request: &ResponsesRequest, phase: &str) -> Value {
+    let payloads = governance_prompt_layer_payloads(request)
+        .into_iter()
+        .filter(|payload| payload["phase"] == json!(phase))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        payloads.len(),
+        1,
+        "expected exactly one developer-side governance prompt-layer section for phase {phase}"
+    );
+    payloads.into_iter().next().expect("one payload")
+}
+
+fn governance_prompt_layer_payload(section: &str) -> Value {
+    let json_start = section
+        .find("\n\n{")
+        .expect("governance prompt-layer section should contain a JSON payload")
+        + 2;
+    let json_end = section
+        .rfind("\n</governance_prompt_layers>")
+        .expect("governance prompt-layer section should have a closing tag");
+    serde_json::from_str(&section[json_start..json_end])
+        .expect("governance prompt-layer JSON should parse")
+}
+
+fn assert_complete_strict_prompt_layer_payload(payload: &Value, expected_phase: &str) {
+    assert_eq!(payload["schema"], json!("strict_v1_prompt_layers@1"));
+    assert_eq!(payload["path_variant"], json!("strict_v1_shadow"));
+    assert_eq!(payload["phase"], json!(expected_phase));
+    assert_eq!(
+        payload["source_presence"],
+        json!({
+            "constitutional": true,
+            "role": true,
+            "task": true,
+            "runtime": true,
+        })
+    );
+    assert_eq!(payload["compile_error"], Value::Null);
+    assert_eq!(
+        payload["active_layers"]["constitutional"]["packet_id"],
+        json!("constitution:session")
+    );
+    assert_eq!(
+        payload["active_layers"]["role"]["packet_id"],
+        json!("role:session")
+    );
+    assert_eq!(
+        payload["active_layers"]["task"]["packet_id"],
+        json!("task:turn")
+    );
+    assert_eq!(
+        payload["active_layers"]["runtime"]["packet_id"],
+        json!("runtime:turn")
+    );
+}
+
 fn format_environment_context_subagents_snapshot(subagents: &[&str]) -> String {
     let subagents_block = if subagents.is_empty() {
         String::new()
@@ -75,6 +160,193 @@ fn format_environment_context_subagents_snapshot(subagents: &[&str]) -> String {
         }],
     })];
     context_snapshot::format_response_items_snapshot(items.as_slice(), &context_snapshot_options())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn strict_governance_prompt_layers_are_visible_in_initial_request() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let responses = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_assistant_message("msg-1", "turn complete"),
+            ev_completed("resp-1"),
+        ]),
+    )
+    .await;
+
+    let mut builder = test_codex()
+        .with_model("gpt-5.3-codex")
+        .with_config(|config| {
+            config.governance_path_variant = Some(GovernancePathVariant::StrictV1Shadow);
+            config.developer_instructions = Some("role layer marker".to_string());
+            config.user_instructions = Some("task layer marker".to_string());
+        });
+    let test = builder.build(&server).await?;
+
+    test.submit_turn_with_policy(
+        "initial strict governance turn",
+        SandboxPolicy::new_read_only_policy(),
+    )
+    .await?;
+
+    let request = responses.single_request();
+    let developer_texts = request.message_input_texts("developer");
+    assert!(
+        developer_texts
+            .first()
+            .is_some_and(|text| text.starts_with("<governance_prompt_layers")),
+        "initial governance prompt-layer section should lead the developer message"
+    );
+    assert!(
+        request
+            .message_input_texts("user")
+            .iter()
+            .all(|text| !text.contains("<governance_prompt_layers")),
+        "governance prompt-layer section must stay developer-side"
+    );
+    let payload = only_governance_prompt_layer_payload(&request);
+    assert_complete_strict_prompt_layer_payload(&payload, "initial_context");
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn disabled_governance_omits_prompt_layers_from_initial_request() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let responses = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_assistant_message("msg-1", "turn complete"),
+            ev_completed("resp-1"),
+        ]),
+    )
+    .await;
+
+    let mut builder = test_codex()
+        .with_model("gpt-5.3-codex")
+        .with_config(|config| {
+            config.governance_path_variant = Some(GovernancePathVariant::Off);
+            config.developer_instructions = Some("role layer marker".to_string());
+            config.user_instructions = Some("task layer marker".to_string());
+        });
+    let test = builder.build(&server).await?;
+
+    test.submit_turn_with_policy(
+        "initial governance-off turn",
+        SandboxPolicy::new_read_only_policy(),
+    )
+    .await?;
+
+    let request = responses.single_request();
+    assert_eq!(
+        governance_prompt_layer_sections(&request),
+        Vec::<String>::new(),
+        "governance-off request should not include prompt-layer metadata"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn strict_governance_prompt_layers_are_visible_in_settings_update_request() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_assistant_message("msg-1", "turn one complete"),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-2", "turn two complete"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let mut builder = test_codex()
+        .with_model("gpt-5.3-codex")
+        .with_config(|config| {
+            config.governance_path_variant = Some(GovernancePathVariant::StrictV1Shadow);
+            config.developer_instructions = Some("role layer marker".to_string());
+            config.user_instructions = Some("task layer marker".to_string());
+        });
+    let test = builder.build(&server).await?;
+
+    test.submit_turn_with_policy(
+        "first strict governance turn",
+        SandboxPolicy::new_read_only_policy(),
+    )
+    .await?;
+
+    let settings_update_cwd = test.cwd_path().join("settings-update-cwd");
+    fs::create_dir_all(&settings_update_cwd)?;
+    test.codex
+        .submit(Op::UserTurn {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "second strict governance turn".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            cwd: settings_update_cwd,
+            approval_policy: AskForApproval::OnRequest,
+            approvals_reviewer: None,
+            sandbox_policy: SandboxPolicy::new_read_only_policy(),
+            permission_profile: None,
+            model: test.session_configured.model.clone(),
+            effort: test.config.model_reasoning_effort,
+            summary: None,
+            service_tier: None,
+            collaboration_mode: None,
+            personality: None,
+        })
+        .await?;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2, "expected two requests");
+
+    let initial_payload = only_governance_prompt_layer_payload(&requests[0]);
+    assert_complete_strict_prompt_layer_payload(&initial_payload, "initial_context");
+
+    assert!(
+        requests[1].has_message_with_input_texts("developer", |texts| {
+            texts
+                .first()
+                .is_some_and(|text| text.starts_with("<governance_prompt_layers"))
+                && texts
+                    .iter()
+                    .any(|text| text.contains("\"phase\": \"settings_update\""))
+        }),
+        "settings update governance prompt-layer section should lead the developer update"
+    );
+    assert!(
+        requests[1]
+            .message_input_texts("user")
+            .iter()
+            .all(|text| !text.contains("<governance_prompt_layers")),
+        "settings update governance prompt-layer section must stay developer-side"
+    );
+    let settings_payload =
+        governance_prompt_layer_payload_for_phase(&requests[1], "settings_update");
+    assert_complete_strict_prompt_layer_payload(&settings_payload, "settings_update");
+
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
