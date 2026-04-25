@@ -96,14 +96,19 @@ fn governance_prompt_layer_payload_for_phase(request: &ResponsesRequest, phase: 
 
 fn governance_prompt_layer_payload(section: &str) -> Value {
     let json_start = section
-        .find("\n\n{")
+        .find('{')
+        .expect("governance prompt-layer section should contain a JSON payload");
+    let mut stream = serde_json::Deserializer::from_str(&section[json_start..]).into_iter();
+    let payload = stream
+        .next()
         .expect("governance prompt-layer section should contain a JSON payload")
-        + 2;
-    let json_end = section
-        .rfind("\n</governance_prompt_layers>")
-        .expect("governance prompt-layer section should have a closing tag");
-    serde_json::from_str(&section[json_start..json_end])
-        .expect("governance prompt-layer JSON should parse")
+        .expect("governance prompt-layer JSON should parse");
+    let trailing = section[json_start + stream.byte_offset()..].trim_start();
+    assert!(
+        trailing.starts_with("</governance_prompt_layers>"),
+        "governance prompt-layer section should have a closing tag"
+    );
+    payload
 }
 
 fn assert_complete_strict_prompt_layer_payload(payload: &Value, expected_phase: &str) {
