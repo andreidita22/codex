@@ -29,6 +29,7 @@ use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
+use sha1::Digest;
 
 const PRETURN_CONTEXT_DIFF_CWD: &str = "PRETURN_CONTEXT_DIFF_CWD";
 
@@ -111,6 +112,31 @@ fn governance_prompt_layer_payload(section: &str) -> Value {
     payload
 }
 
+fn assert_text_absent_from_rendered_developer_sections(request: &ResponsesRequest, text: &str) {
+    let offending_sections = request
+        .message_input_texts("developer")
+        .into_iter()
+        .filter(|section| {
+            !section
+                .trim_start()
+                .starts_with("<governance_prompt_layers")
+        })
+        .filter(|section| section.contains(text))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        offending_sections,
+        Vec::<String>::new(),
+        "text must not be promoted into rendered developer sections"
+    );
+}
+
+fn prompt_layer_content_hash(content: &str) -> String {
+    let mut sha1 = sha1::Sha1::new();
+    sha1.update(content.as_bytes());
+    let digest = sha1.finalize();
+    format!("sha1:{digest:x}")
+}
+
 fn assert_complete_strict_prompt_layer_payload(payload: &Value, expected_phase: &str) {
     assert_eq!(payload["schema"], json!("strict_v1_prompt_layers@1"));
     assert_eq!(payload["path_variant"], json!("strict_v1_shadow"));
@@ -191,11 +217,32 @@ async fn strict_governance_prompt_layers_are_visible_in_initial_request() -> Res
         });
     let test = builder.build(&server).await?;
 
-    test.submit_turn_with_policy(
-        "initial strict governance turn",
-        SandboxPolicy::new_read_only_policy(),
-    )
-    .await?;
+    let final_output_json_schema = json!("final schema marker");
+    test.codex
+        .submit(Op::UserTurn {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "initial strict governance turn".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: Some(final_output_json_schema.clone()),
+            cwd: test.cwd_path().to_path_buf(),
+            approval_policy: AskForApproval::Never,
+            approvals_reviewer: None,
+            sandbox_policy: SandboxPolicy::new_read_only_policy(),
+            permission_profile: None,
+            model: test.session_configured.model.clone(),
+            effort: None,
+            summary: None,
+            service_tier: None,
+            collaboration_mode: None,
+            personality: None,
+        })
+        .await?;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
 
     let request = responses.single_request();
     let developer_texts = request.message_input_texts("developer");
@@ -214,6 +261,15 @@ async fn strict_governance_prompt_layers_are_visible_in_initial_request() -> Res
     );
     let payload = only_governance_prompt_layer_payload(&request);
     assert_complete_strict_prompt_layer_payload(&payload, "initial_context");
+    let final_output_json_schema =
+        serde_json::to_string(&final_output_json_schema).expect("schema should serialize");
+    assert_eq!(
+        payload["active_layers"]["task"]["content_hash"],
+        json!(prompt_layer_content_hash(&format!(
+            "final_output_json_schema: {final_output_json_schema}\n\ntask layer marker"
+        )))
+    );
+    assert_text_absent_from_rendered_developer_sections(&request, "task layer marker");
 
     Ok(())
 }
@@ -254,6 +310,7 @@ async fn disabled_governance_omits_prompt_layers_from_initial_request() -> Resul
         Vec::<String>::new(),
         "governance-off request should not include prompt-layer metadata"
     );
+    assert_text_absent_from_rendered_developer_sections(&request, "task layer marker");
 
     Ok(())
 }

@@ -2813,8 +2813,15 @@ impl Session {
         {
             sections.push_task_and_developer(commit_message_instruction);
         }
+        if let Some(final_output_json_schema) = turn_context.final_output_json_schema.as_ref()
+            && let Ok(final_output_json_schema) = serde_json::to_string(final_output_json_schema)
+        {
+            sections.push_task_only(format!(
+                "final_output_json_schema: {final_output_json_schema}"
+            ));
+        }
         if let Some(user_instructions) = turn_context.user_instructions.as_deref() {
-            sections.push_task_and_developer(user_instructions.to_string());
+            sections.push_task_only(user_instructions.to_string());
             sections.push_contextual_user(
                 UserInstructions {
                     text: user_instructions.to_string(),
