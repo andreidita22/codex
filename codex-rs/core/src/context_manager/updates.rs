@@ -249,6 +249,10 @@ impl InitialContextSections {
         self.developer_sections.push(section);
     }
 
+    pub(crate) fn push_task_only(&mut self, section: String) {
+        self.task_sections.push(section);
+    }
+
     pub(crate) fn push_runtime_and_developer(&mut self, section: String) {
         self.runtime_sections.push(section.clone());
         self.developer_sections.push(section);

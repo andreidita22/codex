@@ -111,6 +111,20 @@ fn governance_prompt_layer_payload(section: &str) -> Value {
     payload
 }
 
+fn assert_text_absent_from_rendered_developer_sections(request: &ResponsesRequest, text: &str) {
+    let offending_sections = request
+        .message_input_texts("developer")
+        .into_iter()
+        .filter(|section| !section.starts_with("<governance_prompt_layers"))
+        .filter(|section| section.contains(text))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        offending_sections,
+        Vec::<String>::new(),
+        "text must not be promoted into rendered developer sections"
+    );
+}
+
 fn assert_complete_strict_prompt_layer_payload(payload: &Value, expected_phase: &str) {
     assert_eq!(payload["schema"], json!("strict_v1_prompt_layers@1"));
     assert_eq!(payload["path_variant"], json!("strict_v1_shadow"));
@@ -214,6 +228,7 @@ async fn strict_governance_prompt_layers_are_visible_in_initial_request() -> Res
     );
     let payload = only_governance_prompt_layer_payload(&request);
     assert_complete_strict_prompt_layer_payload(&payload, "initial_context");
+    assert_text_absent_from_rendered_developer_sections(&request, "task layer marker");
 
     Ok(())
 }
@@ -254,6 +269,7 @@ async fn disabled_governance_omits_prompt_layers_from_initial_request() -> Resul
         Vec::<String>::new(),
         "governance-off request should not include prompt-layer metadata"
     );
+    assert_text_absent_from_rendered_developer_sections(&request, "task layer marker");
 
     Ok(())
 }
