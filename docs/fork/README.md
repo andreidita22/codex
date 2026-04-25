@@ -17,3 +17,4 @@ Current fork-local families documented here include:
 - context maintenance / compaction policy
 - agent observability / E-witness
 - fork update and release-alignment process
+- release-specific post-ingest alignment specs

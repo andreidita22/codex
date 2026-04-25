@@ -523,6 +523,75 @@ fn test_build_specs_agent_job_worker_tools_enabled() {
 }
 
 #[test]
+fn thread_spawn_subagents_keep_observability_tools_but_hide_spawn_tools() {
+    let model_info = model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::Collab);
+    features.enable(Feature::MultiAgentV2);
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: Default::default(),
+            depth: 1,
+            agent_path: None,
+            agent_nickname: None,
+            agent_role: None,
+        }),
+        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let (tools, handlers) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    assert_contains_tool_names(
+        &tools,
+        &[
+            "inspect_agent_progress",
+            "wait_for_agent_progress",
+            "send_message",
+            "followup_task",
+            "wait_agent",
+            "close_agent",
+            "list_agents",
+        ],
+    );
+    assert_lacks_tool_name(&tools, "spawn_agent");
+    assert_lacks_tool_name(&tools, "spawn_agents_on_csv");
+    assert_lacks_tool_name(&tools, REQUEST_USER_INPUT_TOOL_NAME);
+    assert_lacks_tool_name(&tools, "resume_agent");
+
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::plain("inspect_agent_progress"),
+        kind: ToolHandlerKind::InspectAgentProgress,
+    }));
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::plain("wait_for_agent_progress"),
+        kind: ToolHandlerKind::WaitForAgentProgress,
+    }));
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::plain("send_message"),
+        kind: ToolHandlerKind::SendMessageV2,
+    }));
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::plain("followup_task"),
+        kind: ToolHandlerKind::FollowupTaskV2,
+    }));
+    assert!(!handlers.contains(&ToolHandlerSpec {
+        name: ToolName::plain("spawn_agent"),
+        kind: ToolHandlerKind::SpawnAgentV2,
+    }));
+}
+
+#[test]
 fn memory_consolidation_subagents_do_not_receive_collaboration_tools() {
     let model_info = model_info();
     let mut features = Features::with_defaults();

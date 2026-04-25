@@ -174,6 +174,56 @@ and exec/runtime hardening. The highest-risk fork seams are:
   - `git merge-base --is-ancestor codex/update-0.125-ingest main`
   - `git log --oneline main..codex/update-0.125-align`
 
+### Post-ingest alignment note
+
+The `codex/update-0.125-align` pass added focused verification for the
+fork-owned seams identified above rather than changing runtime behavior.
+
+- A1 added request-level coverage proving strict governance prompt layers are
+  visible in initial and settings-update request payloads, and omitted when
+  governance is disabled.
+- A2 added remote-compaction coverage proving strict governance reinserts fresh
+  thread memory before calling `/responses/compact`, and fails closed without
+  calling compact when thread-memory refresh fails.
+- A3 added trace/observability coverage proving compatibility-only raw protocol
+  events are still recorded in rollout traces without advancing the live
+  progress reducer.
+- A4 added final tool-registry coverage proving thread-spawn sub-agents keep
+  observability and coordination tools while omitting spawn/resume/user-input
+  tools.
+- `custom-fork-module-inventory.md` was left unchanged because this pass did
+  not add, remove, or replace a fork-owned runtime bundle.
+
+Validation added by the post-ingest alignment pass:
+
+- `just fmt`
+- `cargo test -p codex-core governance --test all`
+- `cargo test -p codex-core governance::prompt_layers --lib`
+- `cargo test -p codex-core remote_compact_with_strict_governance_reinserts_thread_memory --test all`
+- `cargo test -p codex-core strict_remote_compact_thread_memory_failure_skips_compact_endpoint --test all`
+- `cargo test -p codex-core remote_compact_does_not_issue_bridge_request_when_override_is_configured --test all`
+- `cargo test -p codex-core compaction_policy_matrix --lib`
+- `cargo test -p codex-context-maintenance-policy thread_memory`
+- `cargo test -p codex-core compatibility_only_protocol_events_are_traced_without_progress_observation --lib`
+- `cargo test -p codex-core inspect_agent_progress_reports_reasoning_phase_for_live_subagent --lib`
+- `cargo test -p codex-core wait_for_agent_progress --lib`
+- `cargo test -p codex-core session_send_event_observes_primary_item_started_once_with_legacy_echoes --lib`
+- `cargo test -p codex-core observed_raw --lib`
+- `cargo test -p codex-tools agent_progress_tool`
+- `cargo test -p codex-tools thread_spawn_subagents --lib`
+- `cargo test -p codex-tools memory_consolidation_subagents_do_not_receive_collaboration_tools --lib`
+- `cargo test -p codex-tools test_build_specs_agent_job_worker_tools_enabled --lib`
+- `cargo test -p codex-tools subagents_keep_request_user_input_mode_config_and_agent_jobs_workers_opt_in_by_label --lib`
+- `git diff --check`
+
+Alignment-only PR guard re-run on 2026-04-25:
+
+- `git merge-base --is-ancestor codex/update-0.125-ingest main`
+- `git log --oneline main..codex/update-0.125-align`
+
+At guard time the second command listed no inherited upstream commits and no
+alignment commits yet; the branch-local work remained uncommitted.
+
 ## 0.123.0 -> 0.124.0 (prep + ingest snapshot)
 
 ### Refs

@@ -60,14 +60,19 @@ use codex_protocol::protocol::TurnCompleteEvent;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
+use codex_rollout_trace::RawTraceEventPayload;
+use codex_rollout_trace::ThreadStartedTraceMetadata;
 use core_test_support::TempDirExt;
 use pretty_assertions::assert_eq;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tempfile::TempDir;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
@@ -105,6 +110,17 @@ fn thread_manager() -> ThreadManager {
         CodexAuth::from_api_key("dummy"),
         built_in_model_providers(/* openai_base_url */ /*openai_base_url*/ None)["openai"].clone(),
     )
+}
+
+fn single_trace_bundle_dir(root: &Path) -> PathBuf {
+    let mut entries = fs::read_dir(root)
+        .expect("trace root should be readable")
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("trace bundle entries should be readable");
+    entries.sort();
+    assert_eq!(entries.len(), 1);
+    entries.remove(0)
 }
 
 async fn manager_backed_session_and_turn() -> (
@@ -2002,6 +2018,87 @@ async fn observed_raw_warning_preserves_progress_seq() {
         snapshot.recent_updates,
         vec!["warning: heads up".to_string()]
     );
+}
+
+#[tokio::test]
+async fn compatibility_only_protocol_events_are_traced_without_progress_observation() {
+    let (mut session, turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.conversation_id = root.thread_id;
+
+    let trace_root = TempDir::new().expect("trace root tempdir");
+    session.services.rollout_thread_trace =
+        codex_rollout_trace::ThreadTraceContext::start_root_in_root_for_test(
+            trace_root.path(),
+            ThreadStartedTraceMetadata {
+                thread_id: session.conversation_id.to_string(),
+                agent_path: "/root".to_string(),
+                task_name: None,
+                nickname: None,
+                agent_role: None,
+                session_source: SessionSource::Exec,
+                cwd: PathBuf::from("/workspace"),
+                rollout_path: None,
+                model: "gpt-test".to_string(),
+                provider_name: "test-provider".to_string(),
+                approval_policy: "never".to_string(),
+                sandbox_policy: "danger-full-access".to_string(),
+            },
+        )
+        .expect("trace context should start");
+
+    let session = Arc::new(session);
+    let mut progress_seq_rx = session
+        .services
+        .agent_control
+        .subscribe_progress_seq(session.conversation_id)
+        .await
+        .expect("progress seq subscription should succeed");
+
+    session
+        .send_event_raw(
+            codex_protocol::protocol::Event {
+                id: "compat-shutdown".to_string(),
+                msg: EventMsg::ShutdownComplete,
+            },
+            ProgressObservation::CompatibilityOnly,
+        )
+        .await;
+
+    assert!(
+        timeout(Duration::from_millis(50), progress_seq_rx.changed())
+            .await
+            .is_err()
+    );
+    assert_eq!(*progress_seq_rx.borrow(), 0);
+
+    let snapshot = session
+        .services
+        .agent_control
+        .inspect_agent_progress(session.conversation_id, Duration::from_millis(100))
+        .await;
+    assert_eq!(snapshot.seq, 0);
+
+    let event_log =
+        fs::read_to_string(single_trace_bundle_dir(trace_root.path()).join("trace.jsonl"))
+            .expect("trace event log should be readable");
+    let protocol_event_seen = event_log.lines().any(|line| {
+        let event: codex_rollout_trace::RawTraceEvent =
+            serde_json::from_str(line).expect("raw trace event");
+        matches!(
+            event.payload,
+            RawTraceEventPayload::ProtocolEventObserved {
+                event_type,
+                ..
+            } if event_type == "shutdown_complete"
+        )
+    });
+    assert!(protocol_event_seen);
 }
 
 #[tokio::test]
