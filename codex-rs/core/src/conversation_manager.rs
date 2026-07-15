@@ -1,4 +1,5 @@
 use crate::AuthManager;
+#[cfg(any(test, feature = "test-support"))]
 use crate::CodexAuth;
 #[cfg(any(test, feature = "test-support"))]
 use crate::ModelProviderInfo;

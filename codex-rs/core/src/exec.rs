@@ -27,6 +27,7 @@ use crate::protocol::SandboxPolicy;
 use crate::sandboxing::CommandSpec;
 use crate::sandboxing::ExecEnv;
 use crate::sandboxing::SandboxManager;
+use crate::sandboxing::SandboxPermissions;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
 use crate::text_encoding::bytes_to_string_smart;
@@ -54,7 +55,7 @@ pub struct ExecParams {
     pub cwd: PathBuf,
     pub expiration: ExecExpiration,
     pub env: HashMap<String, String>,
-    pub with_escalated_permissions: Option<bool>,
+    pub sandbox_permissions: SandboxPermissions,
     pub justification: Option<String>,
     pub arg0: Option<String>,
 }
@@ -138,7 +139,7 @@ pub async fn process_exec_tool_call(
         cwd,
         expiration,
         env,
-        with_escalated_permissions,
+        sandbox_permissions,
         justification,
         arg0: _,
     } = params;
@@ -156,7 +157,7 @@ pub async fn process_exec_tool_call(
         cwd,
         env,
         expiration,
-        with_escalated_permissions,
+        sandbox_permissions,
         justification,
     };
 
@@ -186,7 +187,7 @@ pub(crate) async fn execute_exec_env(
         env,
         expiration,
         sandbox,
-        with_escalated_permissions,
+        sandbox_permissions,
         justification,
         arg0,
     } = env;
@@ -196,7 +197,7 @@ pub(crate) async fn execute_exec_env(
         cwd,
         expiration,
         env,
-        with_escalated_permissions,
+        sandbox_permissions,
         justification,
         arg0,
     };
@@ -846,7 +847,7 @@ mod tests {
             cwd: std::env::current_dir()?,
             expiration: 500.into(),
             env,
-            with_escalated_permissions: None,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             justification: None,
             arg0: None,
         };
@@ -891,7 +892,7 @@ mod tests {
             cwd: cwd.clone(),
             expiration: ExecExpiration::Cancellation(cancel_token),
             env,
-            with_escalated_permissions: None,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             justification: None,
             arg0: None,
         };

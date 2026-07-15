@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::apply_patch;
 use crate::apply_patch::InternalApplyPatchInvocation;
@@ -174,8 +175,8 @@ pub(crate) async fn intercept_apply_patch(
     command: &[String],
     cwd: &Path,
     timeout_ms: Option<u64>,
-    session: &Session,
-    turn: &TurnContext,
+    session: &Arc<Session>,
+    turn: &Arc<TurnContext>,
     tracker: Option<&SharedTurnDiffTracker>,
     call_id: &str,
     tool_name: &str,
@@ -185,10 +186,10 @@ pub(crate) async fn intercept_apply_patch(
             session
                 .record_model_warning(
                     format!("apply_patch was requested via {tool_name}. Use the apply_patch tool instead of exec_command."),
-                    turn,
+                    turn.as_ref(),
                 )
                 .await;
-            match apply_patch::apply_patch(session, turn, call_id, changes).await {
+            match apply_patch::apply_patch(session.as_ref(), turn.as_ref(), call_id, changes).await {
                 InternalApplyPatchInvocation::Output(item) => {
                     let content = item?;
                     Ok(Some(ToolOutput::Function {
@@ -202,8 +203,12 @@ pub(crate) async fn intercept_apply_patch(
                         convert_apply_patch_to_protocol(&apply.action),
                         !apply.user_explicitly_approved_this_action,
                     );
-                    let event_ctx =
-                        ToolEventCtx::new(session, turn, call_id, tracker.as_ref().copied());
+                    let event_ctx = ToolEventCtx::new(
+                        session.as_ref(),
+                        turn.as_ref(),
+                        call_id,
+                        tracker.as_ref().copied(),
+                    );
                     emitter.begin(event_ctx).await;
 
                     let req = ApplyPatchRequest {
@@ -217,16 +222,23 @@ pub(crate) async fn intercept_apply_patch(
                     let mut orchestrator = ToolOrchestrator::new();
                     let mut runtime = ApplyPatchRuntime::new();
                     let tool_ctx = ToolCtx {
-                        session,
-                        turn,
+                        session_arc: Arc::clone(&session),
+                        session: session.as_ref(),
+                        turn: turn.as_ref(),
                         call_id: call_id.to_string(),
                         tool_name: tool_name.to_string(),
                     };
                     let out = orchestrator
-                        .run(&mut runtime, &req, &tool_ctx, turn, turn.approval_policy)
+                        .run(
+                            &mut runtime,
+                            &req,
+                            &tool_ctx,
+                            turn.as_ref(),
+                            turn.approval_policy,
+                        )
                         .await;
                     let event_ctx =
-                        ToolEventCtx::new(session, turn, call_id, tracker.as_ref().copied());
+                        ToolEventCtx::new(session.as_ref(), turn.as_ref(), call_id, tracker.as_ref().copied());
                     let content = emitter.finish(event_ctx, out).await?;
                     Ok(Some(ToolOutput::Function {
                         content,

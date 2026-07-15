@@ -458,69 +458,6 @@ fn create_semantic_shell_control_tool() -> ToolSpec {
     })
 }
 
-fn create_shell_command_tool() -> ToolSpec {
-    let mut properties = BTreeMap::new();
-    properties.insert(
-        "command".to_string(),
-        JsonSchema::String {
-            description: Some(
-                "The shell script to execute in the user's default shell".to_string(),
-            ),
-        },
-    );
-    properties.insert(
-        "workdir".to_string(),
-        JsonSchema::String {
-            description: Some("The working directory to execute the command in".to_string()),
-        },
-    );
-    properties.insert(
-        "timeout_ms".to_string(),
-        JsonSchema::Number {
-            description: Some("The timeout for the command in milliseconds".to_string()),
-        },
-    );
-    properties.insert(
-        "with_escalated_permissions".to_string(),
-        JsonSchema::Boolean {
-            description: Some("Whether to request escalated permissions. Set to true if command needs to be run without sandbox restrictions".to_string()),
-        },
-    );
-    properties.insert(
-        "justification".to_string(),
-        JsonSchema::String {
-            description: Some("Only set if with_escalated_permissions is true. 1-sentence explanation of why we want to run this command.".to_string()),
-        },
-    );
-
-    let description = if cfg!(windows) {
-        r#"Runs a Powershell command (Windows) and returns its output.
-        
-Examples of valid command strings:
-
-- ls -a (show hidden): "Get-ChildItem -Force"
-- recursive find by name: "Get-ChildItem -Recurse -Filter *.py"
-- recursive grep: "Get-ChildItem -Path C:\\myrepo -Recurse | Select-String -Pattern 'TODO' -CaseSensitive"
-- ps aux | grep python: "Get-Process | Where-Object { $_.ProcessName -like '*python*' }"
-- setting an env var: "$env:FOO='bar'; echo $env:FOO"
-- running an inline Python script: "@'\\nprint('Hello, world!')\\n'@ | python -"#
-    } else {
-        r#"Runs a shell command and returns its output.
-- Always set the `workdir` param when using the shell_command function. Do not use `cd` unless absolutely necessary."#
-    }.to_string();
-
-    ToolSpec::Function(ResponsesApiTool {
-        name: "shell_command".to_string(),
-        description,
-        strict: false,
-        parameters: JsonSchema::Object {
-            properties,
-            required: Some(vec!["command".to_string()]),
-            additional_properties: Some(false.into()),
-        },
-    })
-}
-
 fn create_view_image_tool() -> ToolSpec {
     // Support only local filesystem path.
     let mut properties = BTreeMap::new();

@@ -19,7 +19,6 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::path::Path;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures::Future;

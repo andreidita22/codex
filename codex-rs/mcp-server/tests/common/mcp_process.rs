@@ -68,6 +68,7 @@ impl McpProcess {
         cmd.stderr(Stdio::piped());
         cmd.env("CODEX_HOME", codex_home);
         cmd.env("RUST_LOG", "debug");
+        cmd.env_remove(codex_core::default_client::CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR);
 
         for (k, v) in env_overrides {
             match v {
@@ -144,7 +145,8 @@ impl McpProcess {
         let initialized = self.read_jsonrpc_message().await?;
         let os_info = os_info::get();
         let user_agent = format!(
-            "codex_cli_rs/0.0.0 ({} {}; {}) {} (elicitation test; 0.0.0)",
+            "codex_cli_rs/{} ({} {}; {}) {} (elicitation test; 0.0.0)",
+            env!("CARGO_PKG_VERSION"),
             os_info.os_type(),
             os_info.version(),
             os_info.architecture().unwrap_or("unknown"),
@@ -160,13 +162,13 @@ impl McpProcess {
                             "listChanged": true
                         },
                     },
+                    "protocolVersion": mcp_types::MCP_SCHEMA_VERSION,
                     "serverInfo": {
                         "name": "codex-mcp-server",
                         "title": "Codex",
-                        "version": "0.0.0",
+                        "version": env!("CARGO_PKG_VERSION"),
                         "user_agent": user_agent
                     },
-                    "protocolVersion": mcp_types::MCP_SCHEMA_VERSION
                 })
             }),
             initialized

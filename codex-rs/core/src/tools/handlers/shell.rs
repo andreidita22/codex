@@ -4,23 +4,32 @@ use codex_protocol::models::ShellToolCallParams;
 use std::sync::Arc;
 
 use crate::codex::TurnContext;
-use crate::exec::{ExecExpiration, ExecParams};
+use crate::exec::ExecParams;
+#[cfg(feature = "semantic_shell_pause")]
+use crate::exec::ExecExpiration;
 use crate::exec_env::create_env;
 use crate::exec_policy::create_exec_approval_requirement_for_command;
 #[cfg(feature = "semantic_shell_pause")]
 use crate::extensions::semantic_shell::{format_pause_reason, ShellExecRequest, ShellTurnResult};
 use crate::function_tool::FunctionCallError;
+#[cfg(feature = "semantic_shell_pause")]
 use crate::get_platform_sandbox;
 use crate::is_safe_command::is_known_safe_command;
 use crate::protocol::ExecCommandSource;
-use crate::sandboxing::{SandboxManager, SandboxPermissions, SandboxType};
+#[cfg(feature = "semantic_shell_pause")]
+use crate::protocol::SandboxPolicy;
+#[cfg(feature = "semantic_shell_pause")]
+use crate::sandboxing::{SandboxManager, SandboxType};
+use crate::sandboxing::SandboxPermissions;
 use crate::shell::Shell;
 use crate::tools::context::{ToolInvocation, ToolOutput, ToolPayload};
 use crate::tools::events::{ToolEmitter, ToolEventCtx};
 use crate::tools::handlers::apply_patch::intercept_apply_patch;
 use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::registry::{ToolHandler, ToolKind};
+#[cfg(feature = "semantic_shell_pause")]
 use crate::tools::runtimes::apply_patch::{ApplyPatchRequest, ApplyPatchRuntime};
+#[cfg(feature = "semantic_shell_pause")]
 use crate::tools::runtimes::build_command_spec;
 use crate::tools::runtimes::shell::{ShellRequest, ShellRuntime};
 use crate::tools::sandboxing::ToolCtx;
@@ -31,12 +40,14 @@ pub struct ShellCommandHandler;
 
 impl ShellHandler {
     fn to_exec_params(params: ShellToolCallParams, turn_context: &TurnContext) -> ExecParams {
+        let sandbox_permissions: SandboxPermissions =
+            params.sandbox_permissions.unwrap_or_default();
         ExecParams {
             command: params.command,
             cwd: turn_context.resolve_path(params.workdir.clone()),
             expiration: params.timeout_ms.into(),
             env: create_env(&turn_context.shell_environment_policy),
-            sandbox_permissions: params.sandbox_permissions.unwrap_or_default(),
+            sandbox_permissions,
             justification: params.justification,
             arg0: None,
         }
@@ -56,13 +67,15 @@ impl ShellCommandHandler {
     ) -> ExecParams {
         let shell = session.user_shell();
         let command = Self::base_command(shell.as_ref(), &params.command, params.login);
+        let sandbox_permissions: SandboxPermissions =
+            params.sandbox_permissions.unwrap_or_default();
 
         ExecParams {
             command,
             cwd: turn_context.resolve_path(params.workdir.clone()),
             expiration: params.timeout_ms.into(),
             env: create_env(&turn_context.shell_environment_policy),
-            sandbox_permissions: params.sandbox_permissions.unwrap_or_default(),
+            sandbox_permissions,
             justification: params.justification,
             arg0: None,
         }
@@ -230,8 +243,8 @@ impl ShellHandler {
             &exec_params.command,
             &exec_params.cwd,
             exec_params.expiration.timeout_ms(),
-            session.as_ref(),
-            turn.as_ref(),
+            &session,
+            &turn,
             Some(&tracker),
             &call_id,
             tool_name,
@@ -279,7 +292,7 @@ impl ShellHandler {
                 &req.cwd,
                 &req.env,
                 ExecExpiration::from(req.timeout_ms),
-                req.with_escalated_permissions,
+                req.sandbox_permissions,
                 req.justification.clone(),
             )?;
             let manager = SandboxManager::new();
@@ -387,12 +400,15 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    use crate::codex::make_session_and_context;
+    use crate::exec_env::create_env;
     use crate::is_safe_command::is_known_safe_command;
     use crate::sandboxing::SandboxPermissions;
     use crate::shell::Shell;
     use crate::shell::ShellType;
     use crate::shell_snapshot::ShellSnapshot;
     use crate::tools::handlers::ShellCommandHandler;
+    use codex_protocol::models::ShellCommandToolCallParams;
 
     #[test]
     fn commands_generated_by_shell_command_handler_can_be_matched_by_is_known_safe_command() {

@@ -30,6 +30,11 @@ use tempfile::TempDir;
 /// command should be run privileged outside the sandbox.
 #[tokio::test(flavor = "current_thread")]
 async fn accept_elicitation_for_prompt_rule() -> Result<()> {
+    if which::which("dotslash").is_err() {
+        eprintln!("skipping accept_elicitation_for_prompt_rule: dotslash binary not available");
+        return Ok(());
+    }
+
     // Configure a stdio transport that will launch the MCP server using
     // $CODEX_HOME with an execpolicy that prompts for `git init` commands.
     let codex_home = TempDir::new()?;
