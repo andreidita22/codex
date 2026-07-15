@@ -1,0 +1,122 @@
+name: Sync upstream tracking branches
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 * * * *"
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.repository == 'andreidita22/codex'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Resolve upstream releases by publication time
+        id: releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          releases="$(
+            gh api --paginate \
+              'repos/openai/codex/releases?per_page=100' \
+              --jq '.[] | select(.draft == false and .published_at != null) | [.published_at, .prerelease, .tag_name] | @tsv'
+          )"
+
+          latest_row="$(sort -k1,1 <<<"${releases}" | tail -n 1)"
+          stable_row="$(
+            awk -F $'\t' '$2 == "false"' <<<"${releases}" \
+              | sort -k1,1 \
+              | tail -n 1
+          )"
+
+          [[ -n "${latest_row}" ]] || {
+            echo "No published upstream releases found" >&2
+            exit 1
+          }
+          [[ -n "${stable_row}" ]] || {
+            echo "No published stable upstream releases found" >&2
+            exit 1
+          }
+
+          IFS=$'\t' read -r latest_published_at _ latest_tag \
+            <<<"${latest_row}"
+          IFS=$'\t' read -r stable_published_at _ stable_tag \
+            <<<"${stable_row}"
+
+          {
+            echo "stable_tag=${stable_tag}"
+            echo "stable_published_at=${stable_published_at}"
+            echo "latest_tag=${latest_tag}"
+            echo "latest_published_at=${latest_published_at}"
+          } >>"${GITHUB_OUTPUT}"
+
+      - name: Fetch upstream refs and update mirror branches
+        id: sync
+        env:
+          STABLE_TAG: ${{ steps.releases.outputs.stable_tag }}
+          LATEST_TAG: ${{ steps.releases.outputs.latest_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git remote add upstream https://github.com/openai/codex.git
+          git fetch --no-tags upstream \
+            '+refs/heads/main:refs/remotes/upstream/main'
+          git fetch --no-tags upstream \
+            "+refs/tags/${STABLE_TAG}:refs/tags/${STABLE_TAG}"
+          if [[ "${LATEST_TAG}" != "${STABLE_TAG}" ]]; then
+            git fetch --no-tags upstream \
+              "+refs/tags/${LATEST_TAG}:refs/tags/${LATEST_TAG}"
+          fi
+
+          main_sha="$(git rev-parse 'refs/remotes/upstream/main^{commit}')"
+          stable_sha="$(git rev-parse "refs/tags/${STABLE_TAG}^{commit}")"
+          latest_sha="$(git rev-parse "refs/tags/${LATEST_TAG}^{commit}")"
+
+          git push --force origin \
+            "${main_sha}:refs/heads/upstream-main" \
+            "${stable_sha}:refs/heads/upstream-latest-release" \
+            "${latest_sha}:refs/heads/upstream-latest-published"
+
+          {
+            echo "main_sha=${main_sha}"
+            echo "stable_sha=${stable_sha}"
+            echo "latest_sha=${latest_sha}"
+          } >>"${GITHUB_OUTPUT}"
+
+      - name: Summarize synchronized branches
+        env:
+          STABLE_TAG: ${{ steps.releases.outputs.stable_tag }}
+          STABLE_PUBLISHED_AT: ${{ steps.releases.outputs.stable_published_at }}
+          LATEST_TAG: ${{ steps.releases.outputs.latest_tag }}
+          LATEST_PUBLISHED_AT: ${{ steps.releases.outputs.latest_published_at }}
+          MAIN_SHA: ${{ steps.sync.outputs.main_sha }}
+          STABLE_SHA: ${{ steps.sync.outputs.stable_sha }}
+          LATEST_SHA: ${{ steps.sync.outputs.latest_sha }}
+        shell: bash
+        run: |
+          {
+            echo "### Upstream tracking branches"
+            echo
+            echo '| Fork branch | Upstream source | Commit | Published |'
+            echo '| --- | --- | --- | --- |'
+            echo "| \`upstream-main\` | \`openai/codex:main\` | \`${MAIN_SHA}\` | n/a |"
+            echo "| \`upstream-latest-release\` | \`${STABLE_TAG}\` | \`${STABLE_SHA}\` | ${STABLE_PUBLISHED_AT} |"
+            echo "| \`upstream-latest-published\` | \`${LATEST_TAG}\` | \`${LATEST_SHA}\` | ${LATEST_PUBLISHED_AT} |"
+          } >>"${GITHUB_STEP_SUMMARY}"
